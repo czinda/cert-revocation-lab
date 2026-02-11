@@ -197,7 +197,7 @@ services:
       # Use high ports for rootless podman compatibility
       - "4443:443"        # HTTPS (was 443)
       - "8180:80"         # HTTP (was 80)
-      - "3389:389"        # LDAP (was 389)
+      - "3390:389"        # LDAP (was 389)
       - "6360:636"        # LDAPS (was 636)
       - "8800:88"         # Kerberos (was 88)
       - "8800:88/udp"

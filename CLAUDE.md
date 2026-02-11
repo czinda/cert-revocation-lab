@@ -81,7 +81,7 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 
 | IP | Service | Ports |
 |----|---------|-------|
-| 172.20.0.10 | FreeIPA | 4443:443, 8180:80, 3389:389, 6360:636 |
+| 172.20.0.10 | FreeIPA | 4443:443, 8180:80, 3390:389, 6360:636 |
 | 172.20.0.11 | Intermediate CA | 8444:8443 |
 | 172.20.0.12 | Root CA | 8443:8443 |
 | 172.20.0.13 | IoT CA | 8445:8443 |
