@@ -10,10 +10,10 @@
   sources:
     # Kafka event source - consumes security events
     - ansible.eda.kafka:
-        host: "{{ lookup('env', 'KAFKA_HOST') | default('kafka.cert-lab.local') }}"
-        port: "{{ lookup('env', 'KAFKA_PORT') | default(9092) }}"
-        topic: "{{ lookup('env', 'KAFKA_TOPIC') | default('security-events') }}"
-        group_id: "{{ lookup('env', 'KAFKA_GROUP_ID') | default('eda-security-processor') }}"
+        host: kafka.cert-lab.local
+        port: 9092
+        topic: security-events
+        group_id: eda-security-processor
         offset: earliest
 
   rules:
