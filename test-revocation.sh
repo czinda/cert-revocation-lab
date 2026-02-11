@@ -61,10 +61,18 @@ check_services() {
         ((services_ok++))
     fi
 
-    # Check FreeIPA (with self-signed cert)
+    # Check FreeIPA (with self-signed cert) and get session
     # Use Host header to satisfy FreeIPA's hostname check
     if curl -skf -H "Host: ipa.cert-lab.local" "https://localhost:4443/" > /dev/null 2>&1; then
         log_success "FreeIPA is responding"
+        # Login to get session cookie
+        ipa_login
+        if [ -f "${IPA_COOKIE_FILE}" ]; then
+            log_success "FreeIPA session established"
+        else
+            log_error "Failed to establish FreeIPA session"
+            ((services_ok++))
+        fi
     else
         log_error "FreeIPA is not responding"
         ((services_ok++))
@@ -76,10 +84,21 @@ check_services() {
     fi
 }
 
+# FreeIPA session cookie file
+IPA_COOKIE_FILE="/tmp/ipa_session_$$"
+
+# Get FreeIPA session
+ipa_login() {
+    curl -sk -X POST "https://localhost:4443/ipa/session/login_password" \
+        -H "Host: ipa.cert-lab.local" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        -H "Accept: text/plain" \
+        -c "${IPA_COOKIE_FILE}" \
+        -d "user=${IPA_USER}&password=${IPA_PASS}" \
+        > /dev/null 2>&1
+}
+
 # IPA API call helper
-# Note: FreeIPA redirects to its hostname on port 443, but we're using port 4443.
-# We use --resolve to map ipa.cert-lab.local:443 to 127.0.0.1:4443 won't work directly.
-# Instead, we use localhost:4443 and handle redirects by resolving port 443 to 4443 via the host entry.
 ipa_call() {
     local method=$1
     local params=$2
@@ -88,9 +107,16 @@ ipa_call() {
         -H "Content-Type: application/json" \
         -H "Referer: https://localhost:4443/ipa" \
         -H "Host: ipa.cert-lab.local" \
-        -u "${IPA_USER}:${IPA_PASS}" \
+        -H "Accept: application/json" \
+        -b "${IPA_COOKIE_FILE}" \
         -d "{\"method\":\"${method}\",\"params\":${params}}"
 }
+
+# Cleanup on exit
+cleanup() {
+    rm -f "${IPA_COOKIE_FILE}"
+}
+trap cleanup EXIT
 
 # Step 1: Enroll device in FreeIPA
 enroll_device() {
