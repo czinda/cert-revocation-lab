@@ -63,12 +63,22 @@ if [ "$1" == "--clean" ]; then
         # Prune any dangling volumes
         podman volume prune -f 2>/dev/null || true
 
-        # Remove lab networks
+        # Remove lab networks by name pattern
         log_info "Removing lab networks..."
-        podman network ls --format "{{.Name}}" 2>/dev/null | grep -E "(lab-network)" | xargs -r podman network rm -f 2>/dev/null || true
+        podman network ls --format "{{.Name}}" 2>/dev/null | grep -E "(lab-network|cert-lab)" | xargs -r podman network rm -f 2>/dev/null || true
 
         # Remove project-prefixed networks
         podman network ls --format "{{.Name}}" 2>/dev/null | grep "^${PROJECT_NAME}_" | xargs -r podman network rm -f 2>/dev/null || true
+
+        # Remove any networks using the lab subnet (172.20.0.0/16)
+        log_info "Checking for networks using lab subnet..."
+        for net in $(podman network ls -q 2>/dev/null); do
+            subnet=$(podman network inspect "$net" --format '{{range .Subnets}}{{.Subnet}}{{end}}' 2>/dev/null)
+            if [[ "$subnet" == "172.20.0.0/16" ]]; then
+                log_warn "Removing network $net (uses lab subnet)"
+                podman network rm -f "$net" 2>/dev/null || true
+            fi
+        done
 
         # Clean data directories
         log_info "Cleaning data directories..."
@@ -116,11 +126,20 @@ if [ "$RUNNING" -gt 0 ]; then
     echo "To force remove all: podman rm -f \$(podman ps -aq)"
 fi
 
-# Show any remaining networks
-NETWORKS=$(podman network ls --format "{{.Name}}" 2>/dev/null | grep -E "(lab-network|${PROJECT_NAME}_)" | wc -l)
+# Show any remaining networks (by name or subnet)
+NETWORKS=$(podman network ls --format "{{.Name}}" 2>/dev/null | grep -E "(lab-network|cert-lab|${PROJECT_NAME}_)" | wc -l)
 if [ "$NETWORKS" -gt 0 ]; then
     log_warn "Some lab networks still exist:"
-    podman network ls | grep -E "(lab-network|${PROJECT_NAME}_)"
+    podman network ls | grep -E "(lab-network|cert-lab|${PROJECT_NAME}_)"
     echo
     echo "To force remove: podman network rm <network-name>"
 fi
+
+# Check for any network using the lab subnet
+for net in $(podman network ls -q 2>/dev/null); do
+    subnet=$(podman network inspect "$net" --format '{{range .Subnets}}{{.Subnet}}{{end}}' 2>/dev/null)
+    if [[ "$subnet" == "172.20.0.0/16" ]]; then
+        log_warn "Network '$net' is using lab subnet 172.20.0.0/16"
+        echo "To remove: podman network rm $net"
+    fi
+done
