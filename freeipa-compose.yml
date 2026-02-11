@@ -13,6 +13,14 @@ services:
     privileged: true
     environment:
       PASSWORD: ${ADMIN_PASSWORD:-RedHat123!}
+      IPA_SERVER_INSTALL_OPTS: >-
+        -U
+        --realm=CERT-LAB.LOCAL
+        --domain=cert-lab.local
+        --no-ntp
+        --no-host-dns
+        --external-ca
+        --external-ca-type=generic
     volumes:
       - freeipa-data:/data:Z
       - ./data/certs:/certs:Z
@@ -25,17 +33,9 @@ services:
       - "8800:88/udp"
       - "4640:464"        # Kpasswd
       - "4640:464/udp"
-    # First run: generates CSR at /data/ipa.csr
-    # After signing CSR, run with --external-cert-file options
-    command: >
-      ipa-server-install -U
-      --realm=CERT-LAB.LOCAL
-      --domain=cert-lab.local
-      --ds-password=${ADMIN_PASSWORD:-RedHat123!}
-      --admin-password=${ADMIN_PASSWORD:-RedHat123!}
-      --no-ntp
-      --no-host-dns
-      --external-ca
+    # Let the container's native entrypoint handle installation
+    # External CA mode generates CSR at /data/ipa.csr and exits
+    # After signing, re-run with external-cert-file options
     healthcheck:
       test: ["CMD-SHELL", "curl -sk https://localhost/ipa/config/ca.crt || exit 1"]
       interval: 60s
