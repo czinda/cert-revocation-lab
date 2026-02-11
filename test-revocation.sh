@@ -267,7 +267,7 @@ show_results() {
 }
 
 # Cleanup test device
-cleanup() {
+cleanup_device() {
     log_phase "Cleanup"
 
     log_info "Removing test device from FreeIPA..."
@@ -294,7 +294,7 @@ main() {
     # Handle arguments
     case "${1:-}" in
         --cleanup-only)
-            cleanup
+            cleanup_device
             exit 0
             ;;
         --help|-h)
@@ -320,11 +320,11 @@ main() {
         read -p "Remove test device from FreeIPA? [Y/n]: " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-            cleanup
+            cleanup_device
         fi
     else
         # Non-interactive mode: always cleanup
-        cleanup
+        cleanup_device
     fi
 }
 
