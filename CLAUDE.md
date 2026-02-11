@@ -81,14 +81,14 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 
 | IP | Service | Ports |
 |----|---------|-------|
-| 172.20.0.10 | FreeIPA | 443, 80, 389, 636 |
+| 172.20.0.10 | FreeIPA | 4443:443, 8180:80, 3389:389, 6360:636 |
 | 172.20.0.11 | Intermediate CA | 8444:8443 |
 | 172.20.0.12 | Root CA | 8443:8443 |
 | 172.20.0.13 | IoT CA | 8445:8443 |
 | 172.20.0.14-16 | 389DS instances | internal |
 | 172.20.0.20 | PostgreSQL | internal |
 | 172.20.0.21 | Redis | internal |
-| 172.20.0.22-23 | AWX web/task | 8080:8052 |
+| 172.20.0.22-23 | AWX web/task | 8084:8080 |
 | 172.20.0.30 | Zookeeper | 2181 |
 | 172.20.0.31 | Kafka | 9092 |
 | 172.20.0.40 | EDA Server | 5000 |

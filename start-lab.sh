@@ -283,7 +283,7 @@ start_awx() {
     wait_for_container "awx-web" 180
 
     log_success "AWX started"
-    log_info "AWX Web UI: http://localhost:8080"
+    log_info "AWX Web UI: http://localhost:8084"
     log_info "Default credentials: admin / (see .env)"
 }
 
@@ -335,8 +335,8 @@ print_summary() {
     echo "  Root CA:         https://localhost:8443/ca"
     echo "  Intermediate CA: https://localhost:8444/ca"
     echo "  IoT CA:          https://localhost:8445/ca"
-    echo "  FreeIPA:         https://localhost/ipa/ui"
-    echo "  AWX:             http://localhost:8080"
+    echo "  FreeIPA:         https://localhost:4443/ipa/ui"
+    echo "  AWX:             http://localhost:8084"
     echo "  Mock EDR:        http://localhost:8082"
     echo "  Mock SIEM:       http://localhost:8083"
     echo "  Jupyter:         http://localhost:8888"

@@ -175,8 +175,8 @@ podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \
 | Root CA | https://localhost:8443/ca | admin / (see .env) |
 | Intermediate CA | https://localhost:8444/ca | admin / (see .env) |
 | IoT Sub-CA | https://localhost:8445/ca | admin / (see .env) |
-| FreeIPA | https://localhost/ipa/ui | admin / (see .env) |
-| AWX | http://localhost:8080 | admin / (see .env) |
+| FreeIPA | https://localhost:4443/ipa/ui | admin / (see .env) |
+| AWX | http://localhost:8084 | admin / (see .env) |
 | Mock EDR API | http://localhost:8082 | - |
 | Mock SIEM API | http://localhost:8083 | - |
 | EDA Webhook | http://localhost:5000 | - |

@@ -194,14 +194,15 @@ services:
       lab-network:
         ipv4_address: ${IP_FREEIPA:-172.20.0.10}
     ports:
-      - "443:443"
-      - "80:80"
-      - "389:389"
-      - "636:636"
-      - "88:88"
-      - "88:88/udp"
-      - "464:464"
-      - "464:464/udp"
+      # Use high ports for rootless podman compatibility
+      - "4443:443"        # HTTPS (was 443)
+      - "8180:80"         # HTTP (was 80)
+      - "3389:389"        # LDAP (was 389)
+      - "6360:636"        # LDAPS (was 636)
+      - "8800:88"         # Kerberos (was 88)
+      - "8800:88/udp"
+      - "4640:464"        # Kpasswd (was 464)
+      - "4640:464/udp"
     # Start systemd and wait for manual PKI initialization
     command: ["/usr/sbin/init"]
     healthcheck:
@@ -338,7 +339,7 @@ services:
       lab-network:
         ipv4_address: ${IP_AWX_WEB:-172.20.0.22}
     ports:
-      - "8080:8080"
+      - "8084:8080"       # AWX web UI (was 8080, changed to avoid conflicts)
     # Keep container running for manual playbook execution
     command: ["sleep", "infinity"]
     healthcheck:
