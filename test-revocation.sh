@@ -23,7 +23,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # Configuration
-IPA_URL="https://ipa.cert-lab.local:4443/ipa/session/json"
+IPA_URL="https://localhost:4443/ipa/session/json"
 EDR_URL="http://localhost:8082"
 SIEM_URL="http://localhost:8083"
 IPA_USER="admin"
@@ -62,7 +62,8 @@ check_services() {
     fi
 
     # Check FreeIPA (with self-signed cert)
-    if curl -skLf --resolve "ipa.cert-lab.local:4443:127.0.0.1" "https://ipa.cert-lab.local:4443/ipa/ui" > /dev/null 2>&1; then
+    # Use Host header to satisfy FreeIPA's hostname check
+    if curl -skf -H "Host: ipa.cert-lab.local" "https://localhost:4443/" > /dev/null 2>&1; then
         log_success "FreeIPA is responding"
     else
         log_error "FreeIPA is not responding"
@@ -76,14 +77,17 @@ check_services() {
 }
 
 # IPA API call helper
+# Note: FreeIPA redirects to its hostname on port 443, but we're using port 4443.
+# We use --resolve to map ipa.cert-lab.local:443 to 127.0.0.1:4443 won't work directly.
+# Instead, we use localhost:4443 and handle redirects by resolving port 443 to 4443 via the host entry.
 ipa_call() {
     local method=$1
     local params=$2
 
-    curl -skL -X POST "${IPA_URL}" \
-        --resolve "ipa.cert-lab.local:4443:127.0.0.1" \
+    curl -sk -X POST "https://localhost:4443/ipa/session/json" \
         -H "Content-Type: application/json" \
-        -H "Referer: https://ipa.cert-lab.local:4443/ipa" \
+        -H "Referer: https://localhost:4443/ipa" \
+        -H "Host: ipa.cert-lab.local" \
         -u "${IPA_USER}:${IPA_PASS}" \
         -d "{\"method\":\"${method}\",\"params\":${params}}"
 }
