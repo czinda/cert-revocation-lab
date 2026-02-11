@@ -11,11 +11,16 @@ services:
     container_name: freeipa
     hostname: ipa.${LAB_DOMAIN:-cert-lab.local}
     privileged: true
+    networks:
+      freeipa-net:
+        ipv4_address: 172.25.0.10
+    extra_hosts:
+      - "ipa.cert-lab.local:172.25.0.10"
     environment:
       PASSWORD: ${ADMIN_PASSWORD:-RedHat123!}
-      IPA_SERVER_INSTALL_OPTS: "-U --realm=CERT-LAB.LOCAL --domain=cert-lab.local --no-ntp --no-host-dns --external-ca --external-ca-type=generic"
+      IPA_SERVER_INSTALL_OPTS: "-U --realm=CERT-LAB.LOCAL --domain=cert-lab.local --no-ntp --no-host-dns"
     volumes:
-      - freeipa-data:/data:Z
+      - ./data/freeipa:/data:Z
       - ./data/certs:/certs:Z
     ports:
       - "4443:443"        # HTTPS
@@ -26,9 +31,6 @@ services:
       - "8800:88/udp"
       - "4640:464"        # Kpasswd
       - "4640:464/udp"
-    # Let the container's native entrypoint handle installation
-    # External CA mode generates CSR at /data/ipa.csr and exits
-    # After signing, re-run with external-cert-file options
     healthcheck:
       test: ["CMD-SHELL", "curl -sk https://localhost/ipa/config/ca.crt || exit 1"]
       interval: 60s
@@ -36,5 +38,10 @@ services:
       retries: 10
       start_period: 600s
 
-volumes:
-  freeipa-data:
+networks:
+  freeipa-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.0.0/24
+          gateway: 172.25.0.1
