@@ -26,6 +26,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # ============================================================================
+# Logging Setup
+# ============================================================================
+
+LOG_DIR="${SCRIPT_DIR}/logs"
+mkdir -p "$LOG_DIR"
+LOG_FILE="${LOG_DIR}/validate-lab-$(date +%Y%m%d-%H%M%S).log"
+
+# Tee all output to log file while preserving colors for terminal
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+echo "============================================================================"
+echo "Validation Log Started: $(date)"
+echo "Log File: ${LOG_FILE}"
+echo "============================================================================"
+echo ""
+
+# ============================================================================
 # Configuration
 # ============================================================================
 
