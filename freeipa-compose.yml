@@ -25,6 +25,8 @@ services:
       - "8800:88/udp"
       - "4640:464"        # Kpasswd
       - "4640:464/udp"
+    # First run: generates CSR at /data/ipa.csr
+    # After signing CSR, run with --external-cert-file options
     command: >
       ipa-server-install -U
       --realm=CERT-LAB.LOCAL
@@ -33,6 +35,7 @@ services:
       --admin-password=${ADMIN_PASSWORD:-RedHat123!}
       --no-ntp
       --no-host-dns
+      --external-ca
     healthcheck:
       test: ["CMD-SHELL", "curl -sk https://localhost/ipa/config/ca.crt || exit 1"]
       interval: 60s
