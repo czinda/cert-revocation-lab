@@ -122,15 +122,13 @@ vi .env
 ./start-lab.sh --clean
 ```
 
-> **Note:** FreeIPA requires rootful podman (systemd support). Start it separately with sudo:
+> **Note:** FreeIPA requires rootful podman (systemd support). Start it separately:
 > ```bash
-> sudo podman run -d --name freeipa \
->   --hostname ipa.cert-lab.local --privileged \
->   -e IPA_SERVER_HOSTNAME=ipa.cert-lab.local \
->   -e PASSWORD=${ADMIN_PASSWORD} \
->   -v $(pwd)/data/certs:/certs \
->   -p 4443:443 -p 8180:80 -p 3390:389 -p 6360:636 \
->   quay.io/freeipa/freeipa-server:rocky-9
+> # Using the separate compose file
+> sudo podman-compose -f freeipa-compose.yml up -d
+>
+> # Monitor installation (takes 5-10 minutes)
+> sudo podman logs -f freeipa
 > ```
 
 ### 4. Initialize PKI Hierarchy
