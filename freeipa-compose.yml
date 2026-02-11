@@ -18,7 +18,7 @@ services:
       - "ipa.cert-lab.local:172.25.0.10"
     environment:
       PASSWORD: ${ADMIN_PASSWORD:-RedHat123!}
-      IPA_SERVER_INSTALL_OPTS: "-U --realm=CERT-LAB.LOCAL --domain=cert-lab.local --no-ntp --no-host-dns --external-ca --external-ca-type=generic"
+      IPA_SERVER_INSTALL_OPTS: "-U --realm=CERT-LAB.LOCAL --domain=cert-lab.local --no-ntp --no-host-dns"
     volumes:
       - ./data/freeipa:/data:Z
       - ./data/certs:/certs:Z
