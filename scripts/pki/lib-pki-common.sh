@@ -253,9 +253,17 @@ print_sign_action() {
 
 # Export common environment variables for pkispawn
 export_pki_env() {
-    export DS_HOST DS_PORT DS_PASSWORD PKI_PASSWORD PKI_INSTANCE
+    # Export all password variables for envsubst
+    export DS_PASSWORD="${DS_PASSWORD:-${PKI_DS_PASSWORD}}"
+    export PKI_ADMIN_PASSWORD="${PKI_ADMIN_PASSWORD:-${ADMIN_PASSWORD}}"
+    export PKI_BACKUP_PASSWORD="${PKI_BACKUP_PASSWORD:-${PKI_ADMIN_PASSWORD}}"
+    export PKI_CLIENT_PKCS12_PASSWORD="${PKI_CLIENT_PKCS12_PASSWORD:-${PKI_ADMIN_PASSWORD}}"
+    export PKI_TOKEN_PASSWORD="${PKI_TOKEN_PASSWORD:-${PKI_ADMIN_PASSWORD}}"
+
+    # Legacy variables
+    export DS_HOST DS_PORT PKI_PASSWORD PKI_INSTANCE
     export pki_ds_hostname="${DS_HOST}"
     export pki_ds_ldap_port="${DS_PORT}"
     export pki_ds_password="${DS_PASSWORD}"
-    export pki_admin_password="${PKI_PASSWORD}"
+    export pki_admin_password="${PKI_ADMIN_PASSWORD}"
 }
