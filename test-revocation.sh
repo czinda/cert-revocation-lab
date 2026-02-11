@@ -108,7 +108,7 @@ ipa_call() {
 
     curl -sk -X POST "https://localhost:4443/ipa/session/json" \
         -H "Content-Type: application/json" \
-        -H "Referer: https://localhost:4443/ipa" \
+        -H "Referer: https://ipa.cert-lab.local/ipa" \
         -H "Host: ipa.cert-lab.local" \
         -H "Accept: application/json" \
         -b "${IPA_COOKIE_FILE}" \
