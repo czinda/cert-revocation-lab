@@ -1,0 +1,57 @@
+---
+# Global Variables for Certificate Revocation Lab
+
+# Domain Configuration
+lab_domain: cert-lab.local
+ipa_realm: CERT-LAB.LOCAL
+
+# FreeIPA Settings
+ipa_host: ipa.cert-lab.local
+ipa_admin_user: admin
+ipa_admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default('RedHat123!', true) }}"
+
+# PKI Settings
+pki_admin_password: "{{ lookup('env', 'PKI_ADMIN_PASSWORD') | default('RedHat123!', true) }}"
+pki_security_domain: CERT-LAB
+
+# Kafka Settings
+kafka_host: kafka.cert-lab.local
+kafka_port: 9092
+kafka_topic_security: security-events
+kafka_consumer_group: eda-security-processor
+
+# Certificate Revocation Reasons (RFC 5280)
+revocation_reasons:
+  unspecified: 0
+  key_compromise: 1
+  ca_compromise: 2
+  affiliation_changed: 3
+  superseded: 4
+  cessation_of_operation: 5
+  certificate_hold: 6
+  remove_from_crl: 8
+  privilege_withdrawn: 9
+  aa_compromise: 10
+
+# Default revocation reason for security events
+default_revocation_reason: 1  # keyCompromise
+
+# Severity levels that trigger automatic revocation
+auto_revoke_severities:
+  - critical
+  - high
+
+# Event types that trigger automatic revocation
+auto_revoke_event_types:
+  - malware_detection
+  - credential_theft
+  - ransomware
+  - c2_communication
+  - lateral_movement
+  - certificate_misuse
+  - data_exfiltration
+  - unauthorized_access
+
+# Logging
+log_directory: /var/log/cert-revocation
+log_file: "{{ log_directory }}/revocation.log"

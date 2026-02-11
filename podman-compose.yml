@@ -1,0 +1,493 @@
+version: "3.8"
+
+# Certificate Revocation Lab - Full Stack Deployment
+# PKI Hierarchy: Root CA -> Intermediate CA -> FreeIPA Sub-CA + IoT Sub-CA
+
+services:
+  # ===========================================================================
+  # 389 Directory Server Instances (LDAP backend for each Dogtag CA)
+  # ===========================================================================
+
+  ds-root:
+    image: quay.io/389ds/dirsrv:${DS_VERSION:-latest}
+    container_name: ds-root
+    hostname: ds-root.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_SUFFIX_NAME: root-ca
+    volumes:
+      - ds-root-data:/data
+    networks:
+      lab-network:
+        ipv4_address: ${IP_DS_ROOT:-172.20.0.14}
+    healthcheck:
+      test: ["CMD", "dsctl", "slapd-localhost", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  ds-intermediate:
+    image: quay.io/389ds/dirsrv:${DS_VERSION:-latest}
+    container_name: ds-intermediate
+    hostname: ds-intermediate.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_SUFFIX_NAME: intermediate-ca
+    volumes:
+      - ds-intermediate-data:/data
+    networks:
+      lab-network:
+        ipv4_address: ${IP_DS_INTERMEDIATE:-172.20.0.15}
+    healthcheck:
+      test: ["CMD", "dsctl", "slapd-localhost", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  ds-iot:
+    image: quay.io/389ds/dirsrv:${DS_VERSION:-latest}
+    container_name: ds-iot
+    hostname: ds-iot.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_SUFFIX_NAME: iot-ca
+    volumes:
+      - ds-iot-data:/data
+    networks:
+      lab-network:
+        ipv4_address: ${IP_DS_IOT:-172.20.0.16}
+    healthcheck:
+      test: ["CMD", "dsctl", "slapd-localhost", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ===========================================================================
+  # Dogtag PKI Certificate Authorities
+  # ===========================================================================
+
+  dogtag-root-ca:
+    image: quay.io/dogtagpki/pki-ca:${PKI_VERSION:-latest}
+    container_name: dogtag-root-ca
+    hostname: root-ca.${LAB_DOMAIN:-cert-lab.local}
+    depends_on:
+      ds-root:
+        condition: service_healthy
+    environment:
+      PKI_DS_URL: ldap://ds-root.${LAB_DOMAIN:-cert-lab.local}:3389
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_INSTANCE_NAME: pki-root-ca
+    volumes:
+      - ./configs/pki:/etc/pki-configs:ro
+      - ./scripts/pki:/scripts:ro
+      - ./data/certs:/certs
+      - pki-root-data:/var/lib/pki
+      - pki-root-logs:/var/log/pki
+    networks:
+      lab-network:
+        ipv4_address: ${IP_ROOT_CA:-172.20.0.12}
+    ports:
+      - "8443:8443"
+      - "8480:8080"
+    command: ["/bin/bash", "-c", "sleep infinity"]
+
+  dogtag-intermediate-ca:
+    image: quay.io/dogtagpki/pki-ca:${PKI_VERSION:-latest}
+    container_name: dogtag-intermediate-ca
+    hostname: intermediate-ca.${LAB_DOMAIN:-cert-lab.local}
+    depends_on:
+      ds-intermediate:
+        condition: service_healthy
+      dogtag-root-ca:
+        condition: service_started
+    environment:
+      PKI_DS_URL: ldap://ds-intermediate.${LAB_DOMAIN:-cert-lab.local}:3389
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_INSTANCE_NAME: pki-intermediate-ca
+    volumes:
+      - ./configs/pki:/etc/pki-configs:ro
+      - ./scripts/pki:/scripts:ro
+      - ./data/certs:/certs
+      - pki-intermediate-data:/var/lib/pki
+      - pki-intermediate-logs:/var/log/pki
+    networks:
+      lab-network:
+        ipv4_address: ${IP_INTERMEDIATE_CA:-172.20.0.11}
+    ports:
+      - "8444:8443"
+      - "8481:8080"
+    command: ["/bin/bash", "-c", "sleep infinity"]
+
+  dogtag-iot-ca:
+    image: quay.io/dogtagpki/pki-ca:${PKI_VERSION:-latest}
+    container_name: dogtag-iot-ca
+    hostname: iot-ca.${LAB_DOMAIN:-cert-lab.local}
+    depends_on:
+      ds-iot:
+        condition: service_healthy
+      dogtag-intermediate-ca:
+        condition: service_started
+    environment:
+      PKI_DS_URL: ldap://ds-iot.${LAB_DOMAIN:-cert-lab.local}:3389
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_INSTANCE_NAME: pki-iot-ca
+    volumes:
+      - ./configs/pki:/etc/pki-configs:ro
+      - ./scripts/pki:/scripts:ro
+      - ./data/certs:/certs
+      - pki-iot-data:/var/lib/pki
+      - pki-iot-logs:/var/log/pki
+    networks:
+      lab-network:
+        ipv4_address: ${IP_IOT_CA:-172.20.0.13}
+    ports:
+      - "8445:8443"
+      - "8482:8080"
+    command: ["/bin/bash", "-c", "sleep infinity"]
+
+  # ===========================================================================
+  # FreeIPA Identity Management (Subordinate to Intermediate CA)
+  # ===========================================================================
+
+  freeipa:
+    image: quay.io/freeipa/freeipa-server:${IPA_VERSION:-rocky-9}
+    container_name: freeipa
+    hostname: ipa.${LAB_DOMAIN:-cert-lab.local}
+    read_only: false
+    privileged: false
+    cap_add:
+      - SYS_TIME
+      - NET_ADMIN
+    security_opt:
+      - "seccomp:unconfined"
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=0
+    environment:
+      IPA_SERVER_HOSTNAME: ipa.${LAB_DOMAIN:-cert-lab.local}
+      IPA_SERVER_IP: ${IP_FREEIPA:-172.20.0.10}
+      PASSWORD: ${ADMIN_PASSWORD:-RedHat123!}
+    volumes:
+      - freeipa-data:/data
+      - ./data/certs:/certs:ro
+      - ./configs/freeipa:/config:ro
+      - ./scripts/pki:/scripts:ro
+    depends_on:
+      dogtag-intermediate-ca:
+        condition: service_started
+    networks:
+      lab-network:
+        ipv4_address: ${IP_FREEIPA:-172.20.0.10}
+    ports:
+      - "443:443"
+      - "80:80"
+      - "389:389"
+      - "636:636"
+      - "88:88"
+      - "88:88/udp"
+      - "464:464"
+      - "464:464/udp"
+    command: ["ipa-server-install", "--unattended", "--realm=${IPA_REALM:-CERT-LAB.LOCAL}", "--domain=${LAB_DOMAIN:-cert-lab.local}", "--ds-password=${ADMIN_PASSWORD:-RedHat123!}", "--admin-password=${ADMIN_PASSWORD:-RedHat123!}", "--no-ntp", "--no-host-dns", "--external-ca"]
+
+  # ===========================================================================
+  # Event Streaming Infrastructure
+  # ===========================================================================
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:${ZOOKEEPER_VERSION:-7.5.0}
+    container_name: zookeeper
+    hostname: zookeeper.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SYNC_LIMIT: 2
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-log:/var/lib/zookeeper/log
+    networks:
+      lab-network:
+        ipv4_address: ${IP_ZOOKEEPER:-172.20.0.30}
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  kafka:
+    image: confluentinc/cp-kafka:${KAFKA_VERSION:-7.5.0}
+    container_name: kafka
+    hostname: kafka.${LAB_DOMAIN:-cert-lab.local}
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper.${LAB_DOMAIN:-cert-lab.local}:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka.${LAB_DOMAIN:-cert-lab.local}:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks:
+      lab-network:
+        ipv4_address: ${IP_KAFKA:-172.20.0.31}
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ===========================================================================
+  # AWX Automation Platform
+  # ===========================================================================
+
+  postgres:
+    image: postgres:${POSTGRES_VERSION:-15}
+    container_name: postgres
+    hostname: postgres.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      POSTGRES_USER: awx
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-RedHat123!}
+      POSTGRES_DB: awx
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      lab-network:
+        ipv4_address: ${IP_POSTGRES:-172.20.0.20}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U awx -d awx"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  redis:
+    image: redis:${REDIS_VERSION:-7}
+    container_name: redis
+    hostname: redis.${LAB_DOMAIN:-cert-lab.local}
+    volumes:
+      - redis-data:/data
+    networks:
+      lab-network:
+        ipv4_address: ${IP_REDIS:-172.20.0.21}
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  awx-web:
+    image: quay.io/ansible/awx:${AWX_VERSION:-24.6.1}
+    container_name: awx-web
+    hostname: awx.${LAB_DOMAIN:-cert-lab.local}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_HOST: postgres.${LAB_DOMAIN:-cert-lab.local}
+      DATABASE_NAME: awx
+      DATABASE_USER: awx
+      DATABASE_PASSWORD: ${DB_PASSWORD:-RedHat123!}
+      DATABASE_PORT: 5432
+      REDIS_HOST: redis.${LAB_DOMAIN:-cert-lab.local}
+      REDIS_PORT: 6379
+      AWX_ADMIN_USER: admin
+      AWX_ADMIN_PASSWORD: ${ADMIN_PASSWORD:-RedHat123!}
+      SECRET_KEY: ${AWX_SECRET_KEY:-redhat123secretkey}
+    volumes:
+      - awx-projects:/var/lib/awx/projects
+      - ./ansible:/var/lib/awx/playbooks:ro
+    networks:
+      lab-network:
+        ipv4_address: ${IP_AWX_WEB:-172.20.0.22}
+    ports:
+      - "8080:8052"
+
+  awx-task:
+    image: quay.io/ansible/awx:${AWX_VERSION:-24.6.1}
+    container_name: awx-task
+    hostname: awx-task.${LAB_DOMAIN:-cert-lab.local}
+    command: ["launch_awx_task.sh"]
+    depends_on:
+      - awx-web
+    environment:
+      DATABASE_HOST: postgres.${LAB_DOMAIN:-cert-lab.local}
+      DATABASE_NAME: awx
+      DATABASE_USER: awx
+      DATABASE_PASSWORD: ${DB_PASSWORD:-RedHat123!}
+      DATABASE_PORT: 5432
+      REDIS_HOST: redis.${LAB_DOMAIN:-cert-lab.local}
+      REDIS_PORT: 6379
+      SECRET_KEY: ${AWX_SECRET_KEY:-redhat123secretkey}
+      SUPERVISOR_WEB_CONFIG_PATH: /etc/supervisord.conf
+    volumes:
+      - awx-projects:/var/lib/awx/projects
+      - ./ansible:/var/lib/awx/playbooks:ro
+    networks:
+      lab-network:
+        ipv4_address: ${IP_AWX_TASK:-172.20.0.23}
+
+  # ===========================================================================
+  # Event-Driven Ansible
+  # ===========================================================================
+
+  eda-server:
+    image: quay.io/ansible/eda-controller:${EDA_VERSION:-latest}
+    container_name: eda-server
+    hostname: eda.${LAB_DOMAIN:-cert-lab.local}
+    depends_on:
+      kafka:
+        condition: service_healthy
+      awx-web:
+        condition: service_started
+    environment:
+      EDA_CONTROLLER_URL: http://awx.${LAB_DOMAIN:-cert-lab.local}:8052
+      EDA_CONTROLLER_TOKEN: ${AWX_TOKEN:-}
+      EDA_ALLOWED_HOSTS: "*"
+      EDA_DB_HOST: postgres.${LAB_DOMAIN:-cert-lab.local}
+      EDA_DB_NAME: eda
+      EDA_DB_USER: awx
+      EDA_DB_PASSWORD: ${DB_PASSWORD:-RedHat123!}
+    volumes:
+      - ./ansible/rulebooks:/rulebooks:ro
+      - ./ansible/playbooks:/playbooks:ro
+      - ./ansible/inventory:/inventory:ro
+    networks:
+      lab-network:
+        ipv4_address: ${IP_EDA:-172.20.0.40}
+    ports:
+      - "5000:5000"
+      - "5001:5001"
+
+  # ===========================================================================
+  # Mock Security Tools
+  # ===========================================================================
+
+  mock-edr:
+    build:
+      context: ./containers/mock-edr
+      dockerfile: Containerfile
+    container_name: mock-edr
+    hostname: edr.${LAB_DOMAIN:-cert-lab.local}
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka.${LAB_DOMAIN:-cert-lab.local}:9092
+      KAFKA_TOPIC: ${KAFKA_TOPIC_SECURITY:-security-events}
+      LAB_DOMAIN: ${LAB_DOMAIN:-cert-lab.local}
+    networks:
+      lab-network:
+        ipv4_address: ${IP_EDR:-172.20.0.50}
+    ports:
+      - "8082:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  mock-siem:
+    build:
+      context: ./containers/mock-siem
+      dockerfile: Containerfile
+    container_name: mock-siem
+    hostname: siem.${LAB_DOMAIN:-cert-lab.local}
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka.${LAB_DOMAIN:-cert-lab.local}:9092
+      KAFKA_TOPIC: ${KAFKA_TOPIC_SECURITY:-security-events}
+      LAB_DOMAIN: ${LAB_DOMAIN:-cert-lab.local}
+    networks:
+      lab-network:
+        ipv4_address: ${IP_SIEM:-172.20.0.51}
+    ports:
+      - "8083:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================================================
+  # Jupyter Lab (Documentation and Demos)
+  # ===========================================================================
+
+  jupyter:
+    image: jupyter/minimal-notebook:${JUPYTER_VERSION:-latest}
+    container_name: jupyter
+    hostname: jupyter.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:-RedHat123}
+      JUPYTER_ENABLE_LAB: "yes"
+    volumes:
+      - ./notebooks:/home/jovyan/work
+      - ./data/certs:/home/jovyan/certs:ro
+    networks:
+      lab-network:
+        ipv4_address: ${IP_JUPYTER:-172.20.0.60}
+    ports:
+      - "8888:8888"
+
+# ===========================================================================
+# Networks
+# ===========================================================================
+
+networks:
+  lab-network:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: ${LAB_SUBNET:-172.20.0.0/16}
+          gateway: ${LAB_GATEWAY:-172.20.0.1}
+
+# ===========================================================================
+# Volumes
+# ===========================================================================
+
+volumes:
+  # 389 Directory Server volumes
+  ds-root-data:
+  ds-intermediate-data:
+  ds-iot-data:
+
+  # Dogtag PKI volumes
+  pki-root-data:
+  pki-root-logs:
+  pki-intermediate-data:
+  pki-intermediate-logs:
+  pki-iot-data:
+  pki-iot-logs:
+
+  # FreeIPA volume
+  freeipa-data:
+
+  # Kafka/Zookeeper volumes
+  zookeeper-data:
+  zookeeper-log:
+  kafka-data:
+
+  # AWX volumes
+  postgres-data:
+  redis-data:
+  awx-projects:

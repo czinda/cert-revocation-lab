@@ -1,0 +1,68 @@
+---
+# Webhook Events Rulebook
+# Alternative event source using HTTP webhooks instead of Kafka
+# Useful for direct integration with security tools
+
+- name: Webhook Security Event Processor
+  hosts: all
+  sources:
+    # Webhook event source - receives HTTP POST events
+    - ansible.eda.webhook:
+        host: 0.0.0.0
+        port: 5000
+
+  rules:
+    # Rule 1: EDR webhook events
+    - name: Process EDR Webhook Event
+      condition: >
+        event.payload.source == "edr" and
+        event.payload.action_required == "revoke_certificate"
+      action:
+        run_playbook:
+          name: playbooks/revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.payload }}"
+
+    # Rule 2: SIEM webhook events
+    - name: Process SIEM Webhook Event
+      condition: >
+        event.payload.source == "siem" and
+        event.payload.action_required == "revoke_certificate"
+      action:
+        run_playbook:
+          name: playbooks/revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.payload }}"
+
+    # Rule 3: Generic security alert
+    - name: Process Generic Security Alert
+      condition: >
+        event.payload.severity in ["high", "critical"] and
+        event.payload.certificate_cn is defined
+      action:
+        run_playbook:
+          name: playbooks/revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.payload }}"
+
+    # Rule 4: Manual revocation request
+    - name: Process Manual Revocation Request
+      condition: >
+        event.payload.action == "manual_revoke"
+      action:
+        run_playbook:
+          name: playbooks/revoke-certificate.yml
+          extra_vars:
+            event:
+              device_fqdn: "{{ event.payload.device_fqdn }}"
+              severity: "high"
+              event_id: "{{ event.payload.request_id | default('manual') }}"
+              description: "Manual revocation request"
+              certificate_cn: "{{ event.payload.certificate_cn | default(event.payload.device_fqdn) }}"
+
+    # Rule 5: Health check endpoint
+    - name: Health Check Response
+      condition: event.payload.action == "health_check"
+      action:
+        debug:
+          msg: "EDA Webhook Health Check: OK"

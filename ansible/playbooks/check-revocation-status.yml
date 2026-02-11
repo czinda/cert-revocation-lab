@@ -1,0 +1,66 @@
+---
+# Check Revocation Status Playbook
+# Verify certificate revocation status for a device
+
+- name: Check Certificate Revocation Status
+  hosts: localhost
+  gather_facts: false
+  vars:
+    ipa_host: "{{ lookup('env', 'IPA_HOST') | default('ipa.cert-lab.local', true) }}"
+    ipa_user: "{{ lookup('env', 'IPA_USER') | default('admin', true) }}"
+    ipa_password: "{{ lookup('env', 'IPA_PASSWORD') | default('RedHat123!', true) }}"
+    device_fqdn: "{{ host_fqdn | default('device.cert-lab.local') }}"
+
+  tasks:
+    - name: Obtain Kerberos ticket
+      ansible.builtin.shell: |
+        echo "{{ ipa_password }}" | kinit {{ ipa_user }}
+      no_log: true
+      changed_when: false
+
+    - name: Get host information
+      ansible.builtin.command:
+        cmd: "ipa host-show {{ device_fqdn }}"
+      register: host_info
+      failed_when: false
+      changed_when: false
+
+    - name: Find all certificates for device
+      ansible.builtin.command:
+        cmd: "ipa cert-find --subject={{ device_fqdn }}"
+      register: all_certs
+      failed_when: false
+      changed_when: false
+
+    - name: Find valid certificates
+      ansible.builtin.command:
+        cmd: "ipa cert-find --subject={{ device_fqdn }} --status=VALID"
+      register: valid_certs
+      failed_when: false
+      changed_when: false
+
+    - name: Find revoked certificates
+      ansible.builtin.command:
+        cmd: "ipa cert-find --subject={{ device_fqdn }} --status=REVOKED"
+      register: revoked_certs
+      failed_when: false
+      changed_when: false
+
+    - name: Parse certificate counts
+      ansible.builtin.set_fact:
+        total_certs: "{{ all_certs.stdout | regex_findall('Serial number:') | length }}"
+        valid_count: "{{ valid_certs.stdout | regex_findall('Serial number:') | length }}"
+        revoked_count: "{{ revoked_certs.stdout | regex_findall('Serial number:') | length }}"
+
+    - name: Display status
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          CERTIFICATE STATUS REPORT
+          ============================================================
+          Device:           {{ device_fqdn }}
+          Host Status:      {{ 'Enrolled' if host_info.rc == 0 else 'Not found' }}
+          Total Certs:      {{ total_certs }}
+          Valid Certs:      {{ valid_count }}
+          Revoked Certs:    {{ revoked_count }}
+          ============================================================

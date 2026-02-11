@@ -1,0 +1,151 @@
+---
+# Security Events Rulebook
+# Consumes security events from Kafka and triggers automated responses
+#
+# Event sources: Mock EDR and Mock SIEM publishing to Kafka topic "security-events"
+# Actions: Run playbooks for certificate revocation based on event severity
+
+- name: Security Event Processor
+  hosts: all
+  sources:
+    # Kafka event source - consumes security events
+    - ansible.eda.kafka:
+        host: "{{ lookup('env', 'KAFKA_HOST') | default('kafka.cert-lab.local') }}"
+        port: "{{ lookup('env', 'KAFKA_PORT') | default(9092) }}"
+        topic: "{{ lookup('env', 'KAFKA_TOPIC') | default('security-events') }}"
+        group_id: "{{ lookup('env', 'KAFKA_GROUP_ID') | default('eda-security-processor') }}"
+        offset: earliest
+
+  rules:
+    # Rule 1: Critical malware detection - immediate revocation
+    - name: Critical Malware Detection - Immediate Revocation
+      condition: >
+        event.source in ["edr", "siem"] and
+        event.event_type == "malware_detection" and
+        event.severity == "critical" and
+        event.action_required == "revoke_certificate"
+      action:
+        run_playbook:
+          name: playbooks/revoke-certificate.yml
+          extra_vars:
+            event: "{{ event }}"
+            priority: "critical"
+
+    # Rule 2: Credential theft - immediate revocation
+    - name: Credential Theft Detected - Revoke Certificate
+      condition: >
+        event.event_type == "credential_theft" and
+        event.severity in ["high", "critical"] and
+        event.action_required == "revoke_certificate"
+      action:
+        run_playbook:
+          name: playbooks/revoke-certificate.yml
+          extra_vars:
+            event: "{{ event }}"
+            priority: "high"
+
+    # Rule 3: High severity malware - revocation
+    - name: High Severity Malware - Revoke Certificate
+      condition: >
+        event.event_type == "malware_detection" and
+        event.severity == "high" and
+        event.action_required == "revoke_certificate"
+      action:
+        run_playbook:
+          name: playbooks/revoke-certificate.yml
+          extra_vars:
+            event: "{{ event }}"
+            priority: "high"
+
+    # Rule 4: Ransomware detection - immediate revocation
+    - name: Ransomware Detection - Emergency Revocation
+      condition: >
+        event.event_type == "ransomware" and
+        event.severity in ["high", "critical"]
+      action:
+        run_playbook:
+          name: playbooks/revoke-certificate.yml
+          extra_vars:
+            event: "{{ event }}"
+            priority: "emergency"
+
+    # Rule 5: C2 communication - revocation
+    - name: C2 Communication Detected - Revoke Certificate
+      condition: >
+        event.event_type == "c2_communication" and
+        event.severity in ["high", "critical"]
+      action:
+        run_playbook:
+          name: playbooks/revoke-certificate.yml
+          extra_vars:
+            event: "{{ event }}"
+            priority: "high"
+
+    # Rule 6: Lateral movement - revocation
+    - name: Lateral Movement Detected - Revoke Certificate
+      condition: >
+        event.event_type == "lateral_movement" and
+        event.severity in ["high", "critical"]
+      action:
+        run_playbook:
+          name: playbooks/revoke-certificate.yml
+          extra_vars:
+            event: "{{ event }}"
+            priority: "high"
+
+    # Rule 7: Unauthorized access - revocation
+    - name: Unauthorized Access - Revoke Certificate
+      condition: >
+        event.event_type == "unauthorized_access" and
+        event.action_required == "revoke_certificate"
+      action:
+        run_playbook:
+          name: playbooks/revoke-certificate.yml
+          extra_vars:
+            event: "{{ event }}"
+            priority: "medium"
+
+    # Rule 8: Certificate misuse - immediate revocation
+    - name: Certificate Misuse - Revoke Certificate
+      condition: >
+        event.event_type == "certificate_misuse"
+      action:
+        run_playbook:
+          name: playbooks/revoke-certificate.yml
+          extra_vars:
+            event: "{{ event }}"
+            priority: "high"
+
+    # Rule 9: Data exfiltration - revocation
+    - name: Data Exfiltration - Revoke Certificate
+      condition: >
+        event.event_type == "data_exfiltration" and
+        event.severity in ["high", "critical"]
+      action:
+        run_playbook:
+          name: playbooks/revoke-certificate.yml
+          extra_vars:
+            event: "{{ event }}"
+            priority: "high"
+
+    # Rule 10: Log unhandled high/critical events
+    - name: Log Unhandled Critical Events
+      condition: >
+        event.severity in ["high", "critical"] and
+        event.action_required != "revoke_certificate"
+      action:
+        debug:
+          msg: |
+            Unhandled critical event:
+            Event ID: {{ event.event_id }}
+            Type: {{ event.event_type }}
+            Device: {{ event.device_fqdn | default('unknown') }}
+            Severity: {{ event.severity }}
+            Action Required: {{ event.action_required }}
+
+    # Rule 11: Log all events for audit
+    - name: Audit Log All Events
+      condition: event.event_id is defined
+      action:
+        debug:
+          msg: "EVENT RECEIVED: {{ event.event_id }} | {{ event.event_type }} | {{ event.severity }}"

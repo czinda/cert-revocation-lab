@@ -1,0 +1,153 @@
+---
+# Device Enrollment Playbook
+# Enroll a new device (host) in FreeIPA and optionally request a certificate
+
+- name: Enroll Device in FreeIPA
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # FreeIPA connection
+    ipa_host: "{{ lookup('env', 'IPA_HOST') | default('ipa.cert-lab.local', true) }}"
+    ipa_user: "{{ lookup('env', 'IPA_USER') | default('admin', true) }}"
+    ipa_password: "{{ lookup('env', 'IPA_PASSWORD') | default('RedHat123!', true) }}"
+
+    # Device parameters
+    device_hostname: "{{ hostname | default('newdevice') }}"
+    device_domain: "{{ domain | default('cert-lab.local') }}"
+    device_fqdn: "{{ device_hostname }}.{{ device_domain }}"
+    device_ip: "{{ ip_address | default(omit) }}"
+    device_description: "{{ description | default('Device enrolled via automation') }}"
+
+    # Enrollment options
+    generate_otp: true
+    request_certificate: true
+    device_class: "{{ device_type | default('workstation') }}"  # workstation, server, iot
+
+  tasks:
+    - name: Display enrollment request
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          DEVICE ENROLLMENT REQUEST
+          ============================================================
+          Hostname:    {{ device_fqdn }}
+          IP Address:  {{ device_ip | default('Not specified') }}
+          Device Type: {{ device_class }}
+          Description: {{ device_description }}
+          ============================================================
+      tags: [always]
+
+    - name: Obtain Kerberos ticket
+      ansible.builtin.shell: |
+        echo "{{ ipa_password }}" | kinit {{ ipa_user }}
+      no_log: true
+      changed_when: false
+      tags: [auth]
+
+    - name: Check if host already exists
+      ansible.builtin.command:
+        cmd: "ipa host-show {{ device_fqdn }}"
+      register: host_check
+      failed_when: false
+      changed_when: false
+      tags: [check]
+
+    - name: Host already enrolled
+      ansible.builtin.debug:
+        msg: "Host {{ device_fqdn }} is already enrolled in FreeIPA"
+      when: host_check.rc == 0
+      tags: [check]
+
+    - name: Enroll new host
+      block:
+        - name: Add host to FreeIPA
+          ansible.builtin.command:
+            cmd: >
+              ipa host-add {{ device_fqdn }}
+              --desc="{{ device_description }}"
+              --class={{ device_class }}
+              {% if device_ip is defined and device_ip %}--ip-address={{ device_ip }}{% endif %}
+              {% if generate_otp %}--random{% endif %}
+          register: host_add
+          tags: [enroll]
+
+        - name: Extract OTP if generated
+          ansible.builtin.set_fact:
+            enrollment_otp: "{{ host_add.stdout | regex_search('Random password: (.+)', '\\1') | first }}"
+          when: generate_otp and host_add.rc == 0
+          tags: [enroll]
+
+        - name: Display enrollment OTP
+          ansible.builtin.debug:
+            msg: "Enrollment OTP: {{ enrollment_otp }}"
+          when: enrollment_otp is defined
+          no_log: false
+          tags: [enroll]
+
+      when: host_check.rc != 0
+      tags: [enroll]
+
+    - name: Request certificate for device
+      block:
+        - name: Create temporary directory for cert files
+          ansible.builtin.tempfile:
+            state: directory
+            suffix: "_cert"
+          register: temp_dir
+          tags: [certificate]
+
+        - name: Generate private key
+          ansible.builtin.command:
+            cmd: "openssl genrsa -out {{ temp_dir.path }}/device.key 4096"
+          tags: [certificate]
+
+        - name: Generate CSR
+          ansible.builtin.command:
+            cmd: >
+              openssl req -new
+              -key {{ temp_dir.path }}/device.key
+              -out {{ temp_dir.path }}/device.csr
+              -subj "/CN={{ device_fqdn }}"
+          tags: [certificate]
+
+        - name: Request certificate
+          ansible.builtin.command:
+            cmd: >
+              ipa cert-request {{ temp_dir.path }}/device.csr
+              --principal=host/{{ device_fqdn }}
+          register: cert_request
+          tags: [certificate]
+
+        - name: Extract certificate serial
+          ansible.builtin.set_fact:
+            cert_serial: "{{ cert_request.stdout | regex_search('Serial number: ([0-9]+)', '\\1') | first }}"
+          when: cert_request.rc == 0
+          tags: [certificate]
+
+        - name: Display certificate info
+          ansible.builtin.debug:
+            msg: "Certificate issued with serial: {{ cert_serial }}"
+          when: cert_serial is defined
+          tags: [certificate]
+
+        - name: Cleanup temp directory
+          ansible.builtin.file:
+            path: "{{ temp_dir.path }}"
+            state: absent
+          tags: [certificate]
+
+      when: request_certificate | bool
+      tags: [certificate]
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          DEVICE ENROLLMENT COMPLETE
+          ============================================================
+          Device:      {{ device_fqdn }}
+          Status:      {{ 'Enrolled' if host_check.rc != 0 else 'Already exists' }}
+          OTP:         {{ enrollment_otp | default('N/A') }}
+          Certificate: {{ cert_serial | default('Not requested') }}
+          ============================================================
+      tags: [always]

@@ -1,0 +1,119 @@
+---
+# Issue Certificate Playbook
+# Request and issue a new certificate for a host or service
+
+- name: Issue Certificate
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # FreeIPA connection
+    ipa_host: "{{ lookup('env', 'IPA_HOST') | default('ipa.cert-lab.local', true) }}"
+    ipa_user: "{{ lookup('env', 'IPA_USER') | default('admin', true) }}"
+    ipa_password: "{{ lookup('env', 'IPA_PASSWORD') | default('RedHat123!', true) }}"
+
+    # Certificate request parameters
+    principal: "{{ cert_principal | default('host/' + target_host) }}"
+    target_host: "{{ host_fqdn | default('device.cert-lab.local') }}"
+    cert_profile: "{{ profile | default('caIPAserviceCert') }}"
+    key_size: 4096
+    validity_days: 365
+
+    # Output paths
+    output_dir: "/tmp/certs"
+    private_key_file: "{{ output_dir }}/{{ target_host }}.key"
+    csr_file: "{{ output_dir }}/{{ target_host }}.csr"
+    cert_file: "{{ output_dir }}/{{ target_host }}.crt"
+
+  tasks:
+    - name: Display certificate request info
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          CERTIFICATE ISSUANCE REQUEST
+          ============================================================
+          Host:       {{ target_host }}
+          Principal:  {{ principal }}
+          Profile:    {{ cert_profile }}
+          Key Size:   {{ key_size }}
+          ============================================================
+      tags: [always]
+
+    - name: Create output directory
+      ansible.builtin.file:
+        path: "{{ output_dir }}"
+        state: directory
+        mode: '0700'
+      tags: [setup]
+
+    - name: Generate private key
+      ansible.builtin.command:
+        cmd: >
+          openssl genrsa -out {{ private_key_file }} {{ key_size }}
+        creates: "{{ private_key_file }}"
+      tags: [keygen]
+
+    - name: Generate CSR
+      ansible.builtin.command:
+        cmd: >
+          openssl req -new
+          -key {{ private_key_file }}
+          -out {{ csr_file }}
+          -subj "/CN={{ target_host }}"
+      args:
+        creates: "{{ csr_file }}"
+      tags: [csr]
+
+    - name: Read CSR content
+      ansible.builtin.slurp:
+        src: "{{ csr_file }}"
+      register: csr_content
+      tags: [csr]
+
+    - name: Obtain Kerberos ticket
+      ansible.builtin.shell: |
+        echo "{{ ipa_password }}" | kinit {{ ipa_user }}
+      no_log: true
+      changed_when: false
+      tags: [auth]
+
+    - name: Request certificate from FreeIPA
+      ansible.builtin.command:
+        cmd: >
+          ipa cert-request {{ csr_file }}
+          --principal={{ principal }}
+          --profile-id={{ cert_profile }}
+      register: cert_request
+      tags: [request]
+
+    - name: Extract certificate serial number
+      ansible.builtin.set_fact:
+        cert_serial: "{{ cert_request.stdout | regex_search('Serial number: ([0-9]+)', '\\1') | first }}"
+      when: cert_request.rc == 0
+      tags: [request]
+
+    - name: Retrieve certificate
+      ansible.builtin.command:
+        cmd: "ipa cert-show {{ cert_serial }} --out={{ cert_file }}"
+      when: cert_serial is defined
+      tags: [retrieve]
+
+    - name: Display certificate info
+      ansible.builtin.command:
+        cmd: "openssl x509 -in {{ cert_file }} -noout -subject -issuer -dates"
+      register: cert_info
+      when: cert_serial is defined
+      tags: [verify]
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          CERTIFICATE ISSUED SUCCESSFULLY
+          ============================================================
+          Serial:      {{ cert_serial | default('N/A') }}
+          Private Key: {{ private_key_file }}
+          Certificate: {{ cert_file }}
+
+          {{ cert_info.stdout | default('') }}
+          ============================================================
+      tags: [always]

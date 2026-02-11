@@ -1,0 +1,157 @@
+---
+# Revoke Certificate Playbook
+# Triggered by EDA when security events require certificate revocation
+#
+# Expected variables from EDA:
+#   event.device_fqdn - Device FQDN whose certificate should be revoked
+#   event.severity - Event severity (low, medium, high, critical)
+#   event.event_id - Unique event identifier
+#   event.description - Event description
+
+- name: Revoke Certificate for Compromised Device
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # FreeIPA connection settings
+    ipa_host: "{{ lookup('env', 'IPA_HOST') | default('ipa.cert-lab.local', true) }}"
+    ipa_user: "{{ lookup('env', 'IPA_USER') | default('admin', true) }}"
+    ipa_password: "{{ lookup('env', 'IPA_PASSWORD') | default('RedHat123!', true) }}"
+
+    # Event data (passed from EDA)
+    device_fqdn: "{{ event.device_fqdn | default('unknown.cert-lab.local') }}"
+    event_severity: "{{ event.severity | default('high') }}"
+    event_id: "{{ event.event_id | default('manual') }}"
+    event_description: "{{ event.description | default('Security incident') }}"
+    certificate_cn: "{{ event.certificate_cn | default(device_fqdn) }}"
+
+    # Revocation settings
+    revocation_reason: 1  # 1 = keyCompromise (IETF RFC 5280)
+    disable_host: true
+    log_file: "/var/log/cert-revocation.log"
+
+  tasks:
+    - name: Display event information
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          SECURITY EVENT - CERTIFICATE REVOCATION INITIATED
+          ============================================================
+          Event ID:     {{ event_id }}
+          Device:       {{ device_fqdn }}
+          Severity:     {{ event_severity }}
+          Description:  {{ event_description }}
+          Certificate:  {{ certificate_cn }}
+          ============================================================
+      tags: [always]
+
+    - name: Validate severity requires automatic revocation
+      ansible.builtin.assert:
+        that:
+          - event_severity in ['high', 'critical']
+        fail_msg: "Severity '{{ event_severity }}' does not require automatic revocation"
+        success_msg: "Severity '{{ event_severity }}' - proceeding with revocation"
+      when: event_severity not in ['high', 'critical']
+      ignore_errors: true
+      register: severity_check
+      tags: [validation]
+
+    - name: Block for FreeIPA operations
+      block:
+        - name: Obtain Kerberos ticket
+          ansible.builtin.shell: |
+            echo "{{ ipa_password }}" | kinit {{ ipa_user }}@{{ ipa_host | upper | regex_replace('\\..+$', '') }}.LOCAL
+          no_log: true
+          changed_when: false
+          tags: [auth]
+
+        - name: Find host in FreeIPA
+          ansible.builtin.command:
+            cmd: "ipa host-show {{ device_fqdn }}"
+          register: host_info
+          failed_when: false
+          changed_when: false
+          tags: [lookup]
+
+        - name: Display host status
+          ansible.builtin.debug:
+            msg: "Host {{ device_fqdn }} {{ 'found' if host_info.rc == 0 else 'not found' }} in FreeIPA"
+          tags: [lookup]
+
+        - name: Find certificates for device
+          ansible.builtin.command:
+            cmd: "ipa cert-find --subject={{ device_fqdn }} --status=VALID"
+          register: cert_find
+          failed_when: false
+          changed_when: false
+          tags: [lookup]
+
+        - name: Parse certificate serial numbers
+          ansible.builtin.set_fact:
+            cert_serials: "{{ cert_find.stdout | regex_findall('Serial number: ([0-9]+)') }}"
+          when: cert_find.rc == 0
+          tags: [lookup]
+
+        - name: Display certificates found
+          ansible.builtin.debug:
+            msg: "Found {{ cert_serials | default([]) | length }} valid certificate(s) to revoke"
+          tags: [lookup]
+
+        - name: Revoke each certificate
+          ansible.builtin.command:
+            cmd: "ipa cert-revoke {{ item }} --revocation-reason={{ revocation_reason }}"
+          loop: "{{ cert_serials | default([]) }}"
+          register: revoke_results
+          failed_when: false
+          tags: [revoke]
+
+        - name: Display revocation results
+          ansible.builtin.debug:
+            msg: "Certificate {{ item.item }}: {{ 'REVOKED' if item.rc == 0 else 'FAILED - ' + item.stderr }}"
+          loop: "{{ revoke_results.results | default([]) }}"
+          loop_control:
+            label: "{{ item.item }}"
+          tags: [revoke]
+
+        - name: Disable host in FreeIPA
+          ansible.builtin.command:
+            cmd: "ipa host-disable {{ device_fqdn }}"
+          register: disable_result
+          failed_when: false
+          when: disable_host | bool and host_info.rc == 0
+          tags: [disable]
+
+        - name: Log revocation action
+          ansible.builtin.lineinfile:
+            path: "{{ log_file }}"
+            line: "{{ lookup('pipe', 'date -Iseconds') }} | EVENT={{ event_id }} | DEVICE={{ device_fqdn }} | CERTS_REVOKED={{ cert_serials | default([]) | length }} | SEVERITY={{ event_severity }}"
+            create: true
+            mode: '0644'
+          delegate_to: localhost
+          tags: [logging]
+
+      rescue:
+        - name: Log failure
+          ansible.builtin.debug:
+            msg: "Certificate revocation failed for {{ device_fqdn }}"
+          tags: [error]
+
+        - name: Log error to file
+          ansible.builtin.lineinfile:
+            path: "{{ log_file }}"
+            line: "{{ lookup('pipe', 'date -Iseconds') }} | EVENT={{ event_id }} | DEVICE={{ device_fqdn }} | STATUS=FAILED | ERROR={{ ansible_failed_result | default('Unknown') }}"
+            create: true
+            mode: '0644'
+          delegate_to: localhost
+          tags: [error, logging]
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          REVOCATION COMPLETE
+          ============================================================
+          Device:       {{ device_fqdn }}
+          Certificates: {{ cert_serials | default([]) | length }} revoked
+          Host Status:  {{ 'Disabled' if disable_host and host_info.rc == 0 else 'Unchanged' }}
+          ============================================================
+      tags: [always]

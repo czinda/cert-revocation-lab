@@ -1,0 +1,24 @@
+---
+# Ansible Collections Required for Certificate Revocation Lab
+
+collections:
+  # Event-Driven Ansible collection
+  - name: ansible.eda
+    version: ">=1.4.0"
+
+  # General purpose utilities
+  - name: community.general
+    version: ">=8.0.0"
+
+  # Crypto operations
+  - name: community.crypto
+    version: ">=2.0.0"
+
+  # FreeIPA integration (optional - community maintained)
+  - name: freeipa.ansible_freeipa
+    version: ">=1.0.0"
+
+  # Kafka integration (optional)
+  - name: community.kafka
+    version: ">=1.0.0"
+    type: galaxy
