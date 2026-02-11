@@ -91,9 +91,30 @@ cd cert-revocation-lab
 # Log out and back in to apply group changes
 ```
 
-### 2. Start the Lab
+### 2. Configure Environment
 
 ```bash
+# Copy the example environment file
+cp .env.example .env
+
+# Edit and set your passwords
+vi .env
+```
+
+**Required settings in `.env`:**
+- `ADMIN_PASSWORD` - Admin password for all services
+- `DS_PASSWORD` - Directory Server password
+- `DB_PASSWORD` - Database password
+- `PKI_ADMIN_PASSWORD` - PKI admin password
+- `AWX_SECRET_KEY` - AWX secret (generate with `openssl rand -hex 32`)
+- `JUPYTER_TOKEN` - Jupyter access token
+
+### 3. Start the Lab
+
+```bash
+# Run pre-flight check (optional)
+./preflight-check.sh
+
 # Start all containers (first run pulls images)
 ./start-lab.sh
 
@@ -101,7 +122,7 @@ cd cert-revocation-lab
 ./start-lab.sh --clean
 ```
 
-### 3. Initialize PKI Hierarchy
+### 4. Initialize PKI Hierarchy
 
 After containers start, initialize the PKI hierarchy:
 
@@ -130,14 +151,14 @@ podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \
   caSubCA
 ```
 
-### 4. Run Test Scenario
+### 5. Run Test Scenario
 
 ```bash
 # Test the end-to-end revocation automation
 ./test-revocation.sh
 ```
 
-### 5. Stop the Lab
+### 6. Stop the Lab
 
 ```bash
 # Stop all containers
@@ -151,15 +172,17 @@ podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
-| Root CA | https://localhost:8443/ca | admin / RedHat123! |
-| Intermediate CA | https://localhost:8444/ca | admin / RedHat123! |
-| IoT Sub-CA | https://localhost:8445/ca | admin / RedHat123! |
-| FreeIPA | https://localhost/ipa/ui | admin / RedHat123! |
-| AWX | http://localhost:8080 | admin / RedHat123! |
+| Root CA | https://localhost:8443/ca | admin / (see .env) |
+| Intermediate CA | https://localhost:8444/ca | admin / (see .env) |
+| IoT Sub-CA | https://localhost:8445/ca | admin / (see .env) |
+| FreeIPA | https://localhost/ipa/ui | admin / (see .env) |
+| AWX | http://localhost:8080 | admin / (see .env) |
 | Mock EDR API | http://localhost:8082 | - |
 | Mock SIEM API | http://localhost:8083 | - |
 | EDA Webhook | http://localhost:5000 | - |
-| Jupyter Lab | http://localhost:8888 | Token: RedHat123 |
+| Jupyter Lab | http://localhost:8888 | Token: (see .env) |
+
+> **Note:** Credentials are configured in `.env`. Copy `.env.example` to `.env` and set your passwords before starting.
 
 ## Container Network
 

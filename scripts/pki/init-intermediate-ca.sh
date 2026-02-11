@@ -9,13 +9,17 @@ set -e
 CA_NAME="INTERMEDIATE-CA"
 DS_HOST="${DS_HOST:-ds-intermediate.cert-lab.local}"
 DS_PORT="${DS_PORT:-3389}"
-DS_PASSWORD="${PKI_DS_PASSWORD:-${DS_PASSWORD:-RedHat123!}}"
-PKI_PASSWORD="${PKI_ADMIN_PASSWORD:-RedHat123!}"
+DS_PASSWORD="${PKI_DS_PASSWORD:-$DS_PASSWORD}"
+PKI_PASSWORD="${PKI_ADMIN_PASSWORD:-$ADMIN_PASSWORD}"
 PKI_INSTANCE="${PKI_INSTANCE_NAME:-pki-intermediate-ca}"
 ROOT_CA_URL="https://root-ca.cert-lab.local:8443"
 
 # Source common functions
 source "$(dirname "$0")/lib-pki-common.sh"
+
+# Validate required environment
+[ -n "$DS_PASSWORD" ] || { log_error "DS_PASSWORD not set"; exit 1; }
+[ -n "$PKI_PASSWORD" ] || { log_error "PKI_ADMIN_PASSWORD not set"; exit 1; }
 
 CSR_FILE="${CERTS_DIR}/intermediate-ca.csr"
 SIGNED_CERT="${CERTS_DIR}/intermediate-ca-signed.crt"

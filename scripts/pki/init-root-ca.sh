@@ -8,12 +8,16 @@ set -e
 CA_NAME="ROOT-CA"
 DS_HOST="${DS_HOST:-ds-root.cert-lab.local}"
 DS_PORT="${DS_PORT:-3389}"
-DS_PASSWORD="${PKI_DS_PASSWORD:-${DS_PASSWORD:-RedHat123!}}"
-PKI_PASSWORD="${PKI_ADMIN_PASSWORD:-RedHat123!}"
+DS_PASSWORD="${PKI_DS_PASSWORD:-$DS_PASSWORD}"
+PKI_PASSWORD="${PKI_ADMIN_PASSWORD:-$ADMIN_PASSWORD}"
 PKI_INSTANCE="${PKI_INSTANCE_NAME:-pki-root-ca}"
 
 # Source common functions
 source "$(dirname "$0")/lib-pki-common.sh"
+
+# Validate required environment
+[ -n "$DS_PASSWORD" ] || { log_error "DS_PASSWORD not set"; exit 1; }
+[ -n "$PKI_PASSWORD" ] || { log_error "PKI_ADMIN_PASSWORD not set"; exit 1; }
 
 init_ca() {
     print_header "Initializing Dogtag Root CA"

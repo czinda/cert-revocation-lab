@@ -47,9 +47,15 @@ if [ ! -f "$CSR_FILE" ]; then
 fi
 
 # Environment
-PKI_PASSWORD="${PKI_ADMIN_PASSWORD:-RedHat123!}"
+PKI_PASSWORD="${PKI_ADMIN_PASSWORD:-$ADMIN_PASSWORD}"
 NSS_DB="${NSS_DB:-/root/.dogtag/nssdb}"
 NSS_PASSWORD="${NSS_PASSWORD:-${PKI_PASSWORD}}"
+
+# Validate
+if [ -z "$PKI_PASSWORD" ]; then
+    log_error "PKI_ADMIN_PASSWORD or ADMIN_PASSWORD must be set"
+    exit 1
+fi
 
 log_info "Signing CSR: $CSR_FILE"
 log_info "CA URL: $CA_URL"

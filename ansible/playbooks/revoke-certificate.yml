@@ -15,7 +15,7 @@
     # FreeIPA connection settings
     ipa_host: "{{ lookup('env', 'IPA_HOST') | default('ipa.cert-lab.local', true) }}"
     ipa_user: "{{ lookup('env', 'IPA_USER') | default('admin', true) }}"
-    ipa_password: "{{ lookup('env', 'IPA_PASSWORD') | default('RedHat123!', true) }}"
+    ipa_password: "{{ lookup('env', 'IPA_PASSWORD') | default(lookup('env', 'ADMIN_PASSWORD')) | mandatory }}"
 
     # Event data (passed from EDA)
     device_fqdn: "{{ event.device_fqdn | default('unknown.cert-lab.local') }}"

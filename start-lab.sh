@@ -284,7 +284,7 @@ start_awx() {
 
     log_success "AWX started"
     log_info "AWX Web UI: http://localhost:8080"
-    log_info "Default credentials: admin / RedHat123!"
+    log_info "Default credentials: admin / (see .env)"
 }
 
 # Phase 7: Start EDA
@@ -321,7 +321,7 @@ start_jupyter() {
     sleep 5
 
     log_success "Jupyter Lab started"
-    log_info "Jupyter URL: http://localhost:8888 (Token: RedHat123)"
+    log_info "Jupyter URL: http://localhost:8888 (Token: (see .env))"
 }
 
 # Print summary
@@ -342,10 +342,10 @@ print_summary() {
     echo "  Jupyter:         http://localhost:8888"
     echo ""
     echo "Default Credentials:"
-    echo "  PKI Admin:    admin / RedHat123!"
-    echo "  IPA Admin:    admin / RedHat123!"
-    echo "  AWX Admin:    admin / RedHat123!"
-    echo "  Jupyter:      Token: RedHat123"
+    echo "  PKI Admin:    admin / (see .env)"
+    echo "  IPA Admin:    admin / (see .env)"
+    echo "  AWX Admin:    admin / (see .env)"
+    echo "  Jupyter:      Token: (see .env)"
     echo ""
     echo "PKI Hierarchy (requires manual initialization):"
     echo "  Root CA -> Intermediate CA -> FreeIPA Sub-CA"

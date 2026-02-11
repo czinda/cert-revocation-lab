@@ -13,7 +13,7 @@ services:
     container_name: ds-root
     hostname: ds-root.${LAB_DOMAIN:-cert-lab.local}
     environment:
-      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_DM_PASSWORD: ${DS_PASSWORD:?DS_PASSWORD required}
       DS_SUFFIX_NAME: root-ca
     volumes:
       - ds-root-data:/data
@@ -32,7 +32,7 @@ services:
     container_name: ds-intermediate
     hostname: ds-intermediate.${LAB_DOMAIN:-cert-lab.local}
     environment:
-      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_DM_PASSWORD: ${DS_PASSWORD:?DS_PASSWORD required}
       DS_SUFFIX_NAME: intermediate-ca
     volumes:
       - ds-intermediate-data:/data
@@ -51,7 +51,7 @@ services:
     container_name: ds-iot
     hostname: ds-iot.${LAB_DOMAIN:-cert-lab.local}
     environment:
-      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_DM_PASSWORD: ${DS_PASSWORD:?DS_PASSWORD required}
       DS_SUFFIX_NAME: iot-ca
     volumes:
       - ds-iot-data:/data
@@ -78,8 +78,8 @@ services:
         condition: service_healthy
     environment:
       PKI_DS_URL: ldap://ds-root.${LAB_DOMAIN:-cert-lab.local}:3389
-      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
-      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_DS_PASSWORD: ${DS_PASSWORD:?DS_PASSWORD required}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:?PKI_ADMIN_PASSWORD required}
       PKI_INSTANCE_NAME: pki-root-ca
     volumes:
       - ./configs/pki:/etc/pki-configs:ro
@@ -106,8 +106,8 @@ services:
         condition: service_started
     environment:
       PKI_DS_URL: ldap://ds-intermediate.${LAB_DOMAIN:-cert-lab.local}:3389
-      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
-      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_DS_PASSWORD: ${DS_PASSWORD:?DS_PASSWORD required}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:?PKI_ADMIN_PASSWORD required}
       PKI_INSTANCE_NAME: pki-intermediate-ca
     volumes:
       - ./configs/pki:/etc/pki-configs:ro
@@ -134,8 +134,8 @@ services:
         condition: service_started
     environment:
       PKI_DS_URL: ldap://ds-iot.${LAB_DOMAIN:-cert-lab.local}:3389
-      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
-      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_DS_PASSWORD: ${DS_PASSWORD:?DS_PASSWORD required}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:?PKI_ADMIN_PASSWORD required}
       PKI_INSTANCE_NAME: pki-iot-ca
     volumes:
       - ./configs/pki:/etc/pki-configs:ro
@@ -179,7 +179,7 @@ services:
     environment:
       IPA_SERVER_HOSTNAME: ipa.${LAB_DOMAIN:-cert-lab.local}
       IPA_SERVER_IP: ${IP_FREEIPA:-172.20.0.10}
-      PASSWORD: ${ADMIN_PASSWORD:-RedHat123!}
+      PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD required}
       container: podman
     volumes:
       - freeipa-data:/data
@@ -279,7 +279,7 @@ services:
     hostname: postgres.${LAB_DOMAIN:-cert-lab.local}
     environment:
       POSTGRES_USER: awx
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-RedHat123!}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD required}
       POSTGRES_DB: awx
     volumes:
       - postgres-data:/var/lib/postgresql/data
@@ -323,12 +323,12 @@ services:
       DATABASE_HOST: postgres.${LAB_DOMAIN:-cert-lab.local}
       DATABASE_NAME: awx
       DATABASE_USER: awx
-      DATABASE_PASSWORD: ${DB_PASSWORD:-RedHat123!}
+      DATABASE_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD required}
       DATABASE_PORT: 5432
       REDIS_HOST: redis.${LAB_DOMAIN:-cert-lab.local}
       REDIS_PORT: 6379
       AWX_ADMIN_USER: admin
-      AWX_ADMIN_PASSWORD: ${ADMIN_PASSWORD:-RedHat123!}
+      AWX_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD required}
       SECRET_KEY: ${AWX_SECRET_KEY:-redhat123secretkey}
     volumes:
       - awx-projects:/var/lib/awx/projects
@@ -473,7 +473,7 @@ services:
     container_name: jupyter
     hostname: jupyter.${LAB_DOMAIN:-cert-lab.local}
     environment:
-      JUPYTER_TOKEN: ${JUPYTER_TOKEN:-RedHat123}
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:?JUPYTER_TOKEN required}
       JUPYTER_ENABLE_LAB: "yes"
     volumes:
       - ./notebooks:/home/jovyan/work

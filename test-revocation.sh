@@ -27,7 +27,7 @@ IPA_URL="https://localhost/ipa/session/json"
 EDR_URL="http://localhost:8082"
 SIEM_URL="http://localhost:8083"
 IPA_USER="admin"
-IPA_PASS="RedHat123!"
+IPA_PASS="${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set}"
 LAB_DOMAIN="cert-lab.local"
 
 # Generate unique device name

@@ -60,7 +60,7 @@ JUPYTER_URL="http://localhost:8888"
 
 # Credentials
 ADMIN_USER="admin"
-ADMIN_PASS="RedHat123!"
+ADMIN_PASS="${ADMIN_PASSWORD:-}"
 
 # Test settings
 TIMEOUT=10

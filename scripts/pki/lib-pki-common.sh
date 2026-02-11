@@ -10,6 +10,18 @@
 CERTS_DIR="${CERTS_DIR:-/certs}"
 CONFIG_DIR="${CONFIG_DIR:-/etc/pki-configs}"
 
+# Validate required environment variables
+validate_env() {
+    local missing=0
+    for var in "$@"; do
+        if [ -z "${!var:-}" ]; then
+            echo "ERROR: Required environment variable $var is not set" >&2
+            ((missing++))
+        fi
+    done
+    [ $missing -eq 0 ] || exit 1
+}
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'

@@ -8,10 +8,10 @@ ipa_realm: CERT-LAB.LOCAL
 # FreeIPA Settings
 ipa_host: ipa.cert-lab.local
 ipa_admin_user: admin
-ipa_admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default('RedHat123!', true) }}"
+ipa_admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') | mandatory }}"
 
 # PKI Settings
-pki_admin_password: "{{ lookup('env', 'PKI_ADMIN_PASSWORD') | default('RedHat123!', true) }}"
+pki_admin_password: "{{ lookup('env', 'PKI_ADMIN_PASSWORD') | default(lookup('env', 'ADMIN_PASSWORD')) | mandatory }}"
 pki_security_domain: CERT-LAB
 
 # Kafka Settings

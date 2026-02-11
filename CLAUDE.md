@@ -161,10 +161,24 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 
 ## Environment Configuration
 
-Key variables in `.env`:
-- `ADMIN_PASSWORD`: Default admin password (RedHat123!)
-- `LAB_DOMAIN`: Domain name (cert-lab.local)
-- `IPA_REALM`: Kerberos realm (CERT-LAB.LOCAL)
+Copy `.env.example` to `.env` and configure before starting:
+
+```bash
+cp .env.example .env
+vi .env  # Set all CHANGEME values
+```
+
+**Required variables** (must be set):
+- `ADMIN_PASSWORD`: Admin password for all services
+- `DS_PASSWORD`: 389 Directory Server password
+- `DB_PASSWORD`: PostgreSQL password
+- `PKI_ADMIN_PASSWORD`: Dogtag PKI admin password
+- `AWX_SECRET_KEY`: AWX secret key (use `openssl rand -hex 32`)
+- `JUPYTER_TOKEN`: Jupyter access token
+
+**Optional variables**:
+- `LAB_DOMAIN`: Domain name (default: cert-lab.local)
+- `IPA_REALM`: Kerberos realm (default: CERT-LAB.LOCAL)
 - `IP_*`: Static IP assignments for containers
 - `*_VERSION`: Container image versions
 

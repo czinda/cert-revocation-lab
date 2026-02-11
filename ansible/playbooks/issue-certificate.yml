@@ -9,7 +9,7 @@
     # FreeIPA connection
     ipa_host: "{{ lookup('env', 'IPA_HOST') | default('ipa.cert-lab.local', true) }}"
     ipa_user: "{{ lookup('env', 'IPA_USER') | default('admin', true) }}"
-    ipa_password: "{{ lookup('env', 'IPA_PASSWORD') | default('RedHat123!', true) }}"
+    ipa_password: "{{ lookup('env', 'IPA_PASSWORD') | default(lookup('env', 'ADMIN_PASSWORD')) | mandatory }}"
 
     # Certificate request parameters
     principal: "{{ cert_principal | default('host/' + target_host) }}"

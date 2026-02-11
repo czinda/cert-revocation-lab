@@ -9,11 +9,13 @@ set -e
 CA_NAME="FREEIPA"
 IPA_REALM="${IPA_REALM:-CERT-LAB.LOCAL}"
 IPA_DOMAIN="${LAB_DOMAIN:-cert-lab.local}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-RedHat123!}"
 INTERMEDIATE_CA_URL="https://intermediate-ca.cert-lab.local:8443"
 
 # Source common functions
 source "$(dirname "$0")/lib-pki-common.sh"
+
+# Validate required environment
+[ -n "$ADMIN_PASSWORD" ] || { log_error "ADMIN_PASSWORD not set"; exit 1; }
 
 CSR_FILE="${CERTS_DIR}/freeipa-ca.csr"
 SIGNED_CERT="${CERTS_DIR}/freeipa-ca-signed.crt"
