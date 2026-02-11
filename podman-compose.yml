@@ -21,11 +21,11 @@ services:
       lab-network:
         ipv4_address: ${IP_DS_ROOT:-172.20.0.14}
     healthcheck:
-      test: ["CMD", "dsctl", "slapd-localhost", "status"]
+      test: ["CMD-SHELL", "/usr/libexec/dirsrv/dscontainer -H || ldapsearch -x -H ldap://localhost:3389 -b '' -s base > /dev/null 2>&1"]
       interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 60s
+      retries: 10
+      start_period: 120s
 
   ds-intermediate:
     image: quay.io/389ds/dirsrv:${DS_VERSION:-latest}
@@ -40,11 +40,11 @@ services:
       lab-network:
         ipv4_address: ${IP_DS_INTERMEDIATE:-172.20.0.15}
     healthcheck:
-      test: ["CMD", "dsctl", "slapd-localhost", "status"]
+      test: ["CMD-SHELL", "/usr/libexec/dirsrv/dscontainer -H || ldapsearch -x -H ldap://localhost:3389 -b '' -s base > /dev/null 2>&1"]
       interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 60s
+      retries: 10
+      start_period: 120s
 
   ds-iot:
     image: quay.io/389ds/dirsrv:${DS_VERSION:-latest}
@@ -59,11 +59,11 @@ services:
       lab-network:
         ipv4_address: ${IP_DS_IOT:-172.20.0.16}
     healthcheck:
-      test: ["CMD", "dsctl", "slapd-localhost", "status"]
+      test: ["CMD-SHELL", "/usr/libexec/dirsrv/dscontainer -H || ldapsearch -x -H ldap://localhost:3389 -b '' -s base > /dev/null 2>&1"]
       interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 60s
+      retries: 10
+      start_period: 120s
 
   # ===========================================================================
   # Dogtag PKI Certificate Authorities
