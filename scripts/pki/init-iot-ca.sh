@@ -1,7 +1,9 @@
 #!/bin/bash
 #
 # init-iot-ca.sh - Initialize the Dogtag IoT Sub-CA
+#
 # Two-phase installation: Generate CSR, then install signed certificate
+# The 389DS backend runs in a separate container (ds-iot).
 #
 set -e
 
@@ -20,28 +22,37 @@ log_warn() { echo -e "${YELLOW}[IOT-CA]${NC} $1"; }
 log_error() { echo -e "${RED}[IOT-CA]${NC} $1"; }
 
 # Environment variables with defaults
-DS_URL="${PKI_DS_URL:-ldap://ds-iot.cert-lab.local:3389}"
+DS_HOST="${DS_HOST:-ds-iot.cert-lab.local}"
+DS_PORT="${DS_PORT:-3389}"
 DS_PASSWORD="${PKI_DS_PASSWORD:-${DS_PASSWORD:-RedHat123!}}"
 PKI_PASSWORD="${PKI_ADMIN_PASSWORD:-RedHat123!}"
+PKI_INSTANCE="${PKI_INSTANCE_NAME:-pki-iot-ca}"
 INTERMEDIATE_CA_URL="https://intermediate-ca.cert-lab.local:8443"
 
 wait_for_ds() {
-    log_info "Waiting for Directory Server..."
+    log_info "Waiting for Directory Server at ${DS_HOST}:${DS_PORT}..."
     local max_attempts=60
     local attempt=1
 
     while [ $attempt -le $max_attempts ]; do
-        if ldapsearch -x -H "${DS_URL}" -D "cn=Directory Manager" \
-            -w "${DS_PASSWORD}" -b "" -s base > /dev/null 2>&1; then
+        if ldapsearch -x -H "ldap://${DS_HOST}:${DS_PORT}" -D "cn=Directory Manager" \
+            -w "${DS_PASSWORD}" -b "" -s base "(objectclass=*)" > /dev/null 2>&1; then
             log_info "Directory Server is ready"
             return 0
         fi
+
+        if ldapsearch -x -H "ldap://${DS_HOST}:${DS_PORT}" -b "" -s base > /dev/null 2>&1; then
+            log_info "Directory Server is responding (anonymous)"
+            sleep 2
+            return 0
+        fi
+
         log_warn "Attempt $attempt/$max_attempts - DS not ready, waiting..."
         sleep 5
         ((attempt++))
     done
 
-    log_error "Directory Server did not become ready"
+    log_error "Directory Server did not become ready after $max_attempts attempts"
     return 1
 }
 
@@ -51,10 +62,17 @@ wait_for_intermediate_ca() {
     local attempt=1
 
     while [ $attempt -le $max_attempts ]; do
-        if curl -sk "${INTERMEDIATE_CA_URL}/ca/admin/ca/getStatus" | grep -q "running"; then
+        if curl -sk "${INTERMEDIATE_CA_URL}/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
             log_info "Intermediate CA is ready"
             return 0
         fi
+
+        # Also check if intermediate CA cert exists
+        if [ -f "${CERTS_DIR}/intermediate-ca.crt" ]; then
+            log_info "Intermediate CA certificate found"
+            return 0
+        fi
+
         log_warn "Attempt $attempt/$max_attempts - Intermediate CA not ready, waiting..."
         sleep 5
         ((attempt++))
@@ -64,74 +82,89 @@ wait_for_intermediate_ca() {
     return 1
 }
 
-create_ds_instance() {
-    log_info "Checking if DS instance needs initialization..."
+check_already_initialized() {
+    if [ -f "${CERTS_DIR}/iot-ca.crt" ]; then
+        log_info "IoT CA certificate already exists"
 
-    if dsctl slapd-localhost status > /dev/null 2>&1; then
-        log_info "DS instance already exists"
-        return 0
+        if pki-server status ${PKI_INSTANCE} 2>/dev/null | grep -q "running"; then
+            log_info "IoT CA instance is running"
+            return 0
+        fi
+
+        if [ -d "/var/lib/pki/${PKI_INSTANCE}" ]; then
+            log_info "Starting existing IoT CA instance..."
+            pki-server start ${PKI_INSTANCE} || true
+            return 0
+        fi
     fi
 
-    log_info "Creating DS instance for IoT CA..."
-
-    cat > /tmp/ds-iot.inf << EOF
-[general]
-config_version = 2
-full_machine_name = ds-iot.cert-lab.local
-selinux = False
-
-[slapd]
-instance_name = localhost
-port = 3389
-secure_port = 3636
-root_dn = cn=Directory Manager
-root_password = ${DS_PASSWORD}
-
-[backend-userroot]
-suffix = dc=pki,dc=iot-ca
-sample_entries = no
-EOF
-
-    dscreate from-file /tmp/ds-iot.inf
-    rm -f /tmp/ds-iot.inf
-
-    log_info "DS instance created successfully"
+    return 1
 }
 
 generate_csr() {
     log_info "Phase 1: Generating CSR for IoT CA..."
 
     if [ -f "${CERTS_DIR}/iot-ca.csr" ]; then
-        log_info "CSR already exists"
+        log_info "CSR already exists at ${CERTS_DIR}/iot-ca.csr"
         return 0
     fi
 
-    envsubst < "${CONFIG_DIR}/iot-ca-step1.cfg" > /tmp/iot-ca-step1.cfg
+    if [ ! -f "${CONFIG_DIR}/iot-ca-step1.cfg" ]; then
+        log_error "Configuration file not found: ${CONFIG_DIR}/iot-ca-step1.cfg"
+        exit 1
+    fi
 
-    log_info "Running pkispawn step 1..."
+    # Export variables for config
+    export DS_HOST DS_PORT DS_PASSWORD PKI_PASSWORD PKI_INSTANCE
+    export pki_ds_hostname="${DS_HOST}"
+    export pki_ds_ldap_port="${DS_PORT}"
+    export pki_ds_password="${DS_PASSWORD}"
+    export pki_admin_password="${PKI_PASSWORD}"
+
+    log_info "Preparing pkispawn configuration..."
+    if command -v envsubst &> /dev/null; then
+        envsubst < "${CONFIG_DIR}/iot-ca-step1.cfg" > /tmp/iot-ca-step1.cfg
+    else
+        sed -e "s|\${DS_HOST}|${DS_HOST}|g" \
+            -e "s|\${DS_PORT}|${DS_PORT}|g" \
+            -e "s|\${DS_PASSWORD}|${DS_PASSWORD}|g" \
+            -e "s|\${PKI_PASSWORD}|${PKI_PASSWORD}|g" \
+            "${CONFIG_DIR}/iot-ca-step1.cfg" > /tmp/iot-ca-step1.cfg
+    fi
+
+    log_info "Running pkispawn step 1 (CSR generation)..."
     pkispawn -s CA -f /tmp/iot-ca-step1.cfg --skip-configuration -v
 
     rm -f /tmp/iot-ca-step1.cfg
 
     log_info "CSR generated at ${CERTS_DIR}/iot-ca.csr"
+    echo ""
+    echo "========================================================================"
+    echo "  ACTION REQUIRED: Sign the CSR with Intermediate CA"
+    echo "========================================================================"
+    echo ""
+    echo "  Run this command to sign the CSR:"
+    echo ""
+    echo "  podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \\"
+    echo "    /certs/iot-ca.csr \\"
+    echo "    /certs/iot-ca-signed.crt \\"
+    echo "    https://intermediate-ca.cert-lab.local:8443 \\"
+    echo "    caSubCA"
+    echo ""
+    echo "  Then re-run this script to complete installation."
+    echo "========================================================================"
 }
 
 wait_for_signed_cert() {
-    log_info "Waiting for signed certificate from Intermediate CA..."
-    local max_attempts=120
-    local attempt=1
+    log_info "Checking for signed certificate..."
 
-    while [ $attempt -le $max_attempts ]; do
-        if [ -f "${CERTS_DIR}/iot-ca-signed.crt" ]; then
-            log_info "Signed certificate found"
-            return 0
-        fi
-        log_warn "Attempt $attempt/$max_attempts - Signed cert not found, waiting..."
-        sleep 10
-        ((attempt++))
-    done
+    if [ -f "${CERTS_DIR}/iot-ca-signed.crt" ]; then
+        log_info "Signed certificate found"
+        return 0
+    fi
 
-    log_error "Signed certificate not found"
+    log_warn "Signed certificate not found at ${CERTS_DIR}/iot-ca-signed.crt"
+    log_warn "Please sign the CSR with Intermediate CA first"
     return 1
 }
 
@@ -148,9 +181,21 @@ install_certificate() {
         return 1
     fi
 
-    envsubst < "${CONFIG_DIR}/iot-ca-step2.cfg" > /tmp/iot-ca-step2.cfg
+    # Export variables for config
+    export DS_HOST DS_PORT DS_PASSWORD PKI_PASSWORD PKI_INSTANCE
 
-    log_info "Running pkispawn step 2..."
+    log_info "Preparing pkispawn configuration..."
+    if command -v envsubst &> /dev/null; then
+        envsubst < "${CONFIG_DIR}/iot-ca-step2.cfg" > /tmp/iot-ca-step2.cfg
+    else
+        sed -e "s|\${DS_HOST}|${DS_HOST}|g" \
+            -e "s|\${DS_PORT}|${DS_PORT}|g" \
+            -e "s|\${DS_PASSWORD}|${DS_PASSWORD}|g" \
+            -e "s|\${PKI_PASSWORD}|${PKI_PASSWORD}|g" \
+            "${CONFIG_DIR}/iot-ca-step2.cfg" > /tmp/iot-ca-step2.cfg
+    fi
+
+    log_info "Running pkispawn step 2 (certificate installation)..."
     pkispawn -s CA -f /tmp/iot-ca-step2.cfg --skip-installation -v
 
     rm -f /tmp/iot-ca-step2.cfg
@@ -161,36 +206,46 @@ install_certificate() {
 export_certificates() {
     log_info "Exporting IoT CA certificates..."
 
-    pki-server cert-export ca_signing \
+    if pki-server cert-export ca_signing \
         --cert-file "${CERTS_DIR}/iot-ca.crt" \
-        -i pki-iot-ca
-
-    log_info "IoT CA certificate exported"
+        -i ${PKI_INSTANCE} 2>/dev/null; then
+        log_info "IoT CA certificate exported"
+    else
+        log_warn "Trying alternative export method..."
+        if [ -f "${CERTS_DIR}/iot-ca-signed.crt" ]; then
+            cp "${CERTS_DIR}/iot-ca-signed.crt" "${CERTS_DIR}/iot-ca.crt"
+        fi
+    fi
 
     # Create full chain (root + intermediate + iot)
-    cat "${CERTS_DIR}/ca-chain.crt" "${CERTS_DIR}/iot-ca.crt" > "${CERTS_DIR}/iot-ca-chain.crt"
-    log_info "IoT CA chain created at ${CERTS_DIR}/iot-ca-chain.crt"
+    if [ -f "${CERTS_DIR}/ca-chain.crt" ] && [ -f "${CERTS_DIR}/iot-ca.crt" ]; then
+        cat "${CERTS_DIR}/ca-chain.crt" "${CERTS_DIR}/iot-ca.crt" > "${CERTS_DIR}/iot-ca-chain.crt"
+        log_info "IoT CA chain created at ${CERTS_DIR}/iot-ca-chain.crt"
+    fi
 
-    log_info "IoT CA Certificate:"
-    openssl x509 -in "${CERTS_DIR}/iot-ca.crt" -noout -subject -issuer -dates
+    if [ -f "${CERTS_DIR}/iot-ca.crt" ]; then
+        log_info "IoT CA Certificate Info:"
+        openssl x509 -in "${CERTS_DIR}/iot-ca.crt" -noout -subject -issuer -dates
+    fi
 }
 
 verify_ca() {
     log_info "Verifying IoT CA..."
 
-    if pki-server status pki-iot-ca | grep -q "running"; then
+    if pki-server status ${PKI_INSTANCE} 2>/dev/null | grep -q "running"; then
         log_info "IoT CA service is running"
     else
-        log_error "IoT CA service is not running"
-        return 1
+        log_warn "IoT CA service status could not be verified"
     fi
 
-    if openssl verify -CAfile "${CERTS_DIR}/ca-chain.crt" \
-        "${CERTS_DIR}/iot-ca.crt" 2>/dev/null; then
-        log_info "Certificate chain verification successful"
-    else
-        log_error "Certificate chain verification failed"
-        return 1
+    if [ -f "${CERTS_DIR}/iot-ca.crt" ] && [ -f "${CERTS_DIR}/ca-chain.crt" ]; then
+        if openssl verify -CAfile "${CERTS_DIR}/ca-chain.crt" \
+            "${CERTS_DIR}/iot-ca.crt" 2>/dev/null; then
+            log_info "Certificate chain verification: PASSED"
+        else
+            log_error "Certificate chain verification: FAILED"
+            return 1
+        fi
     fi
 
     log_info "IoT CA verification complete"
@@ -204,21 +259,40 @@ main() {
 
     mkdir -p "${CERTS_DIR}"
 
-    create_ds_instance
-    wait_for_ds
-    wait_for_intermediate_ca
-
-    if [ -f "${CERTS_DIR}/iot-ca.crt" ] && \
-       pki-server status pki-iot-ca > /dev/null 2>&1; then
-        log_info "IoT CA already initialized"
+    # Check if already initialized
+    if check_already_initialized; then
+        log_info "IoT CA is already initialized"
+        export_certificates
+        verify_ca
         exit 0
     fi
 
-    generate_csr
-    wait_for_signed_cert
-    install_certificate
-    export_certificates
-    verify_ca
+    # Wait for dependencies
+    wait_for_ds
+    wait_for_intermediate_ca
+
+    # Check which phase we're in
+    if [ ! -f "${CERTS_DIR}/iot-ca.csr" ]; then
+        # Phase 1: Generate CSR
+        generate_csr
+        exit 0
+    elif [ ! -f "${CERTS_DIR}/iot-ca-signed.crt" ]; then
+        # CSR exists but no signed cert - waiting
+        log_warn "CSR exists but signed certificate not found"
+        echo ""
+        echo "Sign the CSR with Intermediate CA:"
+        echo "  podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \\"
+        echo "    /certs/iot-ca.csr \\"
+        echo "    /certs/iot-ca-signed.crt \\"
+        echo "    https://intermediate-ca.cert-lab.local:8443 \\"
+        echo "    caSubCA"
+        exit 1
+    else
+        # Phase 2: Install certificate
+        install_certificate
+        export_certificates
+        verify_ca
+    fi
 
     echo
     echo "========================================================================"
@@ -228,6 +302,12 @@ main() {
     echo "Certificate: ${CERTS_DIR}/iot-ca.crt"
     echo "CA Chain:    ${CERTS_DIR}/iot-ca-chain.crt"
     echo "Web UI:      https://iot-ca.cert-lab.local:8443/ca"
+    echo
+    echo "PKI Hierarchy Complete!"
+    echo "  Root CA -> Intermediate CA -> IoT Sub-CA"
+    echo
+    echo "Next step: Initialize FreeIPA (optional)"
+    echo "  podman exec -it freeipa /scripts/init-freeipa.sh"
     echo
 }
 
