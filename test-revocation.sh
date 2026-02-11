@@ -315,10 +315,15 @@ main() {
     verify_revocation
     show_results
 
-    # Optional cleanup
-    read -p "Remove test device from FreeIPA? [Y/n]: " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+    # Optional cleanup (auto-cleanup in non-interactive mode)
+    if [ -t 0 ]; then
+        read -p "Remove test device from FreeIPA? [Y/n]: " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+            cleanup
+        fi
+    else
+        # Non-interactive mode: always cleanup
         cleanup
     fi
 }
