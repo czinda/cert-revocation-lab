@@ -23,7 +23,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # Configuration
-IPA_URL="https://localhost:4443/ipa/session/json"
+IPA_URL="https://ipa.cert-lab.local:4443/ipa/session/json"
 EDR_URL="http://localhost:8082"
 SIEM_URL="http://localhost:8083"
 IPA_USER="admin"
@@ -62,7 +62,7 @@ check_services() {
     fi
 
     # Check FreeIPA (with self-signed cert)
-    if curl -skf "https://localhost:4443/ipa/ui" > /dev/null 2>&1; then
+    if curl -skLf --resolve "ipa.cert-lab.local:4443:127.0.0.1" "https://ipa.cert-lab.local:4443/ipa/ui" > /dev/null 2>&1; then
         log_success "FreeIPA is responding"
     else
         log_error "FreeIPA is not responding"
@@ -80,9 +80,10 @@ ipa_call() {
     local method=$1
     local params=$2
 
-    curl -sk -X POST "${IPA_URL}" \
+    curl -skL -X POST "${IPA_URL}" \
+        --resolve "ipa.cert-lab.local:4443:127.0.0.1" \
         -H "Content-Type: application/json" \
-        -H "Referer: https://localhost:4443/ipa" \
+        -H "Referer: https://ipa.cert-lab.local:4443/ipa" \
         -u "${IPA_USER}:${IPA_PASS}" \
         -d "{\"method\":\"${method}\",\"params\":${params}}"
 }
