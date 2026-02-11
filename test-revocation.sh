@@ -89,12 +89,15 @@ IPA_COOKIE_FILE="/tmp/ipa_session_$$"
 
 # Get FreeIPA session
 ipa_login() {
+    # URL-encode the password (handle special characters like !)
+    local encoded_pass=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${IPA_PASS}', safe=''))")
     curl -sk -X POST "https://localhost:4443/ipa/session/login_password" \
         -H "Host: ipa.cert-lab.local" \
         -H "Content-Type: application/x-www-form-urlencoded" \
         -H "Accept: text/plain" \
+        -H "Referer: https://ipa.cert-lab.local/ipa" \
         -c "${IPA_COOKIE_FILE}" \
-        -d "user=${IPA_USER}&password=${IPA_PASS}" \
+        -d "user=${IPA_USER}&password=${encoded_pass}" \
         > /dev/null 2>&1
 }
 
