@@ -9,12 +9,15 @@ Event-Driven Certificate Revocation Lab demonstrating automated certificate life
 ## PKI Hierarchy
 
 ```
-Dogtag Root CA (172.20.0.12) - Self-signed trust anchor
+Dogtag Root CA (172.20.0.12:8443) - Self-signed trust anchor
        │
-Dogtag Intermediate CA (172.20.0.11) - Online issuing CA
+Dogtag Intermediate CA (172.20.0.11:8444) - Online issuing CA
+       │
        ├─────────────────────────────────────┐
-FreeIPA Sub-CA (172.20.0.10)          Dogtag IoT Sub-CA (172.20.0.13)
-(Users, Hosts, Services)              (IoT Devices)
+       │                                     │
+FreeIPA Internal CA (172.25.0.10:4443)  Dogtag IoT Sub-CA (172.20.0.13:8445)
+(Users, Hosts, Services)                (IoT Devices)
+[rootful podman - separate network]     [rootless podman]
 ```
 
 ## Common Commands
@@ -65,9 +68,8 @@ podman exec -it dogtag-iot-ca /scripts/init-iot-ca.sh
 podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \
   /certs/iot-ca.csr /certs/iot-ca-signed.crt
 
-# 4. FreeIPA External CA (two-phase)
-# CSR is generated at /data/ipa.csr
-# Sign with Intermediate CA and complete installation
+# 4. FreeIPA uses its internal Dogtag CA
+# (External CA mode is complex; internal CA works out of the box)
 ```
 
 ## Architecture
@@ -77,24 +79,31 @@ podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \
 Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → FreeIPA Revocation
 ```
 
-### Container Network (172.20.0.0/16)
+### Container Networks
+
+**Main Network (172.20.0.0/16)** - rootless podman:
 
 | IP | Service | Ports |
 |----|---------|-------|
-| 172.20.0.10 | FreeIPA | 4443:443, 8180:80, 3390:389, 6360:636 |
 | 172.20.0.11 | Intermediate CA | 8444:8443 |
 | 172.20.0.12 | Root CA | 8443:8443 |
 | 172.20.0.13 | IoT CA | 8445:8443 |
 | 172.20.0.14-16 | 389DS instances | internal |
 | 172.20.0.20 | PostgreSQL | internal |
 | 172.20.0.21 | Redis | internal |
-| 172.20.0.22-23 | AWX web/task | 8084:8080 |
+| 172.20.0.22-23 | AWX web/task | 8084:8052 |
 | 172.20.0.30 | Zookeeper | 2181 |
 | 172.20.0.31 | Kafka | 9092 |
 | 172.20.0.40 | EDA Server | 5000 |
 | 172.20.0.50 | Mock EDR | 8082:8000 |
 | 172.20.0.51 | Mock SIEM | 8083:8000 |
 | 172.20.0.60 | Jupyter | 8888 |
+
+**FreeIPA Network (172.25.0.0/24)** - rootful podman (separate compose file):
+
+| IP | Service | Ports |
+|----|---------|-------|
+| 172.25.0.10 | FreeIPA | 4443:443, 8180:80, 3390:389, 6360:636 |
 
 ## Directory Structure
 
@@ -200,6 +209,35 @@ vi .env  # Set all CHANGEME values
 - podman and podman-compose
 - sudo access (for /etc/hosts modification and FreeIPA)
 - Sufficient system resources (16GB+ RAM recommended)
+
+## FreeIPA API Authentication
+
+FreeIPA requires session-based authentication (not basic auth). The API has specific requirements:
+
+```bash
+# 1. Get session cookie (must include Referer header)
+curl -sk -X POST 'https://localhost:4443/ipa/session/login_password' \
+    -H 'Host: ipa.cert-lab.local' \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    -H 'Referer: https://ipa.cert-lab.local/ipa' \
+    -c /tmp/ipa_cookie \
+    -d 'user=admin&password=<URL-encoded-password>'
+
+# 2. Make API calls with session cookie
+curl -sk -X POST 'https://localhost:4443/ipa/session/json' \
+    -H 'Host: ipa.cert-lab.local' \
+    -H 'Content-Type: application/json' \
+    -H 'Referer: https://ipa.cert-lab.local/ipa' \
+    -H 'Accept: application/json' \
+    -b /tmp/ipa_cookie \
+    -d '{"method":"ping","params":[[],{}]}'
+```
+
+**Key requirements:**
+- `Host: ipa.cert-lab.local` header (FreeIPA validates hostname)
+- `Referer: https://ipa.cert-lab.local/ipa` header (CSRF protection)
+- URL-encode special characters in password (e.g., `!` → `%21`)
+- Use session cookie from login for all API calls
 
 ## Known Limitations
 

@@ -449,21 +449,26 @@ service_health_checks() {
 
     # FreeIPA
     log_test "FreeIPA Web UI"
-    if check_https "${FREEIPA_URL}/ipa/ui/"; then
+    # FreeIPA needs Host header to respond properly
+    local ipa_response=$(curl -sk -o /dev/null -w "%{http_code}" \
+        -H "Host: ipa.cert-lab.local" \
+        --connect-timeout $TIMEOUT "${FREEIPA_URL}/ipa/ui/" 2>/dev/null)
+    if [ "$ipa_response" = "200" ] || [ "$ipa_response" = "302" ]; then
         log_pass
-    elif check_https "${FREEIPA_URL}/ipa/ui/" 302; then
-        log_pass
-        log_detail "Redirecting to login (expected)"
+        log_detail "HTTP $ipa_response"
     else
-        log_fail "Not responding"
+        log_fail "Not responding (HTTP $ipa_response)"
     fi
 
-    log_test "FreeIPA JSON-RPC API"
-    if check_https "${FREEIPA_URL}/ipa/session/json" 401; then
+    log_test "FreeIPA JSON-RPC API endpoint"
+    local ipa_api=$(curl -sk -o /dev/null -w "%{http_code}" \
+        -H "Host: ipa.cert-lab.local" \
+        --connect-timeout $TIMEOUT "${FREEIPA_URL}/ipa/session/json" 2>/dev/null)
+    if [ "$ipa_api" = "401" ] || [ "$ipa_api" = "200" ]; then
         log_pass
-        log_detail "Returns 401 (auth required - expected)"
+        log_detail "API endpoint accessible"
     else
-        log_warn "API may not be fully initialized"
+        log_warn "API may not be fully initialized (HTTP $ipa_api)"
     fi
 
     log_section "Automation Services"
@@ -719,36 +724,68 @@ freeipa_validation() {
 
     log_section "FreeIPA Services"
 
-    # Check if FreeIPA container is running
-    if ! container_running "freeipa"; then
+    # Check if FreeIPA container is running (may be rootful)
+    local ipa_running=false
+    if container_running "freeipa"; then
+        ipa_running=true
+    elif ps aux 2>/dev/null | grep -q "[f]reeipa"; then
+        ipa_running=true
+        log_info "FreeIPA running as rootful container"
+    fi
+
+    if [ "$ipa_running" = "false" ]; then
         log_info "FreeIPA container not running, skipping validation"
         return
     fi
 
-    # Check FreeIPA services inside container
-    log_test "FreeIPA internal services"
-    local ipa_status=$(podman exec freeipa ipactl status 2>/dev/null)
-    if echo "$ipa_status" | grep -q "RUNNING"; then
-        log_pass
-        log_detail "Services are running"
-    else
-        log_warn "Some services may not be running"
-    fi
-
     log_section "FreeIPA API"
 
-    # Test API authentication
-    log_test "FreeIPA API authentication"
+    # FreeIPA session file for this validation
+    local IPA_COOKIE_FILE="/tmp/validate_ipa_session_$$"
+    trap "rm -f '$IPA_COOKIE_FILE'" RETURN
+
+    # Test session-based authentication (FreeIPA requires this, not basic auth)
+    log_test "FreeIPA session authentication"
+    if [ -z "$ADMIN_PASS" ]; then
+        log_skip "ADMIN_PASSWORD not set"
+    else
+        # URL-encode the password
+        local encoded_pass=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${ADMIN_PASS}', safe=''))" 2>/dev/null)
+
+        local login_response=$(curl -sk -X POST "${FREEIPA_URL}/ipa/session/login_password" \
+            -H "Host: ipa.cert-lab.local" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -H "Accept: text/plain" \
+            -H "Referer: https://ipa.cert-lab.local/ipa" \
+            -c "$IPA_COOKIE_FILE" \
+            -d "user=${ADMIN_USER}&password=${encoded_pass}" 2>/dev/null)
+
+        if [ -f "$IPA_COOKIE_FILE" ] && grep -q "ipa_session" "$IPA_COOKIE_FILE" 2>/dev/null; then
+            log_pass
+            log_detail "Session established"
+        else
+            log_fail "Could not establish session"
+            log_detail "Check ADMIN_PASSWORD is correct"
+            return
+        fi
+    fi
+
+    # Test API ping with session cookie
+    log_test "FreeIPA API ping"
     local api_response=$(curl -sk -X POST "${FREEIPA_URL}/ipa/session/json" \
+        -H "Host: ipa.cert-lab.local" \
         -H "Content-Type: application/json" \
-        -H "Referer: ${FREEIPA_URL}/ipa" \
-        -u "${ADMIN_USER}:${ADMIN_PASS}" \
+        -H "Referer: https://ipa.cert-lab.local/ipa" \
+        -H "Accept: application/json" \
+        -b "$IPA_COOKIE_FILE" \
         -d '{"method":"ping","params":[[],{}]}' 2>/dev/null)
 
-    if echo "$api_response" | grep -q "result"; then
+    if echo "$api_response" | grep -q '"result"'; then
         log_pass
+        local ipa_version=$(echo "$api_response" | grep -o '"version":"[^"]*"' | head -1 | cut -d'"' -f4)
+        log_detail "IPA version: $ipa_version"
     elif echo "$api_response" | grep -q "error"; then
-        log_warn "API responded with error (may need initialization)"
+        log_warn "API responded with error"
     else
         log_fail "API not responding"
     fi
@@ -756,16 +793,40 @@ freeipa_validation() {
     # Test host listing
     log_test "FreeIPA can list hosts"
     local hosts_response=$(curl -sk -X POST "${FREEIPA_URL}/ipa/session/json" \
+        -H "Host: ipa.cert-lab.local" \
         -H "Content-Type: application/json" \
-        -H "Referer: ${FREEIPA_URL}/ipa" \
-        -u "${ADMIN_USER}:${ADMIN_PASS}" \
-        -d '{"method":"host_find","params":[[],{"sizelimit":1}]}' 2>/dev/null)
+        -H "Referer: https://ipa.cert-lab.local/ipa" \
+        -H "Accept: application/json" \
+        -b "$IPA_COOKIE_FILE" \
+        -d '{"method":"host_find","params":[[],{"sizelimit":5}]}' 2>/dev/null)
 
-    if echo "$hosts_response" | grep -q "result"; then
+    if echo "$hosts_response" | grep -q '"result"'; then
         log_pass
+        local host_count=$(echo "$hosts_response" | grep -o '"count":[0-9]*' | cut -d':' -f2)
+        log_detail "Hosts found: ${host_count:-0}"
     else
         log_warn "Could not query hosts"
     fi
+
+    # Test user listing
+    log_test "FreeIPA can list users"
+    local users_response=$(curl -sk -X POST "${FREEIPA_URL}/ipa/session/json" \
+        -H "Host: ipa.cert-lab.local" \
+        -H "Content-Type: application/json" \
+        -H "Referer: https://ipa.cert-lab.local/ipa" \
+        -H "Accept: application/json" \
+        -b "$IPA_COOKIE_FILE" \
+        -d '{"method":"user_find","params":[[],{"sizelimit":5}]}' 2>/dev/null)
+
+    if echo "$users_response" | grep -q '"result"'; then
+        log_pass
+        local user_count=$(echo "$users_response" | grep -o '"count":[0-9]*' | cut -d':' -f2)
+        log_detail "Users found: ${user_count:-0}"
+    else
+        log_warn "Could not query users"
+    fi
+
+    rm -f "$IPA_COOKIE_FILE"
 }
 
 # ============================================================================
@@ -891,8 +952,8 @@ network_tests() {
     log_section "External Port Mappings"
 
     local ports=(
-        "443:FreeIPA HTTPS"
-        "8080:AWX Web"
+        "4443:FreeIPA HTTPS"
+        "8084:AWX Web"
         "8082:Mock EDR"
         "8083:Mock SIEM"
         "8443:Root CA"

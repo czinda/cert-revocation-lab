@@ -8,19 +8,19 @@ Comprehensive lab environment demonstrating automated certificate lifecycle mana
 ┌─────────────────────────────────────────────────────────────┐
 │                    Dogtag Root CA                           │
 │                  (Self-signed, Offline)                     │
-│                    172.20.0.12:8443                         │
+│                   localhost:8443 (HTTPS)                    │
 └─────────────────────────┬───────────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
 │               Dogtag Intermediate CA                        │
 │                 (Online Issuing CA)                         │
-│                   172.20.0.11:8443                          │
+│                  localhost:8444 (HTTPS)                     │
 └───────────┬─────────────────────────────────┬───────────────┘
             │                                 │
 ┌───────────▼───────────┐       ┌─────────────▼─────────────┐
 │   FreeIPA Sub-CA      │       │    Dogtag IoT Sub-CA      │
 │  (Users/Hosts/Svcs)   │       │     (IoT Devices)         │
-│   172.20.0.10:443     │       │    172.20.0.13:8443       │
+│ localhost:4443 (HTTPS)│       │   localhost:8445 (HTTPS)  │
 └───────────────────────┘       └───────────────────────────┘
 ```
 
@@ -63,7 +63,7 @@ Comprehensive lab environment demonstrating automated certificate lifecycle mana
 | **Dogtag Root CA** | Trust anchor, signs Intermediate CA | Dogtag PKI, 389DS |
 | **Dogtag Intermediate CA** | Online issuing CA for Sub-CAs | Dogtag PKI, 389DS |
 | **Dogtag IoT Sub-CA** | Certificates for IoT devices | Dogtag PKI, 389DS |
-| **FreeIPA** | Identity management, user/host certs | FreeIPA with External CA |
+| **FreeIPA** | Identity management, user/host certs | FreeIPA with Internal Dogtag CA |
 | **Kafka** | Event streaming bus | Confluent Kafka |
 | **Event-Driven Ansible** | Real-time event processing | ansible-rulebook |
 | **AWX** | Automation platform | Ansible AWX |
@@ -193,13 +193,12 @@ podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \
 
 > **Note:** Credentials are configured in `.env`. Copy `.env.example` to `.env` and set your passwords before starting.
 
-## Container Network
+## Container Networks
 
-All containers run on a dedicated bridge network (172.20.0.0/16):
+Most containers run on a dedicated bridge network (172.20.0.0/16):
 
 | IP Address | Service |
 |------------|---------|
-| 172.20.0.10 | FreeIPA |
 | 172.20.0.11 | Intermediate CA |
 | 172.20.0.12 | Root CA |
 | 172.20.0.13 | IoT Sub-CA |
@@ -213,6 +212,12 @@ All containers run on a dedicated bridge network (172.20.0.0/16):
 | 172.20.0.50 | Mock EDR |
 | 172.20.0.51 | Mock SIEM |
 | 172.20.0.60 | Jupyter |
+
+**FreeIPA** runs on a separate network (172.25.0.0/24) because it requires rootful podman (systemd support):
+
+| IP Address | Service |
+|------------|---------|
+| 172.25.0.10 | FreeIPA (ipa.cert-lab.local) |
 
 ## Project Structure
 

@@ -185,8 +185,8 @@ check_port() {
     fi
 }
 
-check_port 443 "FreeIPA HTTPS"
-check_port 8080 "AWX Web"
+check_port 4443 "FreeIPA HTTPS"
+check_port 8084 "AWX Web"
 check_port 8443 "Root CA"
 check_port 8444 "Intermediate CA"
 check_port 8445 "IoT CA"
