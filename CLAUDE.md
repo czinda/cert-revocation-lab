@@ -198,5 +198,28 @@ vi .env  # Set all CHANGEME values
 ## Prerequisites
 
 - podman and podman-compose
-- sudo access (for /etc/hosts modification)
+- sudo access (for /etc/hosts modification and FreeIPA)
 - Sufficient system resources (16GB+ RAM recommended)
+
+## Known Limitations
+
+### FreeIPA Requires Rootful Podman
+FreeIPA needs systemd support which requires rootful (sudo) podman. The main `./start-lab.sh` starts all other containers with rootless podman, but FreeIPA must be started separately:
+
+```bash
+sudo podman run -d --name freeipa \
+  --hostname ipa.cert-lab.local --privileged \
+  -e IPA_SERVER_HOSTNAME=ipa.cert-lab.local \
+  -e PASSWORD=${ADMIN_PASSWORD} \
+  -v $(pwd)/data/certs:/certs \
+  -p 4443:443 -p 8180:80 -p 3390:389 -p 6360:636 \
+  quay.io/freeipa/freeipa-server:rocky-9
+```
+
+### Port Mappings for Rootless Podman
+Privileged ports (<1024) are remapped to higher ports for rootless compatibility:
+- FreeIPA HTTPS: 4443 (not 443)
+- FreeIPA HTTP: 8180 (not 80)
+- FreeIPA LDAP: 3390 (not 389)
+- FreeIPA LDAPS: 6360 (not 636)
+- AWX: 8084 (not 8080, avoids conflicts)

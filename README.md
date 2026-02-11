@@ -122,6 +122,17 @@ vi .env
 ./start-lab.sh --clean
 ```
 
+> **Note:** FreeIPA requires rootful podman (systemd support). Start it separately with sudo:
+> ```bash
+> sudo podman run -d --name freeipa \
+>   --hostname ipa.cert-lab.local --privileged \
+>   -e IPA_SERVER_HOSTNAME=ipa.cert-lab.local \
+>   -e PASSWORD=${ADMIN_PASSWORD} \
+>   -v $(pwd)/data/certs:/certs \
+>   -p 4443:443 -p 8180:80 -p 3390:389 -p 6360:636 \
+>   quay.io/freeipa/freeipa-server:rocky-9
+> ```
+
 ### 4. Initialize PKI Hierarchy
 
 After containers start, initialize the PKI hierarchy:

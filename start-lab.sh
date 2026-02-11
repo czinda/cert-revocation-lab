@@ -257,12 +257,20 @@ start_pki_hierarchy() {
 
 # Phase 5: Start FreeIPA
 start_freeipa() {
-    log_phase "Phase 5: Starting FreeIPA (External CA Mode)"
+    log_phase "Phase 5: FreeIPA (Requires Rootful Podman)"
 
-    log_info "Starting FreeIPA container..."
-    podman-compose up -d freeipa
-
-    log_info "FreeIPA will generate a CSR for external CA signing."
+    log_warn "FreeIPA requires systemd support and must run with rootful podman."
+    log_info "Skipping rootless startup. Start FreeIPA manually with sudo:"
+    echo ""
+    echo "  sudo podman run -d --name freeipa \\"
+    echo "    --hostname ipa.cert-lab.local --privileged \\"
+    echo "    -e IPA_SERVER_HOSTNAME=ipa.cert-lab.local \\"
+    echo "    -e PASSWORD=\${ADMIN_PASSWORD} \\"
+    echo "    -v \$(pwd)/data/certs:/certs \\"
+    echo "    -p 4443:443 -p 8180:80 -p 3390:389 -p 6360:636 \\"
+    echo "    quay.io/freeipa/freeipa-server:rocky-9"
+    echo ""
+    log_info "After FreeIPA starts, it will generate a CSR for external CA signing."
     log_info "This is a two-phase process:"
     echo ""
     echo "  Phase 1: FreeIPA generates CSR at /data/ipa.csr"
@@ -271,8 +279,6 @@ start_freeipa() {
     echo "  # After CSR is generated, sign it:"
     echo "  podman exec dogtag-intermediate-ca /scripts/sign-csr.sh /certs/freeipa-ca.csr /certs/freeipa-ca-signed.crt"
     echo ""
-
-    log_success "FreeIPA container started"
 }
 
 # Phase 6: Start AWX
