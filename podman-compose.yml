@@ -160,7 +160,7 @@ services:
   # Phase 2: Complete install with signed certificate
   # Run: podman exec -it freeipa /scripts/init-freeipa.sh
   freeipa:
-    image: quay.io/freeipa/freeipa-server:${IPA_VERSION:-fedora-rawhide}
+    image: quay.io/freeipa/freeipa-server:${IPA_VERSION:-fedora-42}
     container_name: freeipa
     hostname: ipa.${LAB_DOMAIN:-cert-lab.local}
     read_only: false
