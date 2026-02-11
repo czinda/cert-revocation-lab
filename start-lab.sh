@@ -270,7 +270,7 @@ start_freeipa() {
     echo "    -e PASSWORD=\${ADMIN_PASSWORD} \\"
     echo "    -v freeipa-data:/data:Z -v \$(pwd)/data/certs:/certs:Z \\"
     echo "    -p 4443:443 -p 8180:80 -p 3390:389 -p 6360:636 \\"
-    echo "    quay.io/freeipa/freeipa-server:rocky-9 \\"
+    echo "    quay.io/freeipa/freeipa-server:fedora-rawhide \\"
     echo "    ipa-server-install -U --realm=CERT-LAB.LOCAL --domain=cert-lab.local \\"
     echo "    --ds-password=\${ADMIN_PASSWORD} --admin-password=\${ADMIN_PASSWORD} \\"
     echo "    --no-ntp --no-host-dns"
