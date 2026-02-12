@@ -728,11 +728,11 @@ pki_validation() {
 
     # Only run if certificates exist
     if [ -f "data/certs/root-ca.crt" ]; then
-        # Validate Root CA is self-signed
+        # Validate Root CA is self-signed (compare DN hashes to avoid formatting differences)
         log_test "Root CA is self-signed"
-        local root_issuer=$(openssl x509 -in data/certs/root-ca.crt -noout -issuer 2>/dev/null | sed 's/^issuer=//')
-        local root_subject=$(openssl x509 -in data/certs/root-ca.crt -noout -subject 2>/dev/null | sed 's/^subject=//')
-        if [ "$root_issuer" = "$root_subject" ]; then
+        local root_issuer_hash=$(openssl x509 -in data/certs/root-ca.crt -noout -issuer_hash 2>/dev/null)
+        local root_subject_hash=$(openssl x509 -in data/certs/root-ca.crt -noout -subject_hash 2>/dev/null)
+        if [ -n "$root_issuer_hash" ] && [ "$root_issuer_hash" = "$root_subject_hash" ]; then
             log_pass
         else
             log_fail "Root CA issuer does not match subject"
