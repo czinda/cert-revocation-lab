@@ -336,7 +336,7 @@ check_services() {
     fi
 }
 
-# Issue certificate from Dogtag
+# Issue certificate from Dogtag using proper enrollment workflow
 issue_certificate() {
     local device_fqdn="${DEVICE_NAME}.${LAB_DOMAIN}"
     local pki="${PKI_TYPE:-rsa}"
@@ -384,9 +384,6 @@ issue_certificate() {
     log_info "Submitting CSR to Dogtag CA..."
     sudo podman cp "$csr_file" "${container}:/tmp/test-request.csr"
 
-    # Use the CA's internal NSS database which already has the subsystem cert
-    local nss_db="/var/lib/pki/${instance}/alias"
-
     # Get hostname for internal CA URL
     local ca_hostname=""
     case "${CA_LEVEL}" in
@@ -395,108 +392,161 @@ issue_certificate() {
         iot) ca_hostname="iot-ca.cert-lab.local" ;;
     esac
 
-    # List available certs for authentication
-    log_info "Available certificates for authentication:"
-    sudo podman exec "$container" certutil -L -d "$nss_db" 2>/dev/null | head -10
-
-    # Find the subsystem cert for agent operations (NOT caSigningCert)
-    local agent_nick=$(sudo podman exec "$container" \
-        certutil -L -d "$nss_db" 2>/dev/null | grep "subsystemCert" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
-
-    if [ -z "$agent_nick" ]; then
-        log_warn "subsystemCert not found, trying default name"
-        agent_nick="subsystemCert cert-${instance}"
+    # Add PKI type prefix if not RSA
+    if [ "$pki" = "ecc" ]; then
+        ca_hostname="ecc-${ca_hostname}"
+    elif [ "$pki" = "pqc" ]; then
+        ca_hostname="pq-${ca_hostname}"
     fi
-    log_info "Using certificate: $agent_nick"
 
     # Get the internal token password
     local token_pass=$(sudo podman exec "$container" cat /var/lib/pki/${instance}/conf/password.conf 2>/dev/null | grep "internal=" | cut -d= -f2)
-    [ -z "$token_pass" ] && token_pass="$PKI_TOKEN_PASSWORD"
+    [ -z "$token_pass" ] && token_pass="${PKI_ADMIN_PASSWORD}"
 
-    # Use pki-server to directly issue certificate (bypasses request/approval workflow)
-    log_info "Issuing certificate using pki-server cert-create..."
+    # Setup client NSS database with admin cert for agent operations
+    log_info "Setting up agent authentication..."
+    sudo podman exec "$container" bash -c "
+        set -e
+        CLIENT_DB=/root/.dogtag/nssdb
+        ADMIN_P12=/root/.dogtag/${instance}/ca_admin_cert.p12
 
-    local cert_output=$(sudo podman exec "$container" \
-        pki-server cert-create \
-            -i "$instance" \
-            -d "$nss_db" \
-            -f /var/lib/pki/${instance}/conf/password.conf \
-            --csr /tmp/test-request.csr \
-            --profile caServerCert \
-            --output /tmp/test-cert.pem 2>&1)
-
-    if [ $? -ne 0 ]; then
-        log_warn "pki-server cert-create failed, trying REST API with CMC..."
-
-        # Fallback: Submit and auto-approve using CMC enrollment
-        local request_output=$(sudo podman exec "$container" \
-            pki -d "$nss_db" -c "$token_pass" \
-                -U "https://${ca_hostname}:8443" \
-                -n "$agent_nick" \
-                ca-cert-request-submit \
-                --profile caServerCert \
-                --csr-file /tmp/test-request.csr 2>&1)
-
-        local request_id=$(echo "$request_output" | grep "Request ID:" | awk '{print $3}')
-        if [ -z "$request_id" ]; then
-            log_error "Failed to submit certificate request"
-            echo "$request_output"
-            return 1
+        # Create client NSS database if needed
+        mkdir -p \$CLIENT_DB
+        if [ ! -f \$CLIENT_DB/cert9.db ]; then
+            certutil -N -d \$CLIENT_DB --empty-password
         fi
-        log_info "Request ID: $request_id (pending manual approval)"
-        log_info "The request needs agent approval - admin P12 password issue"
-        log_error "Cannot auto-approve: subsystemCert lacks agent privileges"
+
+        # Import CA chain for trust
+        if [ -f /certs/root-ca.crt ]; then
+            certutil -A -d \$CLIENT_DB -n 'Root CA' -t 'CT,C,C' -a -i /certs/root-ca.crt 2>/dev/null || true
+        fi
+        if [ -f /certs/intermediate-ca.crt ]; then
+            certutil -A -d \$CLIENT_DB -n 'Intermediate CA' -t 'CT,C,C' -a -i /certs/intermediate-ca.crt 2>/dev/null || true
+        fi
+        if [ -f /certs/ca-chain.crt ]; then
+            certutil -A -d \$CLIENT_DB -n 'CA Chain' -t 'CT,C,C' -a -i /certs/ca-chain.crt 2>/dev/null || true
+        fi
+
+        # Import CA signing cert for trust
+        PKI_DB=/var/lib/pki/${instance}/alias
+        certutil -L -d \$PKI_DB -n 'caSigningCert cert-${instance} CA' -a > /tmp/ca-signing.crt 2>/dev/null || true
+        if [ -f /tmp/ca-signing.crt ]; then
+            certutil -A -d \$CLIENT_DB -n 'CA Signing Cert' -t 'CT,C,C' -a -i /tmp/ca-signing.crt 2>/dev/null || true
+        fi
+
+        # Import admin P12 if available
+        if [ -f \$ADMIN_P12 ]; then
+            # Try common passwords
+            for pw in '${token_pass}' '${PKI_ADMIN_PASSWORD}' 'RedHat123' ''; do
+                if pk12util -i \$ADMIN_P12 -d \$CLIENT_DB -k /dev/null -W \"\$pw\" 2>/dev/null; then
+                    echo 'Admin certificate imported'
+                    break
+                fi
+            done
+        fi
+    " 2>/dev/null || log_warn "NSS database setup had warnings"
+
+    # Find the admin cert nickname
+    local admin_nick=$(sudo podman exec "$container" \
+        certutil -L -d /root/.dogtag/nssdb 2>/dev/null | \
+        grep -iE "admin|caadmin" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
+
+    if [ -z "$admin_nick" ]; then
+        log_warn "Admin certificate not found in client DB"
+        # List what we have
+        log_info "Certificates in client database:"
+        sudo podman exec "$container" certutil -L -d /root/.dogtag/nssdb 2>/dev/null | head -10 || true
+    else
+        log_info "Using admin cert: $admin_nick"
+    fi
+
+    # Step 1: Submit certificate request
+    log_info "Submitting certificate request..."
+    local request_output=$(sudo podman exec "$container" \
+        pki -d /root/.dogtag/nssdb \
+            -U "https://${ca_hostname}:8443" \
+            ca-cert-request-submit \
+            --profile caServerCert \
+            --csr-file /tmp/test-request.csr 2>&1)
+
+    local request_id=$(echo "$request_output" | grep "Request ID:" | awk '{print $3}')
+    if [ -z "$request_id" ]; then
+        log_error "Failed to submit certificate request"
+        echo "$request_output"
+        return 1
+    fi
+    log_success "Certificate request submitted"
+    log_info "Request ID: $request_id"
+
+    # Step 2: Approve the request using admin cert
+    if [ -n "$admin_nick" ]; then
+        log_info "Approving certificate request..."
+        local approve_output=$(sudo podman exec "$container" \
+            pki -d /root/.dogtag/nssdb -c '' \
+                -n "$admin_nick" \
+                -U "https://${ca_hostname}:8443" \
+                ca-cert-request-approve --force "$request_id" 2>&1)
+
+        if echo "$approve_output" | grep -qi "approved\|completed"; then
+            log_success "Certificate request approved"
+        else
+            log_warn "Request approval output: $approve_output"
+        fi
+    else
+        log_error "Cannot approve request without admin certificate"
+        log_info "Ensure setup-agent-auth.sh has been run for $container"
         return 1
     fi
 
-    log_success "Certificate created directly"
+    # Step 3: Get the certificate from the approved request
+    sleep 2
+    log_info "Retrieving issued certificate..."
 
-    # Check if certificate file was created
-    local cert_exists=$(sudo podman exec "$container" test -f /tmp/test-cert.pem && echo "yes" || echo "no")
+    local cert_info=$(sudo podman exec "$container" \
+        pki -d /root/.dogtag/nssdb \
+            -U "https://${ca_hostname}:8443" \
+            ca-cert-request-show "$request_id" 2>&1)
 
-    if [ "$cert_exists" != "yes" ]; then
-        # Certificate might be in command output, try to extract it
-        log_warn "Certificate file not found, checking command output..."
+    local cert_id=$(echo "$cert_info" | grep "Certificate ID:" | awk '{print $3}')
 
-        # Try to extract certificate from pki-server output
-        local cert_pem=$(echo "$cert_output" | sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p')
+    if [ -z "$cert_id" ]; then
+        log_warn "Certificate ID not found in request, checking request status..."
+        echo "$cert_info" | head -20
 
-        if [ -n "$cert_pem" ]; then
-            sudo podman exec "$container" bash -c "cat > /tmp/test-cert.pem << 'EOF'
-$cert_pem
-EOF"
-            log_info "Extracted certificate from command output"
-        else
-            # Last resort: find the most recent cert in the CA's database
-            log_warn "Trying to find certificate in CA database..."
+        # Try to get from request status
+        local req_status=$(echo "$cert_info" | grep "Status:" | head -1)
+        log_info "Request status: $req_status"
 
-            # Use pki-server to get recently issued cert
-            local recent_serial=$(sudo podman exec "$container" \
-                pki-server ca-cert-find -i "$instance" --maxResults 1 2>/dev/null | \
-                grep "Serial Number:" | head -1 | awk '{print $3}')
+        # If pending, try to find cert ID another way
+        if echo "$req_status" | grep -qi "complete"; then
+            cert_id=$(echo "$cert_info" | grep -oE "0x[0-9a-fA-F]+" | head -1)
+        fi
 
-            if [ -n "$recent_serial" ]; then
-                log_info "Found recent certificate: $recent_serial"
-                sudo podman exec "$container" \
-                    pki-server ca-cert-export -i "$instance" "$recent_serial" \
-                    --output /tmp/test-cert.pem 2>/dev/null || true
-            fi
+        if [ -z "$cert_id" ]; then
+            log_error "Failed to get certificate ID from request"
+            return 1
         fi
     fi
+    log_info "Certificate ID: $cert_id"
 
-    # Get the certificate serial from the issued cert
+    # Step 4: Export the certificate
+    log_info "Exporting certificate..."
+    sudo podman exec "$container" \
+        pki -d /root/.dogtag/nssdb \
+            -U "https://${ca_hostname}:8443" \
+            ca-cert-export "$cert_id" \
+            --output /tmp/test-cert.pem 2>/dev/null
+
+    # Get the certificate serial
     CERT_SERIAL=$(sudo podman exec "$container" \
         openssl x509 -in /tmp/test-cert.pem -noout -serial 2>/dev/null | cut -d= -f2)
 
     if [ -z "$CERT_SERIAL" ]; then
-        # Try to get serial from the certificate output text
-        CERT_SERIAL=$(echo "$cert_output" | grep -i "serial" | head -1 | grep -oE '[0-9a-fA-F]+' | tail -1)
-
-        if [ -z "$CERT_SERIAL" ]; then
-            log_error "Failed to get certificate serial"
-            log_info "pki-server output:"
-            echo "$cert_output" | head -20
-            return 1
+        # cert_id might be the serial in hex format
+        if [[ "$cert_id" =~ ^0x ]]; then
+            CERT_SERIAL=$((cert_id))
+        else
+            CERT_SERIAL="$cert_id"
         fi
     fi
 
@@ -506,13 +556,10 @@ EOF"
     fi
 
     # Copy certificate to host
-    sudo podman cp "${container}:/tmp/test-cert.pem" "$cert_file" 2>/dev/null || {
-        # If copy fails, create from output
-        echo "$cert_pem" > "$cert_file"
-    }
+    sudo podman cp "${container}:/tmp/test-cert.pem" "$cert_file" 2>/dev/null || true
 
     # Verify certificate
-    if openssl x509 -in "$cert_file" -noout -subject 2>/dev/null | grep -q "$device_fqdn"; then
+    if [ -f "$cert_file" ] && openssl x509 -in "$cert_file" -noout -subject 2>/dev/null | grep -q "$device_fqdn"; then
         log_success "Certificate issued successfully"
         log_info "Serial: $CERT_SERIAL"
         log_info "Subject: CN=${device_fqdn}"
@@ -715,6 +762,7 @@ wait_for_automation() {
 
     local max_wait=30
     local elapsed=0
+    local pki="${PKI_TYPE:-rsa}"
 
     while [ $elapsed -lt $max_wait ]; do
         echo -n "."
@@ -724,14 +772,17 @@ wait_for_automation() {
         # Early exit if certificate is already revoked
         if [ -n "$CERT_SERIAL" ]; then
             local container=$(get_ca_container)
-            local instance=$(get_ca_instance)
             local ca_hostname=$(get_ca_hostname)
-            local nss_db="/var/lib/pki/${instance}/alias"
-            local token_pass=$(sudo podman exec "$container" cat /var/lib/pki/${instance}/conf/password.conf 2>/dev/null | grep "internal=" | cut -d= -f2)
-            [ -z "$token_pass" ] && token_pass="$PKI_TOKEN_PASSWORD"
+
+            # Add PKI type prefix if not RSA
+            if [ "$pki" = "ecc" ]; then
+                ca_hostname="ecc-${ca_hostname}"
+            elif [ "$pki" = "pqc" ]; then
+                ca_hostname="pq-${ca_hostname}"
+            fi
 
             local status=$(sudo podman exec "$container" \
-                pki -d "$nss_db" -c "$token_pass" \
+                pki -d /root/.dogtag/nssdb \
                     -U "https://${ca_hostname}:8443" \
                     ca-cert-show "$CERT_SERIAL" 2>&1 | grep -i "Status:")
             if echo "$status" | grep -qi "REVOKED"; then
@@ -758,10 +809,17 @@ get_ca_hostname() {
 # Verify revocation in Dogtag
 verify_revocation() {
     local device_fqdn="${DEVICE_NAME}.${LAB_DOMAIN}"
+    local pki="${PKI_TYPE:-rsa}"
     local container=$(get_ca_container)
     local instance=$(get_ca_instance)
     local ca_hostname=$(get_ca_hostname)
-    local nss_db="/var/lib/pki/${instance}/alias"
+
+    # Add PKI type prefix if not RSA
+    if [ "$pki" = "ecc" ]; then
+        ca_hostname="ecc-${ca_hostname}"
+    elif [ "$pki" = "pqc" ]; then
+        ca_hostname="pq-${ca_hostname}"
+    fi
 
     log_phase "Verifying Certificate Revocation in Dogtag"
 
@@ -776,40 +834,76 @@ verify_revocation() {
 
     # Get internal token password
     local token_pass=$(sudo podman exec "$container" cat /var/lib/pki/${instance}/conf/password.conf 2>/dev/null | grep "internal=" | cut -d= -f2)
-    [ -z "$token_pass" ] && token_pass="$PKI_TOKEN_PASSWORD"
+    [ -z "$token_pass" ] && token_pass="${PKI_ADMIN_PASSWORD}"
 
-    # Try multiple methods to get certificate status
+    local cert_status=""
+    local status_line=""
 
-    # Method 1: Use pki-server ca-cert-show (no auth required)
-    log_info "Querying certificate status..."
-    local cert_status=$(sudo podman exec "$container" \
-        pki-server ca-cert-show -i "$instance" "$CERT_SERIAL" 2>&1)
+    # Method 1: Use pki client REST API (most reliable)
+    log_info "Querying certificate status via REST API..."
+    cert_status=$(sudo podman exec "$container" \
+        pki -d /root/.dogtag/nssdb \
+            -U "https://${ca_hostname}:8443" \
+            ca-cert-show "$CERT_SERIAL" 2>&1)
 
-    local status_line=$(echo "$cert_status" | grep -i "Status:" | head -1)
-    log_info "Certificate status: $status_line"
+    status_line=$(echo "$cert_status" | grep -i "Status:" | head -1)
 
-    if echo "$status_line" | grep -qi "REVOKED"; then
-        log_success "Certificate has been REVOKED"
-        echo "  $status_line"
-        return 0
-    elif echo "$status_line" | grep -qi "VALID"; then
-        log_warn "Certificate is still VALID (not revoked)"
-        echo "  $status_line"
-        log_info "(Check EDA logs: podman logs eda-server)"
-        return 1
+    if [ -n "$status_line" ]; then
+        log_info "Certificate status: $status_line"
+
+        if echo "$status_line" | grep -qi "REVOKED"; then
+            log_success "Certificate has been REVOKED"
+            echo "  $status_line"
+            return 0
+        elif echo "$status_line" | grep -qi "VALID"; then
+            log_warn "Certificate is still VALID (not revoked)"
+            echo "  $status_line"
+            log_info "(Check EDA logs: podman logs eda-server)"
+            return 1
+        fi
     fi
 
-    # Method 2: Direct LDAP query to CA database
+    # Method 2: Use pki ca-cert-find to search by serial
+    if [ -z "$status_line" ]; then
+        log_info "Trying certificate search..."
+        cert_status=$(sudo podman exec "$container" \
+            pki -d /root/.dogtag/nssdb \
+                -U "https://${ca_hostname}:8443" \
+                ca-cert-find --serial "$CERT_SERIAL" 2>&1)
+        status_line=$(echo "$cert_status" | grep -i "Status:" | head -1)
+
+        if [ -n "$status_line" ]; then
+            log_info "Certificate status: $status_line"
+            if echo "$status_line" | grep -qi "REVOKED"; then
+                log_success "Certificate has been REVOKED"
+                return 0
+            fi
+        fi
+    fi
+
+    # Method 3: Direct LDAP query to CA database
     if [ -z "$status_line" ]; then
         log_info "Trying direct database query..."
+
+        # Get DS hostname based on CA level and PKI type
+        local ds_container="ds-${CA_LEVEL:-iot}"
+        if [ "$pki" = "ecc" ]; then
+            ds_container="ds-ecc-${CA_LEVEL:-iot}"
+        elif [ "$pki" = "pqc" ]; then
+            ds_container="ds-pq-${CA_LEVEL:-iot}"
+        fi
+
+        # Format serial as hex for LDAP query (Dogtag stores serials as hex)
+        local hex_serial=$(printf '%x' "$CERT_SERIAL" 2>/dev/null || echo "$CERT_SERIAL")
+
         local ldap_status=$(sudo podman exec "$container" \
-            ldapsearch -x -H ldap://localhost:389 \
+            ldapsearch -x -H ldap://${ds_container}.cert-lab.local:389 \
                 -D "cn=Directory Manager" -w "$token_pass" \
                 -b "ou=certificateRepository,ou=ca,o=${instance}" \
-                "(serialno=$CERT_SERIAL)" status 2>/dev/null | grep "^status:" | awk '{print $2}')
+                "(serialNumber=${hex_serial})" status 2>/dev/null | grep "^status:" | awk '{print $2}')
 
         if [ -n "$ldap_status" ]; then
-            log_info "LDAP status: $ldap_status"
+            log_info "LDAP status code: $ldap_status"
             # Dogtag LDAP status: 0=VALID, 1=INVALID, 2=REVOKED
             case "$ldap_status" in
                 2) log_success "Certificate has been REVOKED"; return 0 ;;
@@ -819,29 +913,13 @@ verify_revocation() {
         fi
     fi
 
-    # Method 3: Use pki client with REST API (requires auth)
-    if [ -z "$status_line" ]; then
-        log_info "Trying REST API..."
-        cert_status=$(sudo podman exec "$container" \
-            pki -d "$nss_db" -c "$token_pass" \
-                -U "https://${ca_hostname}:8443" \
-                ca-cert-show "$CERT_SERIAL" 2>&1)
-        status_line=$(echo "$cert_status" | grep -i "Status:" | head -1)
+    # If we got here, we couldn't determine status definitively
+    if [ -n "$cert_status" ]; then
+        log_info "Full certificate info:"
+        echo "$cert_status" | head -15
     fi
-
-    if echo "$status_line" | grep -qi "REVOKED"; then
-        log_success "Certificate has been REVOKED"
-        echo "  $status_line"
-        return 0
-    elif echo "$status_line" | grep -qi "VALID"; then
-        log_warn "Certificate is still VALID (not revoked)"
-        echo "  $status_line"
-        log_info "(Check EDA logs: podman logs eda-server)"
-        return 1
-    else
-        log_info "Certificate status: $cert_status"
-        return 1
-    fi
+    log_warn "Could not determine certificate status"
+    return 1
 }
 
 # Show results
@@ -871,28 +949,33 @@ show_results() {
 
 # Cleanup test certificate
 cleanup_device() {
+    local pki="${PKI_TYPE:-rsa}"
     local container=$(get_ca_container)
     local instance=$(get_ca_instance)
     local ca_hostname=$(get_ca_hostname)
-    local nss_db="/var/lib/pki/${instance}/alias"
+
+    # Add PKI type prefix if not RSA
+    if [ "$pki" = "ecc" ]; then
+        ca_hostname="ecc-${ca_hostname}"
+    elif [ "$pki" = "pqc" ]; then
+        ca_hostname="pq-${ca_hostname}"
+    fi
 
     if [ -n "$CERT_SERIAL" ]; then
         log_info "Revoking test certificate (if not already revoked)..."
 
-        # Get internal token password
-        local token_pass=$(sudo podman exec "$container" cat /var/lib/pki/${instance}/conf/password.conf 2>/dev/null | grep "internal=" | cut -d= -f2)
-        [ -z "$token_pass" ] && token_pass="$PKI_TOKEN_PASSWORD"
+        # Find admin cert for agent operations
+        local admin_nick=$(sudo podman exec "$container" \
+            certutil -L -d /root/.dogtag/nssdb 2>/dev/null | \
+            grep -iE "admin|caadmin" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
 
-        # Find subsystem cert for agent operations
-        local agent_nick=$(sudo podman exec "$container" \
-            certutil -L -d "$nss_db" 2>/dev/null | grep "subsystemCert" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
-        [ -z "$agent_nick" ] && agent_nick="subsystemCert cert-${instance}"
-
-        sudo podman exec "$container" \
-            pki -d "$nss_db" -c "$token_pass" \
-                -U "https://${ca_hostname}:8443" \
-                -n "$agent_nick" \
-                ca-cert-revoke "$CERT_SERIAL" --reason 5 --force 2>/dev/null || true
+        if [ -n "$admin_nick" ]; then
+            sudo podman exec "$container" \
+                pki -d /root/.dogtag/nssdb -c '' \
+                    -U "https://${ca_hostname}:8443" \
+                    -n "$admin_nick" \
+                    ca-cert-revoke "$CERT_SERIAL" --reason 5 --force 2>/dev/null || true
+        fi
     fi
 
     # Clean up temp files
