@@ -413,50 +413,55 @@ issue_certificate() {
     local token_pass=$(sudo podman exec "$container" cat /var/lib/pki/${instance}/conf/password.conf 2>/dev/null | grep "internal=" | cut -d= -f2)
     [ -z "$token_pass" ] && token_pass="$PKI_TOKEN_PASSWORD"
 
-    # Submit certificate request using subsystem cert auth
-    local request_output=$(sudo podman exec "$container" \
-        pki -d "$nss_db" -c "$token_pass" \
-            -U "https://${ca_hostname}:8443" \
-            -n "$agent_nick" \
-            ca-cert-request-submit \
-            --profile caServerCert \
-            --csr-file /tmp/test-request.csr 2>&1)
+    # Use pki-server to directly issue certificate (bypasses request/approval workflow)
+    log_info "Issuing certificate using pki-server cert-create..."
 
-    local request_id=$(echo "$request_output" | grep "Request ID:" | awk '{print $3}')
-    if [ -z "$request_id" ]; then
-        log_error "Failed to submit certificate request"
-        echo "$request_output"
+    local cert_output=$(sudo podman exec "$container" \
+        pki-server cert-create \
+            -i "$instance" \
+            -d "$nss_db" \
+            -f /var/lib/pki/${instance}/conf/password.conf \
+            --csr /tmp/test-request.csr \
+            --profile caServerCert \
+            --output /tmp/test-cert.pem 2>&1)
+
+    if [ $? -ne 0 ]; then
+        log_warn "pki-server cert-create failed, trying REST API with CMC..."
+
+        # Fallback: Submit and auto-approve using CMC enrollment
+        local request_output=$(sudo podman exec "$container" \
+            pki -d "$nss_db" -c "$token_pass" \
+                -U "https://${ca_hostname}:8443" \
+                -n "$agent_nick" \
+                ca-cert-request-submit \
+                --profile caServerCert \
+                --csr-file /tmp/test-request.csr 2>&1)
+
+        local request_id=$(echo "$request_output" | grep "Request ID:" | awk '{print $3}')
+        if [ -z "$request_id" ]; then
+            log_error "Failed to submit certificate request"
+            echo "$request_output"
+            return 1
+        fi
+        log_info "Request ID: $request_id (pending manual approval)"
+        log_info "The request needs agent approval - admin P12 password issue"
+        log_error "Cannot auto-approve: subsystemCert lacks agent privileges"
         return 1
     fi
-    log_info "Request ID: $request_id"
 
-    # Approve the request using certificate-based auth
-    log_info "Approving certificate request..."
-    sudo podman exec "$container" \
-        pki -d "$nss_db" -c "$token_pass" \
-            -U "https://${ca_hostname}:8443" \
-            -n "$agent_nick" \
-            ca-cert-request-approve "$request_id" --force 2>&1 || true
+    log_success "Certificate created directly"
 
-    # Get certificate serial
-    sleep 2
-    local cert_info=$(sudo podman exec "$container" \
-        pki -d "$nss_db" -c "$token_pass" \
-            -U "https://${ca_hostname}:8443" \
-            ca-cert-request-show "$request_id" 2>&1)
+    # Get the certificate serial from the issued cert
+    CERT_SERIAL=$(sudo podman exec "$container" \
+        openssl x509 -in /tmp/test-cert.pem -noout -serial 2>/dev/null | cut -d= -f2)
 
-    CERT_SERIAL=$(echo "$cert_info" | grep "Certificate ID:" | awk '{print $3}')
     if [ -z "$CERT_SERIAL" ]; then
         log_error "Failed to get certificate serial"
-        echo "$cert_info"
         return 1
     fi
 
-    # Export certificate
-    sudo podman exec "$container" \
-        pki -d "$nss_db" -c "$token_pass" \
-            -U "https://${ca_hostname}:8443" \
-            ca-cert-export "$CERT_SERIAL" --output-file /tmp/test-cert.pem 2>&1 || true
+    # Convert hex serial to decimal for Dogtag
+    CERT_SERIAL=$((16#${CERT_SERIAL}))
 
     sudo podman cp "${container}:/tmp/test-cert.pem" "$cert_file"
 
