@@ -10,6 +10,89 @@
 CERTS_DIR="${CERTS_DIR:-/certs}"
 CONFIG_DIR="${CONFIG_DIR:-/etc/pki-configs}"
 
+# Setup mock systemctl for container environments
+# Dogtag PKI's pkispawn requires systemctl which isn't available in containers
+setup_mock_systemctl() {
+    if [ ! -f /run/.mock_systemctl_installed ]; then
+        echo "Setting up mock systemctl for container environment..."
+
+        # Backup real systemctl if it exists
+        if [ -f /usr/bin/systemctl ] && [ ! -f /usr/bin/systemctl.real ]; then
+            mv /usr/bin/systemctl /usr/bin/systemctl.real 2>/dev/null || true
+        fi
+
+        # Create mock systemctl
+        cat > /usr/bin/systemctl << 'MOCK_SYSTEMCTL'
+#!/bin/bash
+# Mock systemctl for container environments
+# Provides minimal compatibility for pkispawn
+
+case "$1" in
+    daemon-reload)
+        echo "mock-systemctl: daemon-reload (no-op)"
+        exit 0
+        ;;
+    enable|disable)
+        echo "mock-systemctl: $1 $2 (no-op)"
+        exit 0
+        ;;
+    start)
+        shift
+        service_name="${1%.service}"
+        service_name="${service_name#*@}"
+        echo "mock-systemctl: starting $service_name"
+        # For PKI services, start tomcat directly
+        if [[ "$service_name" == pki-* ]]; then
+            /usr/share/pki/server/bin/pkidaemon start "$service_name" 2>/dev/null || \
+            /usr/sbin/pki-server start "$service_name" 2>/dev/null || \
+            echo "mock-systemctl: pkidaemon not available, service may need manual start"
+        fi
+        exit 0
+        ;;
+    stop)
+        shift
+        service_name="${1%.service}"
+        service_name="${service_name#*@}"
+        echo "mock-systemctl: stopping $service_name"
+        if [[ "$service_name" == pki-* ]]; then
+            /usr/share/pki/server/bin/pkidaemon stop "$service_name" 2>/dev/null || \
+            /usr/sbin/pki-server stop "$service_name" 2>/dev/null || true
+        fi
+        exit 0
+        ;;
+    restart|reload)
+        shift
+        echo "mock-systemctl: $1 (delegating to stop/start)"
+        $0 stop "$@"
+        $0 start "$@"
+        exit 0
+        ;;
+    status)
+        shift
+        echo "mock-systemctl: status $1 (assuming active)"
+        exit 0
+        ;;
+    is-active|is-enabled)
+        echo "active"
+        exit 0
+        ;;
+    show)
+        # Return empty for property queries
+        exit 0
+        ;;
+    *)
+        echo "mock-systemctl: unknown command '$*' (no-op)"
+        exit 0
+        ;;
+esac
+MOCK_SYSTEMCTL
+
+        chmod +x /usr/bin/systemctl
+        touch /run/.mock_systemctl_installed
+        echo "Mock systemctl installed"
+    fi
+}
+
 # Validate required environment variables
 validate_env() {
     local missing=0
@@ -253,6 +336,9 @@ print_sign_action() {
 
 # Export common environment variables for pkispawn
 export_pki_env() {
+    # Setup mock systemctl for container environments (before pkispawn runs)
+    setup_mock_systemctl
+
     # Export all password variables for envsubst
     export DS_PASSWORD="${DS_PASSWORD:-${PKI_DS_PASSWORD}}"
     export PKI_ADMIN_PASSWORD="${PKI_ADMIN_PASSWORD:-${ADMIN_PASSWORD}}"
