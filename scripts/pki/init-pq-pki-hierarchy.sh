@@ -7,7 +7,8 @@
 set -e
 
 SCRIPT_DIR="$(dirname "$0")"
-CERTS_DIR="${CERTS_DIR:-/certs/pq}"
+# Host path for checking file existence
+CERTS_DIR="${CERTS_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)/data/certs/pq}"
 
 # Colors
 RED='\033[0;31m'
@@ -102,11 +103,12 @@ main() {
         sudo podman exec -it dogtag-pq-intermediate-ca /scripts/init-pq-intermediate-ca.sh || true
 
         # Sign CSR with PQ Root CA
+        # Note: Container paths use /certs (volume mounted from ./data/certs/pq)
         if [ -f "${CERTS_DIR}/intermediate-ca.csr" ] && [ ! -f "${CERTS_DIR}/intermediate-ca-signed.crt" ]; then
             log_step "Signing PQ Intermediate CA CSR"
             sign_csr "dogtag-pq-root-ca" \
-                "/certs/pq/intermediate-ca.csr" \
-                "/certs/pq/intermediate-ca-signed.crt" \
+                "/certs/intermediate-ca.csr" \
+                "/certs/intermediate-ca-signed.crt" \
                 "https://pq-root-ca.cert-lab.local:8443" \
                 "caCACert"
         fi
@@ -127,11 +129,12 @@ main() {
         sudo podman exec -it dogtag-pq-iot-ca /scripts/init-pq-iot-ca.sh || true
 
         # Sign CSR with PQ Intermediate CA
+        # Note: Container paths use /certs (volume mounted from ./data/certs/pq)
         if [ -f "${CERTS_DIR}/iot-ca.csr" ] && [ ! -f "${CERTS_DIR}/iot-ca-signed.crt" ]; then
             log_step "Signing PQ IoT CA CSR"
             sign_csr "dogtag-pq-intermediate-ca" \
-                "/certs/pq/iot-ca.csr" \
-                "/certs/pq/iot-ca-signed.crt" \
+                "/certs/iot-ca.csr" \
+                "/certs/iot-ca-signed.crt" \
                 "https://pq-intermediate-ca.cert-lab.local:8443" \
                 "caCACert"
         fi

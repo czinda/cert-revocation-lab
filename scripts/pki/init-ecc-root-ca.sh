@@ -19,8 +19,8 @@ PKI_PASSWORD="${PKI_ADMIN_PASSWORD}"
 # Source common functions
 source "$(dirname "$0")/lib-pki-common.sh"
 
-# Override certs directory for ECC
-CERTS_DIR="${CERTS_DIR:-/certs/ecc}"
+# Certs directory - inside container, /certs is mounted from ./data/certs/ecc
+CERTS_DIR="${CERTS_DIR:-/certs}"
 
 # Validate required environment
 [ -n "$DS_PASSWORD" ] || { log_error "DS_PASSWORD not set"; exit 1; }
