@@ -405,13 +405,25 @@ quick_start() {
         SUDO_OK=true
     fi
 
-    # Start PKI containers (rootful)
+    # Start PKI containers from pki-compose.yml (rootful - has initialized data)
     if [ -f pki-compose.yml ]; then
-        log_info "Starting PKI containers..."
+        log_info "Starting PKI containers (from pki-compose.yml)..."
         if [ "$SUDO_OK" = true ]; then
             sudo podman-compose -f pki-compose.yml up -d
+            # Start the PKI servers inside containers
+            sleep 5
+            for ca in dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca; do
+                instance=$(echo $ca | sed 's/dogtag-/pki-/')
+                log_info "Starting PKI server in $ca..."
+                sudo podman exec $ca bash -c "
+                    if [ -d /var/lib/pki/$instance ]; then
+                        pgrep -f 'catalina' || nohup pki-server run $instance > /var/log/pki/$instance/startup.log 2>&1 &
+                    fi
+                " 2>/dev/null || true
+            done
         else
-            log_warn "PKI containers require sudo. Run: sudo podman-compose -f pki-compose.yml up -d"
+            log_warn "PKI containers require sudo. Run:"
+            echo "  sudo podman-compose -f pki-compose.yml up -d"
         fi
     fi
 
@@ -425,20 +437,32 @@ quick_start() {
         fi
     fi
 
-    # Start other containers (rootless)
-    log_info "Starting rootless containers..."
+    # Start other containers (rootless) - exclude PKI/DS services
+    log_info "Starting other containers (Kafka, AWX, EDA, etc.)..."
+    # Only start non-PKI services from main compose
+    podman-compose up -d postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem jupyter 2>/dev/null || \
     podman-compose up -d
 
     log_success "Containers started"
 
-    # Show running containers
+    # Wait for PKI servers to start
+    if [ "$SUDO_OK" = true ]; then
+        log_info "Waiting for PKI servers..."
+        sleep 10
+    fi
+
+    # Show status
+    echo ""
+    log_info "Checking PKI status..."
+    curl -sk https://localhost:8443/ca/admin/ca/getStatus 2>/dev/null | grep -q "running" && echo "  Root CA: running" || echo "  Root CA: not responding"
+    curl -sk https://localhost:8444/ca/admin/ca/getStatus 2>/dev/null | grep -q "running" && echo "  Intermediate CA: running" || echo "  Intermediate CA: not responding"
+    curl -sk https://localhost:8445/ca/admin/ca/getStatus 2>/dev/null | grep -q "running" && echo "  IoT CA: running" || echo "  IoT CA: not responding"
+
     echo ""
     log_info "Running containers:"
-    podman ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | head -20
+    podman ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | grep -v "^NAMES" | head -15
     if [ "$SUDO_OK" = true ]; then
-        echo ""
-        log_info "Rootful containers:"
-        sudo podman ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | head -10
+        sudo podman ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | grep -v "^NAMES" | head -10
     fi
     echo ""
 }
