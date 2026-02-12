@@ -122,6 +122,63 @@ setup_networks() {
     done
 }
 
+# Setup and validate podman volumes
+setup_volumes() {
+    log_info "Checking container volumes..."
+
+    # Rootless volumes (main compose)
+    ROOTLESS_VOLUMES=(
+        "cert-revocation-lab_postgres-data"
+        "cert-revocation-lab_redis-data"
+        "cert-revocation-lab_awx-data"
+        "cert-revocation-lab_zookeeper-data"
+        "cert-revocation-lab_zookeeper-log"
+        "cert-revocation-lab_kafka-data"
+        "cert-revocation-lab_jupyter-data"
+    )
+
+    # Rootful volumes (PKI compose)
+    ROOTFUL_VOLUMES=(
+        "ds-root-data"
+        "ds-intermediate-data"
+        "ds-iot-data"
+        "pki-root-data"
+        "pki-root-logs"
+        "pki-intermediate-data"
+        "pki-intermediate-logs"
+        "pki-iot-data"
+        "pki-iot-logs"
+    )
+
+    # Check/create rootless volumes
+    local created=0
+    local existed=0
+    for vol in "${ROOTLESS_VOLUMES[@]}"; do
+        if podman volume exists "$vol" 2>/dev/null; then
+            ((existed++))
+        else
+            podman volume create "$vol" >/dev/null 2>&1 && ((created++))
+        fi
+    done
+    log_success "Rootless volumes: $existed exist, $created created"
+
+    # Check/create rootful volumes (if sudo available)
+    if sudo -n true 2>/dev/null; then
+        created=0
+        existed=0
+        for vol in "${ROOTFUL_VOLUMES[@]}"; do
+            if sudo podman volume exists "$vol" 2>/dev/null; then
+                ((existed++))
+            else
+                sudo podman volume create "$vol" >/dev/null 2>&1 && ((created++))
+            fi
+        done
+        log_success "Rootful volumes: $existed exist, $created created"
+    else
+        log_warn "Skipping rootful volume check (requires sudo)"
+    fi
+}
+
 # Update /etc/hosts if needed
 setup_hosts() {
     log_info "Checking /etc/hosts entries..."
@@ -451,8 +508,9 @@ quick_start() {
         SUDO_OK=true
     fi
 
-    # Validate networks first
+    # Validate networks and volumes first
     setup_networks
+    setup_volumes
 
     # Start PKI containers from pki-compose.yml (rootful - has initialized data)
     if [ -f pki-compose.yml ]; then
@@ -554,6 +612,7 @@ main() {
     check_prerequisites
     setup_directories
     setup_networks
+    setup_volumes
     setup_hosts
     start_base_infrastructure
     start_kafka
