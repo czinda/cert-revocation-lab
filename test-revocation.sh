@@ -778,19 +778,64 @@ verify_revocation() {
     local token_pass=$(sudo podman exec "$container" cat /var/lib/pki/${instance}/conf/password.conf 2>/dev/null | grep "internal=" | cut -d= -f2)
     [ -z "$token_pass" ] && token_pass="$PKI_TOKEN_PASSWORD"
 
-    # Get certificate status from Dogtag
-    local cert_status=$(sudo podman exec "$container" \
-        pki -d "$nss_db" -c "$token_pass" \
-            -U "https://${ca_hostname}:8443" \
-            ca-cert-show "$CERT_SERIAL" 2>&1 | grep -i "Status:")
+    # Try multiple methods to get certificate status
 
-    if echo "$cert_status" | grep -qi "REVOKED"; then
+    # Method 1: Use pki-server ca-cert-show (no auth required)
+    log_info "Querying certificate status..."
+    local cert_status=$(sudo podman exec "$container" \
+        pki-server ca-cert-show -i "$instance" "$CERT_SERIAL" 2>&1)
+
+    local status_line=$(echo "$cert_status" | grep -i "Status:" | head -1)
+    log_info "Certificate status: $status_line"
+
+    if echo "$status_line" | grep -qi "REVOKED"; then
         log_success "Certificate has been REVOKED"
-        echo "  $cert_status"
+        echo "  $status_line"
         return 0
-    elif echo "$cert_status" | grep -qi "VALID"; then
+    elif echo "$status_line" | grep -qi "VALID"; then
         log_warn "Certificate is still VALID (not revoked)"
-        echo "  $cert_status"
+        echo "  $status_line"
+        log_info "(Check EDA logs: podman logs eda-server)"
+        return 1
+    fi
+
+    # Method 2: Direct LDAP query to CA database
+    if [ -z "$status_line" ]; then
+        log_info "Trying direct database query..."
+        local ldap_status=$(sudo podman exec "$container" \
+            ldapsearch -x -H ldap://localhost:389 \
+                -D "cn=Directory Manager" -w "$token_pass" \
+                -b "ou=certificateRepository,ou=ca,o=${instance}" \
+                "(serialno=$CERT_SERIAL)" status 2>/dev/null | grep "^status:" | awk '{print $2}')
+
+        if [ -n "$ldap_status" ]; then
+            log_info "LDAP status: $ldap_status"
+            # Dogtag LDAP status: 0=VALID, 1=INVALID, 2=REVOKED
+            case "$ldap_status" in
+                2) log_success "Certificate has been REVOKED"; return 0 ;;
+                0) log_warn "Certificate is VALID"; return 1 ;;
+                *) log_info "Status code: $ldap_status" ;;
+            esac
+        fi
+    fi
+
+    # Method 3: Use pki client with REST API (requires auth)
+    if [ -z "$status_line" ]; then
+        log_info "Trying REST API..."
+        cert_status=$(sudo podman exec "$container" \
+            pki -d "$nss_db" -c "$token_pass" \
+                -U "https://${ca_hostname}:8443" \
+                ca-cert-show "$CERT_SERIAL" 2>&1)
+        status_line=$(echo "$cert_status" | grep -i "Status:" | head -1)
+    fi
+
+    if echo "$status_line" | grep -qi "REVOKED"; then
+        log_success "Certificate has been REVOKED"
+        echo "  $status_line"
+        return 0
+    elif echo "$status_line" | grep -qi "VALID"; then
+        log_warn "Certificate is still VALID (not revoked)"
+        echo "  $status_line"
         log_info "(Check EDA logs: podman logs eda-server)"
         return 1
     else
