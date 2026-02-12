@@ -36,7 +36,7 @@
         event.body.action_required == "revoke_certificate"
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "critical"
@@ -50,7 +50,7 @@
         event.body.action_required == "revoke_certificate"
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -64,7 +64,7 @@
         event.body.action_required == "revoke_certificate"
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -77,7 +77,7 @@
         event.body.severity in ["high", "critical"]
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "emergency"
@@ -90,7 +90,7 @@
         event.body.severity in ["high", "critical"]
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -103,7 +103,7 @@
         event.body.severity in ["high", "critical"]
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -116,7 +116,7 @@
         event.body.severity in ["high", "critical"]
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -129,7 +129,7 @@
         event.body.severity in ["high", "critical"]
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -147,7 +147,7 @@
         (event.body.pki_type is not defined or event.body.pki_type == "rsa")
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "emergency"
@@ -161,7 +161,7 @@
         event.body.pki_type == "ecc"
       action:
         run_playbook:
-          name: playbooks/dogtag-ecc-revoke-certificate.yml
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "emergency"
@@ -175,7 +175,7 @@
         event.body.pki_type == "pqc"
       action:
         run_playbook:
-          name: playbooks/dogtag-pqc-revoke-certificate.yml
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "emergency"
@@ -189,7 +189,7 @@
         event.body.severity in ["high", "critical"]
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -203,7 +203,7 @@
         event.body.severity in ["high", "critical"]
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -217,7 +217,7 @@
         event.body.severity in ["high", "critical"]
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "emergency"
@@ -231,7 +231,7 @@
         event.body.severity == "critical"
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "emergency"
@@ -250,7 +250,7 @@
         (event.body.pki_type is not defined or event.body.pki_type == "rsa")
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "critical"
@@ -264,7 +264,7 @@
         event.body.pki_type == "ecc"
       action:
         run_playbook:
-          name: playbooks/dogtag-ecc-revoke-certificate.yml
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "critical"
@@ -278,7 +278,7 @@
         event.body.pki_type == "pqc"
       action:
         run_playbook:
-          name: playbooks/dogtag-pqc-revoke-certificate.yml
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "critical"
@@ -293,7 +293,7 @@
         (event.body.pki_type is not defined or event.body.pki_type == "rsa")
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "emergency"
@@ -307,7 +307,7 @@
         event.body.pki_type == "ecc"
       action:
         run_playbook:
-          name: playbooks/dogtag-ecc-revoke-certificate.yml
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "emergency"
@@ -321,7 +321,7 @@
         event.body.pki_type == "pqc"
       action:
         run_playbook:
-          name: playbooks/dogtag-pqc-revoke-certificate.yml
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "emergency"
@@ -336,7 +336,7 @@
         (event.body.pki_type is not defined or event.body.pki_type == "rsa")
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -350,7 +350,7 @@
         event.body.pki_type == "ecc"
       action:
         run_playbook:
-          name: playbooks/dogtag-ecc-revoke-certificate.yml
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -364,7 +364,7 @@
         event.body.pki_type == "pqc"
       action:
         run_playbook:
-          name: playbooks/dogtag-pqc-revoke-certificate.yml
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -379,7 +379,7 @@
         (event.body.pki_type is not defined or event.body.pki_type == "rsa")
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -393,7 +393,7 @@
         event.body.pki_type == "ecc"
       action:
         run_playbook:
-          name: playbooks/dogtag-ecc-revoke-certificate.yml
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -407,7 +407,7 @@
         event.body.pki_type == "pqc"
       action:
         run_playbook:
-          name: playbooks/dogtag-pqc-revoke-certificate.yml
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -425,7 +425,7 @@
         event.body.severity in ["high", "critical"]
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -439,7 +439,7 @@
         event.body.severity in ["high", "critical"]
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -453,7 +453,7 @@
         event.body.severity in ["high", "critical"]
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "emergency"
@@ -467,7 +467,7 @@
         event.body.severity in ["high", "critical"]
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -485,7 +485,7 @@
         event.body.severity in ["high", "critical"]
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -499,7 +499,7 @@
         event.body.severity in ["high", "critical"]
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "emergency"
@@ -513,7 +513,7 @@
         event.body.severity in ["high", "critical"]
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -531,7 +531,7 @@
         event.body.severity in ["high", "critical"]
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -544,7 +544,7 @@
         event.body.action_required == "revoke_certificate"
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "medium"
@@ -556,7 +556,7 @@
         event.body.event_type == "certificate_misuse"
       action:
         run_playbook:
-          name: playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -575,7 +575,7 @@
         event.body.event_type not in ["key_compromise", "firmware_integrity", "device_cloning", "iot_anomaly", "protocol_attack"]
       action:
         run_playbook:
-          name: playbooks/dogtag-ecc-revoke-certificate.yml
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -590,7 +590,7 @@
         event.body.event_type not in ["key_compromise", "firmware_integrity", "device_cloning", "iot_anomaly", "protocol_attack"]
       action:
         run_playbook:
-          name: playbooks/dogtag-pqc-revoke-certificate.yml
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
