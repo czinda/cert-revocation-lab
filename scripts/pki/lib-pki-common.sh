@@ -218,7 +218,7 @@ print_header() {
 wait_for_ds() {
     local host="${1:?DS host required}"
     local port="${2:-3389}"
-    local password="${3:-RedHat123!}"
+    local password="${3:-RedHat123}"
     local max_attempts="${4:-60}"
     local attempt=1
 

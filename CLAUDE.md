@@ -308,8 +308,13 @@ vi .env  # Set all CHANGEME values
 - `DS_PASSWORD`: 389 Directory Server password
 - `DB_PASSWORD`: PostgreSQL password
 - `PKI_ADMIN_PASSWORD`: Dogtag PKI admin password
+- `PKI_TOKEN_PASSWORD`: NSS database internal token password
 - `AWX_SECRET_KEY`: AWX secret key (use `openssl rand -hex 32`)
 - `JUPYTER_TOKEN`: Jupyter access token
+
+**Password requirements**:
+- Avoid special characters like `!` in passwords (causes shell escaping issues with pkispawn)
+- The default lab password is `RedHat123` (no exclamation mark)
 
 **Optional variables**:
 - `LAB_DOMAIN`: Domain name (default: cert-lab.local)

@@ -139,8 +139,8 @@ sign_csr() {
         NSS_DB=/root/.dogtag/nssdb
 
         if [ -f \"\$ADMIN_P12\" ]; then
-            # Try various passwords
-            for pw in 'RedHat123!' '\${PKI_CLIENT_PKCS12_PASSWORD}' '' '\${PKI_ADMIN_PASSWORD}'; do
+            # Try various passwords (RedHat123 without special chars to avoid escaping issues)
+            for pw in 'RedHat123' '' '\${PKI_CLIENT_PKCS12_PASSWORD}' '\${PKI_ADMIN_PASSWORD}'; do
                 if pk12util -i \"\$ADMIN_P12\" -d \$NSS_DB -k /dev/null -W \"\$pw\" 2>/dev/null; then
                     echo 'Admin cert imported'
                     break

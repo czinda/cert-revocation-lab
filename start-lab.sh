@@ -568,11 +568,14 @@ start_pki_hierarchy() {
     done
 
     # Initialize PKI hierarchy automatically
+    # The init script needs to run with rootful podman access
     log_info "Initializing PKI hierarchy..."
-    if [ -x scripts/pki/init-pki-hierarchy.sh ]; then
-        scripts/pki/init-pki-hierarchy.sh
-    else
+    if is_running_as_root; then
+        # Already root, just run the script
         bash scripts/pki/init-pki-hierarchy.sh
+    else
+        # Need sudo for rootful podman access
+        sudo bash scripts/pki/init-pki-hierarchy.sh
     fi
 
     log_success "PKI hierarchy initialized"
@@ -655,11 +658,12 @@ start_pq_pki_hierarchy() {
     done
 
     # Initialize PQ PKI hierarchy automatically
+    # The init script needs to run with rootful podman access
     log_info "Initializing PQ PKI hierarchy (ML-DSA-87)..."
-    if [ -x scripts/pki/init-pq-pki-hierarchy.sh ]; then
-        scripts/pki/init-pq-pki-hierarchy.sh
-    else
+    if is_running_as_root; then
         bash scripts/pki/init-pq-pki-hierarchy.sh
+    else
+        sudo bash scripts/pki/init-pq-pki-hierarchy.sh
     fi
 
     log_success "PQ PKI hierarchy initialized"
@@ -742,11 +746,12 @@ start_ecc_pki_hierarchy() {
     done
 
     # Initialize ECC PKI hierarchy automatically
+    # The init script needs to run with rootful podman access
     log_info "Initializing ECC PKI hierarchy (P-384)..."
-    if [ -x scripts/pki/init-ecc-pki-hierarchy.sh ]; then
-        scripts/pki/init-ecc-pki-hierarchy.sh
-    else
+    if is_running_as_root; then
         bash scripts/pki/init-ecc-pki-hierarchy.sh
+    else
+        sudo bash scripts/pki/init-ecc-pki-hierarchy.sh
     fi
 
     log_success "ECC PKI hierarchy initialized"
