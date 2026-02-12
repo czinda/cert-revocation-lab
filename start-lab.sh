@@ -10,6 +10,11 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Store original user for dropping privileges when needed
+# If run with sudo, SUDO_USER contains the original user
+ORIGINAL_USER="${SUDO_USER:-$USER}"
+ORIGINAL_UID=$(id -u "$ORIGINAL_USER" 2>/dev/null || echo $UID)
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -80,6 +85,10 @@ setup_directories() {
 setup_networks() {
     log_info "Checking container networks..."
 
+    # Detect if we're running as root
+    local running_as_root=false
+    [ "$(id -u)" = "0" ] && running_as_root=true
+
     # Network configurations
     declare -A NETWORKS
     NETWORKS["cert-revocation-lab_lab-network"]="172.20.0.0/16:172.20.0.1"
@@ -89,14 +98,24 @@ setup_networks() {
     for net_name in "${!NETWORKS[@]}"; do
         IFS=':' read -r expected_subnet expected_gateway <<< "${NETWORKS[$net_name]}"
 
-        # Determine if this is a rootful network
-        PCMD="podman"
+        # Determine if this is a rootful or rootless network
+        local PCMD=""
         if [[ "$net_name" == "pki-net" || "$net_name" == "freeipa-net" ]]; then
-            if sudo -n true 2>/dev/null; then
+            # Rootful network
+            if [ "$running_as_root" = true ]; then
+                PCMD="podman"
+            elif sudo -n true 2>/dev/null; then
                 PCMD="sudo podman"
             else
                 log_warn "Skipping $net_name check (requires sudo)"
                 continue
+            fi
+        else
+            # Rootless network
+            if [ "$running_as_root" = true ]; then
+                PCMD="sudo -u $ORIGINAL_USER podman"
+            else
+                PCMD="podman"
             fi
         fi
 
@@ -126,6 +145,21 @@ setup_networks() {
 setup_volumes() {
     log_info "Checking container volumes..."
 
+    # Detect if we're running as root
+    local running_as_root=false
+    [ "$(id -u)" = "0" ] && running_as_root=true
+
+    # Commands for rootless vs rootful
+    local ROOTLESS_PCMD=""
+    local ROOTFUL_PCMD=""
+    if [ "$running_as_root" = true ]; then
+        ROOTLESS_PCMD="sudo -u $ORIGINAL_USER podman"
+        ROOTFUL_PCMD="podman"
+    else
+        ROOTLESS_PCMD="podman"
+        ROOTFUL_PCMD="sudo podman"
+    fi
+
     # Rootless volumes (main compose)
     ROOTLESS_VOLUMES=(
         "cert-revocation-lab_postgres-data"
@@ -154,23 +188,23 @@ setup_volumes() {
     local created=0
     local existed=0
     for vol in "${ROOTLESS_VOLUMES[@]}"; do
-        if podman volume exists "$vol" 2>/dev/null; then
+        if $ROOTLESS_PCMD volume exists "$vol" 2>/dev/null; then
             ((existed++))
         else
-            podman volume create "$vol" >/dev/null 2>&1 && ((created++))
+            $ROOTLESS_PCMD volume create "$vol" >/dev/null 2>&1 && ((created++))
         fi
     done
     log_success "Rootless volumes: $existed exist, $created created"
 
-    # Check/create rootful volumes (if sudo available)
-    if sudo -n true 2>/dev/null; then
+    # Check/create rootful volumes (if sudo available or running as root)
+    if [ "$running_as_root" = true ] || sudo -n true 2>/dev/null; then
         created=0
         existed=0
         for vol in "${ROOTFUL_VOLUMES[@]}"; do
-            if sudo podman volume exists "$vol" 2>/dev/null; then
+            if $ROOTFUL_PCMD volume exists "$vol" 2>/dev/null; then
                 ((existed++))
             else
-                sudo podman volume create "$vol" >/dev/null 2>&1 && ((created++))
+                $ROOTFUL_PCMD volume create "$vol" >/dev/null 2>&1 && ((created++))
             fi
         done
         log_success "Rootful volumes: $existed exist, $created created"
@@ -502,10 +536,30 @@ print_summary() {
 quick_start() {
     log_phase "Quick Start - Starting Existing Containers"
 
-    # Check if we can use sudo non-interactively
-    SUDO_OK=false
-    if sudo -n true 2>/dev/null; then
-        SUDO_OK=true
+    # Detect if we're running as root
+    RUNNING_AS_ROOT=false
+    if [ "$(id -u)" = "0" ]; then
+        RUNNING_AS_ROOT=true
+        log_info "Running as root (sudo detected)"
+    fi
+
+    # Command prefixes for rootful vs rootless
+    # - Rootful (PKI/FreeIPA): always use sudo (or direct if already root)
+    # - Rootless (other services): run as original user
+    if [ "$RUNNING_AS_ROOT" = true ]; then
+        ROOTFUL_CMD=""  # Already root, no sudo needed
+        ROOTLESS_CMD="sudo -u $ORIGINAL_USER"  # Drop to original user
+    else
+        ROOTFUL_CMD="sudo"
+        ROOTLESS_CMD=""  # Already the right user
+    fi
+
+    # Check if sudo is available for rootful commands when not running as root
+    if [ "$RUNNING_AS_ROOT" = false ]; then
+        if ! sudo -n true 2>/dev/null; then
+            log_warn "Passwordless sudo not available. PKI containers may not start."
+            log_info "Run with 'sudo ./start-lab.sh --quick' for full functionality."
+        fi
     fi
 
     # Validate networks and volumes first
@@ -515,48 +569,42 @@ quick_start() {
     # Start PKI containers from pki-compose.yml (rootful - has initialized data)
     if [ -f pki-compose.yml ]; then
         log_info "Starting PKI containers (from pki-compose.yml)..."
-        if [ "$SUDO_OK" = true ]; then
-            sudo podman-compose -f pki-compose.yml up -d
-            # Start the PKI servers inside containers
-            sleep 5
-            for ca in dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca; do
-                instance=$(echo $ca | sed 's/dogtag-/pki-/')
-                log_info "Starting PKI server in $ca..."
-                sudo podman exec $ca bash -c "
-                    if [ -d /var/lib/pki/$instance ]; then
-                        pgrep -f 'catalina' || nohup pki-server run $instance > /var/log/pki/$instance/startup.log 2>&1 &
-                    fi
-                " 2>/dev/null || true
-            done
-        else
-            log_warn "PKI containers require sudo. Run:"
-            echo "  sudo podman-compose -f pki-compose.yml up -d"
-        fi
+        $ROOTFUL_CMD podman-compose -f pki-compose.yml up -d 2>/dev/null || {
+            log_warn "Failed to start PKI containers. Try: sudo podman-compose -f pki-compose.yml up -d"
+        }
+
+        # Start the PKI servers inside containers
+        sleep 5
+        for ca in dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca; do
+            instance=$(echo $ca | sed 's/dogtag-/pki-/')
+            log_info "Starting PKI server in $ca..."
+            $ROOTFUL_CMD podman exec $ca bash -c "
+                if [ -d /var/lib/pki/$instance ]; then
+                    pgrep -f 'catalina' || nohup pki-server run $instance > /var/log/pki/$instance/startup.log 2>&1 &
+                fi
+            " 2>/dev/null || true
+        done
     fi
 
     # Start FreeIPA (rootful)
     if [ -f freeipa-compose.yml ]; then
         log_info "Starting FreeIPA..."
-        if [ "$SUDO_OK" = true ]; then
-            sudo podman-compose -f freeipa-compose.yml up -d 2>/dev/null || true
-        else
-            log_warn "FreeIPA requires sudo. Run: sudo podman-compose -f freeipa-compose.yml up -d"
-        fi
+        $ROOTFUL_CMD podman-compose -f freeipa-compose.yml up -d 2>/dev/null || true
     fi
 
     # Start other containers (rootless) - exclude PKI/DS services
     log_info "Starting other containers (Kafka, AWX, EDA, etc.)..."
-    # Only start non-PKI services from main compose
-    podman-compose up -d postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem jupyter 2>/dev/null || \
-    podman-compose up -d
+    # Only start non-PKI services from main compose - must run as original user for rootless podman
+    $ROOTLESS_CMD podman-compose up -d postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem jupyter 2>/dev/null || \
+    $ROOTLESS_CMD podman-compose up -d 2>/dev/null || {
+        log_warn "Failed to start rootless containers"
+    }
 
-    log_success "Containers started"
+    log_success "Container startup initiated"
 
     # Wait for PKI servers to start
-    if [ "$SUDO_OK" = true ]; then
-        log_info "Waiting for PKI servers..."
-        sleep 10
-    fi
+    log_info "Waiting for PKI servers..."
+    sleep 10
 
     # Show status
     echo ""
@@ -566,11 +614,11 @@ quick_start() {
     curl -sk https://localhost:8445/ca/admin/ca/getStatus 2>/dev/null | grep -q "running" && echo "  IoT CA: running" || echo "  IoT CA: not responding"
 
     echo ""
-    log_info "Running containers:"
-    podman ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | grep -v "^NAMES" | head -15
-    if [ "$SUDO_OK" = true ]; then
-        sudo podman ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | grep -v "^NAMES" | head -10
-    fi
+    log_info "Running containers (rootless):"
+    $ROOTLESS_CMD podman ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | grep -v "^NAMES" | head -15
+    echo ""
+    log_info "Running containers (rootful/PKI):"
+    $ROOTFUL_CMD podman ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | grep -v "^NAMES" | head -10
     echo ""
 }
 
