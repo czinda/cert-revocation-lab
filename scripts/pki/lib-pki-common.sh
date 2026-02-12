@@ -27,53 +27,122 @@ setup_mock_systemctl() {
 # Mock systemctl for container environments
 # Provides minimal compatibility for pkispawn
 
-case "$1" in
+# Parse arguments - skip flags (--quiet, etc.)
+QUIET=false
+CMD=""
+SERVICE=""
+for arg in "$@"; do
+    case "$arg" in
+        --quiet|-q)
+            QUIET=true
+            ;;
+        --*)
+            # Skip other flags
+            ;;
+        *)
+            if [ -z "$CMD" ]; then
+                CMD="$arg"
+            elif [ -z "$SERVICE" ]; then
+                SERVICE="$arg"
+            fi
+            ;;
+    esac
+done
+
+# Extract instance name from service (e.g., pki-tomcatd@pki-ecc-root-ca.service -> pki-ecc-root-ca)
+INSTANCE="${SERVICE%.service}"
+INSTANCE="${INSTANCE#*@}"
+
+log_msg() {
+    if [ "$QUIET" != "true" ]; then
+        echo "mock-systemctl: $*"
+    fi
+}
+
+case "$CMD" in
     daemon-reload)
-        echo "mock-systemctl: daemon-reload (no-op)"
+        log_msg "daemon-reload (no-op)"
         exit 0
         ;;
     enable|disable)
-        echo "mock-systemctl: $1 $2 (no-op)"
+        log_msg "$CMD $SERVICE (no-op)"
         exit 0
         ;;
     start)
-        shift
-        service_name="${1%.service}"
-        service_name="${service_name#*@}"
-        echo "mock-systemctl: starting $service_name"
-        # For PKI services, start tomcat directly
-        if [[ "$service_name" == pki-* ]]; then
-            /usr/share/pki/server/bin/pkidaemon start "$service_name" 2>/dev/null || \
-            /usr/sbin/pki-server start "$service_name" 2>/dev/null || \
-            echo "mock-systemctl: pkidaemon not available, service may need manual start"
+        log_msg "starting $INSTANCE"
+        # Start Tomcat directly using the correct method
+        if [[ "$INSTANCE" == pki-* ]]; then
+            export CATALINA_BASE="/var/lib/pki/$INSTANCE"
+            export CATALINA_HOME="/usr/share/tomcat"
+            export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/jre}"
+
+            # Check if already running
+            if [ -f "$CATALINA_BASE/conf/tomcat.pid" ]; then
+                PID=$(cat "$CATALINA_BASE/conf/tomcat.pid" 2>/dev/null)
+                if kill -0 "$PID" 2>/dev/null; then
+                    log_msg "Tomcat already running (PID $PID)"
+                    exit 0
+                fi
+            fi
+
+            # Start tomcat
+            log_msg "Starting Tomcat for $INSTANCE..."
+            cd "$CATALINA_BASE"
+            /usr/share/tomcat/bin/startup.sh 2>&1 | while read line; do log_msg "$line"; done
+
+            # Wait a moment for startup
+            sleep 2
         fi
         exit 0
         ;;
     stop)
-        shift
-        service_name="${1%.service}"
-        service_name="${service_name#*@}"
-        echo "mock-systemctl: stopping $service_name"
-        if [[ "$service_name" == pki-* ]]; then
-            /usr/share/pki/server/bin/pkidaemon stop "$service_name" 2>/dev/null || \
-            /usr/sbin/pki-server stop "$service_name" 2>/dev/null || true
+        log_msg "stopping $INSTANCE"
+        if [[ "$INSTANCE" == pki-* ]]; then
+            export CATALINA_BASE="/var/lib/pki/$INSTANCE"
+            if [ -f "$CATALINA_BASE/conf/tomcat.pid" ]; then
+                /usr/share/tomcat/bin/shutdown.sh 2>/dev/null || true
+            fi
         fi
         exit 0
         ;;
     restart|reload)
-        shift
-        echo "mock-systemctl: $1 (delegating to stop/start)"
-        $0 stop "$@"
-        $0 start "$@"
+        log_msg "$CMD $INSTANCE"
+        $0 stop "$SERVICE"
+        sleep 2
+        $0 start "$SERVICE"
         exit 0
         ;;
     status)
-        shift
-        echo "mock-systemctl: status $1 (assuming active)"
-        exit 0
+        log_msg "status $INSTANCE"
+        if [[ "$INSTANCE" == pki-* ]]; then
+            CATALINA_BASE="/var/lib/pki/$INSTANCE"
+            if [ -f "$CATALINA_BASE/conf/tomcat.pid" ]; then
+                PID=$(cat "$CATALINA_BASE/conf/tomcat.pid" 2>/dev/null)
+                if kill -0 "$PID" 2>/dev/null; then
+                    echo "active"
+                    exit 0
+                fi
+            fi
+        fi
+        echo "inactive"
+        exit 3
         ;;
-    is-active|is-enabled)
-        echo "active"
+    is-active)
+        if [[ "$INSTANCE" == pki-* ]]; then
+            CATALINA_BASE="/var/lib/pki/$INSTANCE"
+            if [ -f "$CATALINA_BASE/conf/tomcat.pid" ]; then
+                PID=$(cat "$CATALINA_BASE/conf/tomcat.pid" 2>/dev/null)
+                if kill -0 "$PID" 2>/dev/null; then
+                    [ "$QUIET" != "true" ] && echo "active"
+                    exit 0
+                fi
+            fi
+        fi
+        [ "$QUIET" != "true" ] && echo "inactive"
+        exit 3
+        ;;
+    is-enabled)
+        echo "enabled"
         exit 0
         ;;
     show)
@@ -81,7 +150,7 @@ case "$1" in
         exit 0
         ;;
     *)
-        echo "mock-systemctl: unknown command '$*' (no-op)"
+        log_msg "unknown command '$CMD' (no-op)"
         exit 0
         ;;
 esac
