@@ -14,11 +14,17 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Load environment variables (grep filters out lines with special chars that break bash)
+# Load environment variables from .env
+# Values are quoted during eval to handle spaces, parentheses, etc.
 if [ -f .env ]; then
-    set -a
-    eval "$(grep -v '^\s*#' .env | grep -v '^\s*$' | grep -v '[(){}]' | sed 's/\r$//')"
-    set +a
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%%\#*}"                   # strip inline comments
+        line="${line%"${line##*[![:space:]]}"}" # strip trailing whitespace
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        if [[ "$line" =~ ^([A-Za-z_][A-Za-z_0-9]*)=(.*) ]]; then
+            export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
+        fi
+    done < .env
 fi
 
 # Colors
