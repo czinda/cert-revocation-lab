@@ -415,7 +415,7 @@ issue_certificate() {
     local request_output=$(sudo podman exec "$container" \
         pki -d /tmp/test-nssdb -c '' \
             -U "https://${ca_hostname}:8443" \
-            -u caadmin -w "$PKI_ADMIN_PASSWORD" \
+            -u admin -w "$PKI_ADMIN_PASSWORD" \
             ca-cert-request-submit \
             --profile caServerCert \
             --csr-file /tmp/test-request.csr 2>&1)
@@ -433,7 +433,7 @@ issue_certificate() {
     sudo podman exec "$container" \
         pki -d /tmp/test-nssdb -c '' \
             -U "https://${ca_hostname}:8443" \
-            -u caadmin -w "$PKI_ADMIN_PASSWORD" \
+            -u admin -w "$PKI_ADMIN_PASSWORD" \
             ca-cert-request-approve "$request_id" --force 2>&1 || true
 
     # Get certificate serial
@@ -763,7 +763,7 @@ cleanup_device() {
         sudo podman exec "$container" \
             pki -d /tmp/test-nssdb -c '' \
                 -U "https://${ca_hostname}:8443" \
-                -u caadmin -w "$PKI_ADMIN_PASSWORD" \
+                -u admin -w "$PKI_ADMIN_PASSWORD" \
                 ca-cert-revoke "$CERT_SERIAL" --reason 5 --force 2>/dev/null || true
     fi
 
