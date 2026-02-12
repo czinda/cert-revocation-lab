@@ -43,6 +43,7 @@ EDR_URL="http://localhost:8082"
 SIEM_URL="http://localhost:8083"
 LAB_DOMAIN="cert-lab.local"
 PKI_ADMIN_PASSWORD="${PKI_ADMIN_PASSWORD:-${ADMIN_PASSWORD:-RedHat123!}}"
+PKI_CLIENT_PKCS12_PASSWORD="${PKI_CLIENT_PKCS12_PASSWORD:-${PKI_ADMIN_PASSWORD}}"
 
 # Dogtag CA configurations by PKI type and CA level
 declare -A CA_CONTAINERS
@@ -409,10 +410,17 @@ issue_certificate() {
         # Import admin certificate for authentication
         ADMIN_P12=\"/root/.dogtag/${instance}/ca_admin_cert.p12\"
         if [ -f \"\$ADMIN_P12\" ]; then
-            pk12util -i \"\$ADMIN_P12\" -d /tmp/test-nssdb -k /dev/null -W '${PKI_ADMIN_PASSWORD}' 2>/dev/null || \
-            pk12util -i \"\$ADMIN_P12\" -d /tmp/test-nssdb -k /dev/null -W '' 2>/dev/null || true
+            echo 'Importing admin cert...'
+            pk12util -i \"\$ADMIN_P12\" -d /tmp/test-nssdb -k /dev/null -W '${PKI_CLIENT_PKCS12_PASSWORD}' || \
+            pk12util -i \"\$ADMIN_P12\" -d /tmp/test-nssdb -k /dev/null -W '${PKI_ADMIN_PASSWORD}' || \
+            pk12util -i \"\$ADMIN_P12\" -d /tmp/test-nssdb -k /dev/null -W '' || \
+            echo 'Failed to import admin cert'
+            echo 'Certs in NSS DB:'
+            certutil -L -d /tmp/test-nssdb
+        else
+            echo 'Admin P12 not found at:' \"\$ADMIN_P12\"
         fi
-    " >/dev/null 2>&1
+    " 2>&1 | grep -v "^$" || true
 
     # Get hostname for internal CA URL
     local ca_hostname=""
