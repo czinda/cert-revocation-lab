@@ -399,12 +399,12 @@ issue_certificate() {
     log_info "Available certificates for authentication:"
     sudo podman exec "$container" certutil -L -d "$nss_db" 2>/dev/null | head -10
 
-    # Find a suitable cert for agent operations (subsystem cert can sign requests)
+    # Find the subsystem cert for agent operations (NOT caSigningCert)
     local agent_nick=$(sudo podman exec "$container" \
-        certutil -L -d "$nss_db" 2>/dev/null | grep -E "(subsystemCert|caSigningCert)" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
+        certutil -L -d "$nss_db" 2>/dev/null | grep "subsystemCert" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
 
     if [ -z "$agent_nick" ]; then
-        log_warn "No agent certificate found, trying subsystemCert"
+        log_warn "subsystemCert not found, trying default name"
         agent_nick="subsystemCert cert-${instance}"
     fi
     log_info "Using certificate: $agent_nick"
@@ -780,9 +780,9 @@ cleanup_device() {
         local token_pass=$(sudo podman exec "$container" cat /var/lib/pki/${instance}/conf/password.conf 2>/dev/null | grep "internal=" | cut -d= -f2)
         [ -z "$token_pass" ] && token_pass="$PKI_TOKEN_PASSWORD"
 
-        # Find agent cert
+        # Find subsystem cert for agent operations
         local agent_nick=$(sudo podman exec "$container" \
-            certutil -L -d "$nss_db" 2>/dev/null | grep -E "(subsystemCert|caSigningCert)" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
+            certutil -L -d "$nss_db" 2>/dev/null | grep "subsystemCert" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
         [ -z "$agent_nick" ] && agent_nick="subsystemCert cert-${instance}"
 
         sudo podman exec "$container" \
