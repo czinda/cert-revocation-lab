@@ -1,28 +1,55 @@
 # Event-Driven Certificate Revocation Lab
 
-Comprehensive lab environment demonstrating automated certificate lifecycle management in Zero Trust Architecture. Features a complete PKI hierarchy with Dogtag PKI and FreeIPA, integrated with Event-Driven Ansible for real-time security response.
+Comprehensive lab environment demonstrating automated certificate lifecycle management in Zero Trust Architecture. Features **dual PKI hierarchies** with both traditional RSA-4096 and post-quantum ML-DSA-87 (NIST FIPS 204) algorithms, integrated with Event-Driven Ansible for real-time security response.
 
-## PKI Hierarchy
+## Dual PKI Architecture
+
+This lab implements two completely independent PKI trust chains for cryptographic agility:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Dogtag Root CA                           │
-│                  (Self-signed, Offline)                     │
-│                   localhost:8443 (HTTPS)                    │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-┌─────────────────────────▼───────────────────────────────────┐
-│               Dogtag Intermediate CA                        │
-│                 (Online Issuing CA)                         │
-│                  localhost:8444 (HTTPS)                     │
-└───────────┬─────────────────────────────────┬───────────────┘
-            │                                 │
-┌───────────▼───────────┐       ┌─────────────▼─────────────┐
-│   FreeIPA Sub-CA      │       │    Dogtag IoT Sub-CA      │
-│  (Users/Hosts/Svcs)   │       │     (IoT Devices)         │
-│ localhost:4443 (HTTPS)│       │   localhost:8445 (HTTPS)  │
-└───────────────────────┘       └───────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                              DUAL PKI ARCHITECTURE                                       │
+├─────────────────────────────────────────┬───────────────────────────────────────────────┤
+│        RSA-4096 PKI (Traditional)       │       ML-DSA-87 PKI (Post-Quantum)            │
+│          SHA-512 Signatures             │         NIST FIPS 204 Level 5                 │
+├─────────────────────────────────────────┼───────────────────────────────────────────────┤
+│                                         │                                               │
+│  ┌─────────────────────────────────┐    │    ┌─────────────────────────────────┐        │
+│  │         Root CA (RSA)           │    │    │      PQ Root CA (ML-DSA-87)     │        │
+│  │       localhost:8443            │    │    │        localhost:8453           │        │
+│  └───────────────┬─────────────────┘    │    └───────────────┬─────────────────┘        │
+│                  │                      │                    │                          │
+│  ┌───────────────▼─────────────────┐    │    ┌───────────────▼─────────────────┐        │
+│  │     Intermediate CA (RSA)       │    │    │  PQ Intermediate CA (ML-DSA-87) │        │
+│  │       localhost:8444            │    │    │        localhost:8454           │        │
+│  └───────────────┬─────────────────┘    │    └───────────────┬─────────────────┘        │
+│                  │                      │                    │                          │
+│  ┌───────────────▼─────────────────┐    │    ┌───────────────▼─────────────────┐        │
+│  │       IoT Sub-CA (RSA)          │    │    │    PQ IoT Sub-CA (ML-DSA-87)    │        │
+│  │       localhost:8445            │    │    │        localhost:8455           │        │
+│  └─────────────────────────────────┘    │    └─────────────────────────────────┘        │
+│                                         │                                               │
+└─────────────────────────────────────────┴───────────────────────────────────────────────┘
+
+                              ┌─────────────────────────────────┐
+                              │   FreeIPA (Internal Dogtag CA)  │
+                              │      localhost:4443             │
+                              │    (Users, Hosts, Services)     │
+                              └─────────────────────────────────┘
 ```
+
+### Algorithm Comparison
+
+| Feature | RSA-4096 PKI | ML-DSA-87 PKI |
+|---------|--------------|---------------|
+| **Algorithm** | RSA with SHA-512 | ML-DSA-87 (NIST FIPS 204) |
+| **Security Level** | 128-bit classical | Level 5 (256-bit post-quantum) |
+| **Quantum Resistant** | No | Yes |
+| **Ports** | 8443-8445 | 8453-8455 |
+| **Network** | 172.26.0.0/24 | 172.27.0.0/24 |
+| **Security Domain** | CERT-LAB | CERT-LAB-PQ |
+| **Certificates** | data/certs/rsa/ | data/certs/pq/ |
+| **Use Case** | Legacy compatibility | Future-proof security |
 
 ## Architecture Overview
 
@@ -60,9 +87,12 @@ Comprehensive lab environment demonstrating automated certificate lifecycle mana
 
 | Component | Purpose | Technology |
 |-----------|---------|------------|
-| **Dogtag Root CA** | Trust anchor, signs Intermediate CA | Dogtag PKI, 389DS |
-| **Dogtag Intermediate CA** | Online issuing CA for Sub-CAs | Dogtag PKI, 389DS |
-| **Dogtag IoT Sub-CA** | Certificates for IoT devices | Dogtag PKI, 389DS |
+| **RSA Root CA** | Traditional trust anchor (RSA-4096) | Dogtag PKI, 389DS |
+| **RSA Intermediate CA** | Traditional online issuing CA | Dogtag PKI, 389DS |
+| **RSA IoT Sub-CA** | Traditional IoT certificates | Dogtag PKI, 389DS |
+| **PQ Root CA** | Post-quantum trust anchor (ML-DSA-87) | Dogtag PKI, 389DS |
+| **PQ Intermediate CA** | Post-quantum online issuing CA | Dogtag PKI, 389DS |
+| **PQ IoT Sub-CA** | Post-quantum IoT certificates | Dogtag PKI, 389DS |
 | **FreeIPA** | Identity management, user/host certs | FreeIPA with Internal Dogtag CA |
 | **Kafka** | Event streaming bus | Confluent Kafka |
 | **Event-Driven Ansible** | Real-time event processing | ansible-rulebook |
@@ -112,52 +142,34 @@ vi .env
 ### 3. Start the Lab
 
 ```bash
-# Run pre-flight check (optional)
-./preflight-check.sh
-
-# Start all containers (first run pulls images)
-./start-lab.sh
+# Start all containers including both PKI hierarchies
+sudo ./start-lab.sh
 
 # Or start fresh (removes all previous data)
-./start-lab.sh --clean
+sudo ./start-lab.sh --clean
+
+# Quick restart (preserves existing data)
+sudo ./start-lab.sh --quick
 ```
 
-> **Note:** FreeIPA requires rootful podman (systemd support). Start it separately:
-> ```bash
-> # Using the separate compose file
-> sudo podman-compose -f freeipa-compose.yml up -d
->
-> # Monitor installation (takes 5-10 minutes)
-> sudo podman logs -f freeipa
-> ```
+The startup script automatically:
+1. Starts base infrastructure (PostgreSQL, Redis, Zookeeper, Kafka)
+2. Initializes **RSA-4096 PKI hierarchy** (Root CA → Intermediate CA → IoT Sub-CA)
+3. Initializes **ML-DSA-87 PKI hierarchy** (PQ Root CA → PQ Intermediate CA → PQ IoT Sub-CA)
+4. Starts FreeIPA, AWX, EDA, and mock security tools
 
-### 4. Initialize PKI Hierarchy
-
-After containers start, initialize the PKI hierarchy:
+### 4. Verify PKI Status
 
 ```bash
-# Step 1: Initialize Root CA (self-signed)
-podman exec -it dogtag-root-ca /scripts/init-root-ca.sh
+# Check RSA PKI status
+curl -sk https://localhost:8443/ca/admin/ca/getStatus  # Root CA
+curl -sk https://localhost:8444/ca/admin/ca/getStatus  # Intermediate CA
+curl -sk https://localhost:8445/ca/admin/ca/getStatus  # IoT CA
 
-# Step 2: Initialize Intermediate CA
-podman exec -it dogtag-intermediate-ca /scripts/init-intermediate-ca.sh
-
-# Sign the Intermediate CA CSR with Root CA
-podman exec dogtag-root-ca /scripts/sign-csr.sh \
-  /certs/intermediate-ca.csr \
-  /certs/intermediate-ca-signed.crt \
-  https://root-ca.cert-lab.local:8443 \
-  caCACert
-
-# Step 3: Initialize IoT Sub-CA
-podman exec -it dogtag-iot-ca /scripts/init-iot-ca.sh
-
-# Sign the IoT CA CSR with Intermediate CA
-podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \
-  /certs/iot-ca.csr \
-  /certs/iot-ca-signed.crt \
-  https://intermediate-ca.cert-lab.local:8443 \
-  caCACert
+# Check Post-Quantum PKI status
+curl -sk https://localhost:8453/ca/admin/ca/getStatus  # PQ Root CA
+curl -sk https://localhost:8454/ca/admin/ca/getStatus  # PQ Intermediate CA
+curl -sk https://localhost:8455/ca/admin/ca/getStatus  # PQ IoT CA
 ```
 
 ### 5. Run Test Scenario
@@ -179,11 +191,26 @@ podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \
 
 ## Service URLs
 
+### RSA-4096 PKI (Traditional)
+
 | Service | URL | Credentials |
 |---------|-----|-------------|
 | Root CA | https://localhost:8443/ca | admin / (see .env) |
 | Intermediate CA | https://localhost:8444/ca | admin / (see .env) |
 | IoT Sub-CA | https://localhost:8445/ca | admin / (see .env) |
+
+### ML-DSA-87 PKI (Post-Quantum)
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| PQ Root CA | https://localhost:8453/ca | admin / (see .env) |
+| PQ Intermediate CA | https://localhost:8454/ca | admin / (see .env) |
+| PQ IoT Sub-CA | https://localhost:8455/ca | admin / (see .env) |
+
+### Other Services
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
 | FreeIPA | https://localhost:4443/ipa/ui | admin / (see .env) |
 | AWX | http://localhost:8084 | admin / (see .env) |
 | Mock EDR API | http://localhost:8082 | - |
@@ -195,14 +222,34 @@ podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \
 
 ## Container Networks
 
-Most containers run on a dedicated bridge network (172.20.0.0/16):
+### RSA-4096 PKI Network (172.26.0.0/24) - rootful podman
+
+| IP Address | Container |
+|------------|-----------|
+| 172.26.0.12 | dogtag-root-ca |
+| 172.26.0.11 | dogtag-intermediate-ca |
+| 172.26.0.13 | dogtag-iot-ca |
+| 172.26.0.14-16 | ds-root, ds-intermediate, ds-iot |
+
+### ML-DSA-87 PKI Network (172.27.0.0/24) - rootful podman
+
+| IP Address | Container |
+|------------|-----------|
+| 172.27.0.12 | dogtag-pq-root-ca |
+| 172.27.0.11 | dogtag-pq-intermediate-ca |
+| 172.27.0.13 | dogtag-pq-iot-ca |
+| 172.27.0.14-16 | ds-pq-root, ds-pq-intermediate, ds-pq-iot |
+
+### FreeIPA Network (172.25.0.0/24) - rootful podman
 
 | IP Address | Service |
 |------------|---------|
-| 172.20.0.11 | Intermediate CA |
-| 172.20.0.12 | Root CA |
-| 172.20.0.13 | IoT Sub-CA |
-| 172.20.0.14-16 | 389 Directory Servers |
+| 172.25.0.10 | FreeIPA (ipa.cert-lab.local) |
+
+### Main Lab Network (172.20.0.0/16) - rootless podman
+
+| IP Address | Service |
+|------------|---------|
 | 172.20.0.20 | PostgreSQL |
 | 172.20.0.21 | Redis |
 | 172.20.0.22-23 | AWX Web/Task |
@@ -213,17 +260,14 @@ Most containers run on a dedicated bridge network (172.20.0.0/16):
 | 172.20.0.51 | Mock SIEM |
 | 172.20.0.60 | Jupyter |
 
-**FreeIPA** runs on a separate network (172.25.0.0/24) because it requires rootful podman (systemd support):
-
-| IP Address | Service |
-|------------|---------|
-| 172.25.0.10 | FreeIPA (ipa.cert-lab.local) |
-
 ## Project Structure
 
 ```
 cert-revocation-lab/
-├── podman-compose.yml          # Container orchestration (17 services)
+├── podman-compose.yml          # Main services (Kafka, AWX, etc.)
+├── pki-compose.yml             # RSA-4096 PKI containers
+├── pki-pq-compose.yml          # ML-DSA-87 PQ PKI containers
+├── freeipa-compose.yml         # FreeIPA container
 ├── setup-prerequisites.sh      # Cross-platform podman installation
 ├── start-lab.sh                # Phased startup script
 ├── stop-lab.sh                 # Shutdown script
@@ -231,21 +275,29 @@ cert-revocation-lab/
 ├── .env                        # Environment configuration
 │
 ├── configs/pki/                # Dogtag pkispawn configurations
-│   ├── root-ca.cfg
-│   ├── intermediate-ca-step1.cfg
-│   ├── intermediate-ca-step2.cfg
-│   ├── iot-ca-step1.cfg
-│   └── iot-ca-step2.cfg
+│   ├── root-ca.cfg             # RSA Root CA
+│   ├── intermediate-ca-step*.cfg
+│   ├── iot-ca-step*.cfg
+│   ├── pq-root-ca.cfg          # ML-DSA-87 Root CA
+│   ├── pq-intermediate-ca-step*.cfg
+│   └── pq-iot-ca-step*.cfg
 │
 ├── scripts/pki/                # PKI initialization scripts
-│   ├── init-root-ca.sh
+│   ├── init-root-ca.sh         # RSA PKI
 │   ├── init-intermediate-ca.sh
 │   ├── init-iot-ca.sh
-│   ├── init-freeipa.sh
-│   ├── sign-csr.sh
-│   └── export-chain.sh
+│   ├── init-pki-hierarchy.sh
+│   ├── init-pq-root-ca.sh      # PQ PKI (ML-DSA-87)
+│   ├── init-pq-intermediate-ca.sh
+│   ├── init-pq-iot-ca.sh
+│   ├── init-pq-pki-hierarchy.sh
+│   ├── lib-pki-common.sh
+│   └── sign-csr.sh
 │
 ├── containers/
+│   ├── dogtag-pq/              # Custom Dogtag with ML-DSA support
+│   │   ├── Containerfile
+│   │   └── build.sh
 │   ├── mock-edr/               # FastAPI EDR simulator
 │   └── mock-siem/              # FastAPI SIEM simulator
 │
@@ -260,8 +312,57 @@ cert-revocation-lab/
 │   └── inventory/              # Ansible inventory
 │
 └── data/                       # Persistent data (gitignored)
-    ├── certs/                  # Generated certificates
+    ├── certs/
+    │   ├── rsa/                # RSA-4096 certificates
+    │   └── pq/                 # ML-DSA-87 certificates
     └── pki/                    # PKI databases
+```
+
+## Certificate Output
+
+Certificates are organized by algorithm type:
+
+```
+data/certs/
+├── rsa/                        # RSA-4096 certificates
+│   ├── root-ca.crt
+│   ├── intermediate-ca.crt
+│   ├── iot-ca.crt
+│   └── ca-chain.crt
+└── pq/                         # ML-DSA-87 certificates
+    ├── pq-root-ca.crt
+    ├── pq-intermediate-ca.crt
+    ├── pq-iot-ca.crt
+    └── pq-ca-chain.crt
+```
+
+## Post-Quantum Cryptography
+
+### What is ML-DSA-87?
+
+ML-DSA-87 (Module-Lattice Digital Signature Algorithm) is a post-quantum digital signature algorithm standardized in NIST FIPS 204. It provides:
+
+- **Quantum Resistance**: Secure against both classical and quantum computer attacks
+- **Level 5 Security**: Equivalent to 256-bit classical security
+- **NIST Standardization**: Part of the NIST Post-Quantum Cryptography project
+
+### Why Dual PKI?
+
+Running both RSA and post-quantum PKI hierarchies enables:
+
+1. **Cryptographic Agility**: Switch between algorithms as needed
+2. **Migration Path**: Gradual transition to post-quantum cryptography
+3. **Compatibility**: RSA for legacy systems, ML-DSA for quantum-safe requirements
+4. **Testing**: Evaluate post-quantum performance and compatibility
+
+### Verifying PQ Certificates
+
+```bash
+# View PQ certificate details (requires OpenSSL 3.5+ for full ML-DSA display)
+openssl x509 -in data/certs/pq/pq-root-ca.crt -noout -text
+
+# Check algorithm
+openssl x509 -in data/certs/pq/pq-root-ca.crt -noout -text | grep "Public Key Algorithm"
 ```
 
 ## Mock Security Tools API
@@ -323,37 +424,50 @@ The Mock EDR supports these scenarios:
 ### View Container Logs
 
 ```bash
-# All containers
+# Main services
 podman-compose logs -f
 
-# Specific service
-podman-compose logs -f dogtag-root-ca
-podman-compose logs -f freeipa
-podman-compose logs -f kafka
+# RSA PKI containers
+sudo podman-compose -f pki-compose.yml logs -f dogtag-root-ca
+
+# PQ PKI containers
+sudo podman-compose -f pki-pq-compose.yml logs -f dogtag-pq-root-ca
+
+# FreeIPA
+sudo podman logs -f freeipa
 ```
 
 ### Check Container Status
 
 ```bash
+# Main services
 podman-compose ps
+
+# RSA PKI
+sudo podman-compose -f pki-compose.yml ps
+
+# PQ PKI
+sudo podman-compose -f pki-pq-compose.yml ps
 ```
 
 ### Restart a Service
 
 ```bash
 podman-compose restart <service-name>
+sudo podman-compose -f pki-compose.yml restart <service-name>
+sudo podman-compose -f pki-pq-compose.yml restart <service-name>
 ```
 
 ### Reset PKI Data
 
 ```bash
 ./stop-lab.sh --clean
-./start-lab.sh
+sudo ./start-lab.sh
 ```
 
 ## Technologies Used
 
-- **[Dogtag PKI](https://www.dogtagpki.org/)** - Enterprise-grade Certificate Authority
+- **[Dogtag PKI](https://www.dogtagpki.org/)** - Enterprise-grade Certificate Authority (RSA-4096 & ML-DSA-87)
 - **[FreeIPA](https://www.freeipa.org/)** - Identity Management
 - **[389 Directory Server](https://www.port389.org/)** - LDAP Server
 - **[Ansible AWX](https://github.com/ansible/awx)** - Automation Platform
@@ -365,7 +479,7 @@ podman-compose restart <service-name>
 ## Author
 
 **czinda** - Red Hat Senior Technical Product Manager
-Focus: PKI, Identity Management, Zero Trust Architecture
+Focus: PKI, Identity Management, Zero Trust Architecture, Post-Quantum Cryptography
 
 ## License
 
