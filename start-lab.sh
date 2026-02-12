@@ -395,6 +395,31 @@ print_summary() {
     echo -e "${GREEN}========================================================================${NC}"
 }
 
+# Quick start - just start containers without initialization
+quick_start() {
+    log_phase "Quick Start - Starting Existing Containers"
+
+    # Start PKI containers (rootful)
+    if [ -f pki-compose.yml ]; then
+        log_info "Starting PKI containers..."
+        sudo podman-compose -f pki-compose.yml start 2>/dev/null || \
+        sudo podman-compose -f pki-compose.yml up -d
+    fi
+
+    # Start FreeIPA (rootful)
+    if [ -f freeipa-compose.yml ]; then
+        log_info "Starting FreeIPA..."
+        sudo podman-compose -f freeipa-compose.yml start 2>/dev/null || true
+    fi
+
+    # Start other containers (rootless)
+    log_info "Starting other containers..."
+    podman-compose start 2>/dev/null || podman-compose up -d
+
+    log_success "Containers started"
+    print_summary
+}
+
 # Main function
 main() {
     echo -e "${CYAN}"
@@ -409,12 +434,22 @@ main() {
         --clean)
             clean_start
             ;;
+        --quick|--restart|-q)
+            quick_start
+            exit 0
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
+            echo "  --quick    Start existing containers without initialization"
             echo "  --clean    Remove all containers and volumes before starting"
             echo "  --help     Show this help message"
+            echo ""
+            echo "Examples:"
+            echo "  $0           # Full startup with PKI initialization"
+            echo "  $0 --quick   # Quick restart of existing containers"
+            echo "  $0 --clean   # Clean start (removes all data)"
             exit 0
             ;;
     esac

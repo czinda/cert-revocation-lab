@@ -18,6 +18,21 @@ log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# Handle --help
+if [ "${1:-}" == "--help" ] || [ "${1:-}" == "-h" ]; then
+    echo "Usage: $0 [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  (none)     Stop all containers (preserves data)"
+    echo "  --clean    Stop and remove all containers, volumes, and data"
+    echo "  --help     Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0           # Quick stop (preserves data)"
+    echo "  $0 --clean   # Full cleanup (removes all data)"
+    exit 0
+fi
+
 echo "========================================================================"
 echo "  Stopping Certificate Revocation Lab"
 echo "========================================================================"
