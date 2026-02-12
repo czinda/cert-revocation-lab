@@ -168,8 +168,23 @@ clean_start() {
     read -p "Are you sure? [y/N]: " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
+        # Clean rootless containers
         podman-compose down -v 2>/dev/null || true
-        podman volume prune -f
+        podman volume prune -f 2>/dev/null || true
+
+        # Clean rootful PKI containers
+        if [ -f pki-compose.yml ]; then
+            log_info "Cleaning PKI containers (requires sudo)..."
+            sudo podman-compose -f pki-compose.yml down -v 2>/dev/null || true
+            sudo podman volume prune -f 2>/dev/null || true
+        fi
+
+        # Clean FreeIPA containers
+        if [ -f freeipa-compose.yml ]; then
+            log_info "Cleaning FreeIPA containers (requires sudo)..."
+            sudo podman-compose -f freeipa-compose.yml down -v 2>/dev/null || true
+        fi
+
         rm -rf data/certs/*
         rm -rf data/pki/*
         log_success "Cleanup complete"
@@ -214,45 +229,53 @@ start_kafka() {
     log_success "Kafka started and topics created"
 }
 
-# Phase 3: Start Directory Servers
+# Phase 3: Start Directory Servers (now part of PKI phase)
 start_directory_servers() {
-    log_phase "Phase 3: Starting 389 Directory Servers"
-
-    podman-compose up -d ds-root ds-intermediate ds-iot
-
-    # Wait for each DS to be ready
-    for ds in ds-root ds-intermediate ds-iot; do
-        wait_for_container "$ds" 120
-    done
-
-    log_success "Directory Servers started"
+    log_phase "Phase 3: Directory Servers"
+    # Directory Servers are now started as part of pki-compose.yml in Phase 4
+    log_info "Directory Servers will be started with PKI containers in Phase 4"
+    log_success "Skipping standalone DS startup (included in PKI phase)"
 }
 
 # Phase 4: Start and Initialize PKI Hierarchy
 start_pki_hierarchy() {
     log_phase "Phase 4: Starting PKI Infrastructure"
 
-    # Start all Dogtag containers (they'll wait for initialization)
-    log_info "Starting Dogtag CA containers..."
-    podman-compose up -d dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca
+    # PKI requires privileged containers with systemd support
+    # Use the separate pki-compose.yml with sudo
+    log_info "Starting PKI containers (requires sudo for privileged mode)..."
 
-    sleep 10  # Allow containers to start
+    if [ -f pki-compose.yml ]; then
+        # Start PKI containers with rootful podman
+        sudo podman-compose -f pki-compose.yml up -d
 
-    log_info "PKI containers started. Manual initialization required."
-    log_info "Run the following commands to initialize the PKI hierarchy:"
-    echo ""
-    echo "  # Initialize Root CA (self-signed)"
-    echo "  podman exec -it dogtag-root-ca /scripts/init-root-ca.sh"
-    echo ""
-    echo "  # Initialize Intermediate CA (sign CSR with Root CA)"
-    echo "  podman exec -it dogtag-intermediate-ca /scripts/init-intermediate-ca.sh"
-    echo "  # Then sign the CSR: podman exec dogtag-root-ca /scripts/sign-csr.sh /certs/intermediate-ca.csr /certs/intermediate-ca-signed.crt"
-    echo ""
-    echo "  # Initialize IoT Sub-CA (sign CSR with Intermediate CA)"
-    echo "  podman exec -it dogtag-iot-ca /scripts/init-iot-ca.sh"
-    echo ""
+        # Wait for 389DS to be healthy
+        log_info "Waiting for Directory Servers to be ready..."
+        for ds in ds-root ds-intermediate ds-iot; do
+            local elapsed=0
+            while [ $elapsed -lt 120 ]; do
+                if sudo podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
+                    log_success "$ds is ready"
+                    break
+                fi
+                sleep 5
+                ((elapsed += 5))
+            done
+        done
 
-    log_success "PKI containers started"
+        # Initialize PKI hierarchy automatically
+        log_info "Initializing PKI hierarchy..."
+        if [ -x scripts/pki/init-pki-hierarchy.sh ]; then
+            scripts/pki/init-pki-hierarchy.sh
+        else
+            bash scripts/pki/init-pki-hierarchy.sh
+        fi
+
+        log_success "PKI hierarchy initialized"
+    else
+        log_warn "pki-compose.yml not found. PKI initialization requires manual steps."
+        log_info "Create pki-compose.yml or run PKI containers manually."
+    fi
 }
 
 # Phase 5: Start FreeIPA
@@ -346,20 +369,28 @@ print_summary() {
     echo "  Jupyter:         http://localhost:8888"
     echo ""
     echo "Default Credentials:"
-    echo "  PKI Admin:    admin / (see .env)"
+    echo "  PKI Admin:    caadmin / (see .env)"
     echo "  IPA Admin:    admin / (see .env)"
     echo "  AWX Admin:    admin / (see .env)"
     echo "  Jupyter:      Token: (see .env)"
     echo ""
-    echo "PKI Hierarchy (requires manual initialization):"
-    echo "  Root CA -> Intermediate CA -> FreeIPA Sub-CA"
-    echo "                             -> IoT Sub-CA"
+    echo "PKI Hierarchy (automatically initialized):"
+    echo "  Root CA (self-signed)"
+    echo "    └── Intermediate CA"
+    echo "        └── IoT Sub-CA"
+    echo ""
+    echo "Certificates:"
+    echo "  data/certs/root-ca.crt"
+    echo "  data/certs/intermediate-ca.crt"
+    echo "  data/certs/iot-ca.crt"
+    echo "  data/certs/ca-chain.crt"
     echo ""
     echo "Testing:"
     echo "  ./test-revocation.sh"
     echo ""
     echo "View logs:"
     echo "  podman-compose logs -f <service-name>"
+    echo "  sudo podman-compose -f pki-compose.yml logs -f <service-name>"
     echo ""
     echo -e "${GREEN}========================================================================${NC}"
 }

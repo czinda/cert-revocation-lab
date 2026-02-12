@@ -27,16 +27,36 @@ echo
 PROJECT_NAME=$(basename "$SCRIPT_DIR")
 
 # Stop all containers
-log_info "Stopping all containers..."
+log_info "Stopping all rootless containers..."
 podman-compose down 2>/dev/null || true
 
-# Force stop any remaining lab containers
+# Stop PKI containers (rootful)
+if [ -f pki-compose.yml ]; then
+    log_info "Stopping PKI containers (requires sudo)..."
+    sudo podman-compose -f pki-compose.yml down 2>/dev/null || true
+fi
+
+# Stop FreeIPA containers (rootful)
+if [ -f freeipa-compose.yml ]; then
+    log_info "Stopping FreeIPA containers (requires sudo)..."
+    sudo podman-compose -f freeipa-compose.yml down 2>/dev/null || true
+fi
+
+# Force stop any remaining lab containers (rootless)
 log_info "Checking for remaining containers..."
 REMAINING=$(podman ps -a --format "{{.Names}}" 2>/dev/null | grep -E "(dogtag|freeipa|kafka|zookeeper|awx|eda|mock-|ds-root|ds-intermediate|ds-iot|postgres|redis|jupyter)" || true)
 if [ -n "$REMAINING" ]; then
-    log_warn "Force stopping remaining containers..."
+    log_warn "Force stopping remaining rootless containers..."
     echo "$REMAINING" | xargs -r podman stop -t 5 2>/dev/null || true
     echo "$REMAINING" | xargs -r podman rm -f 2>/dev/null || true
+fi
+
+# Force stop any remaining rootful containers
+REMAINING_ROOT=$(sudo podman ps -a --format "{{.Names}}" 2>/dev/null | grep -E "(dogtag|freeipa|ds-root|ds-intermediate|ds-iot)" || true)
+if [ -n "$REMAINING_ROOT" ]; then
+    log_warn "Force stopping remaining rootful containers..."
+    echo "$REMAINING_ROOT" | xargs -r sudo podman stop -t 5 2>/dev/null || true
+    echo "$REMAINING_ROOT" | xargs -r sudo podman rm -f 2>/dev/null || true
 fi
 
 if [ "$1" == "--clean" ]; then
@@ -53,8 +73,8 @@ if [ "$1" == "--clean" ]; then
     echo
 
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        # Remove lab-specific volumes
-        log_info "Removing lab volumes..."
+        # Remove lab-specific volumes (rootless)
+        log_info "Removing rootless lab volumes..."
         podman volume ls --format "{{.Name}}" 2>/dev/null | grep -E "(pki|freeipa|awx|ds-|zookeeper|kafka|postgres|redis|jupyter)" | xargs -r podman volume rm -f 2>/dev/null || true
 
         # Remove project-prefixed volumes (podman-compose creates these)
@@ -62,6 +82,11 @@ if [ "$1" == "--clean" ]; then
 
         # Prune any dangling volumes
         podman volume prune -f 2>/dev/null || true
+
+        # Remove rootful volumes (PKI, FreeIPA)
+        log_info "Removing rootful lab volumes (requires sudo)..."
+        sudo podman volume ls --format "{{.Name}}" 2>/dev/null | grep -E "(pki|freeipa|ds-)" | xargs -r sudo podman volume rm -f 2>/dev/null || true
+        sudo podman volume prune -f 2>/dev/null || true
 
         # Remove lab networks by name pattern
         log_info "Removing lab networks..."
