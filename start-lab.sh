@@ -81,6 +81,16 @@ setup_directories() {
     log_success "Directory structure created"
 }
 
+# Helper to run podman as original user when script is run with sudo
+run_as_user() {
+    if [ "$(id -u)" = "0" ] && [ -n "$ORIGINAL_USER" ] && [ "$ORIGINAL_USER" != "root" ]; then
+        # Use runuser with proper environment for rootless podman
+        runuser -u "$ORIGINAL_USER" -- env XDG_RUNTIME_DIR="/run/user/$ORIGINAL_UID" "$@"
+    else
+        "$@"
+    fi
+}
+
 # Setup and validate podman networks
 setup_networks() {
     log_info "Checking container networks..."
@@ -99,44 +109,70 @@ setup_networks() {
         IFS=':' read -r expected_subnet expected_gateway <<< "${NETWORKS[$net_name]}"
 
         # Determine if this is a rootful or rootless network
-        local PCMD=""
-        if [[ "$net_name" == "pki-net" || "$net_name" == "freeipa-net" ]]; then
-            # Rootful network
+        local is_rootful=false
+        [[ "$net_name" == "pki-net" || "$net_name" == "freeipa-net" ]] && is_rootful=true
+
+        if [ "$is_rootful" = true ]; then
+            # Rootful network - use sudo or direct if already root
             if [ "$running_as_root" = true ]; then
-                PCMD="podman"
+                # Check if network exists
+                if podman network exists "$net_name" 2>/dev/null; then
+                    current_subnet=$(podman network inspect "$net_name" --format '{{range .Subnets}}{{.Subnet}}{{end}}' 2>/dev/null)
+                    if [[ "$current_subnet" == "$expected_subnet" ]]; then
+                        log_success "$net_name exists with correct subnet ($current_subnet)"
+                    else
+                        log_warn "$net_name has wrong subnet: $current_subnet (expected $expected_subnet)"
+                        podman network rm -f "$net_name" 2>/dev/null || true
+                        podman network create --subnet "$expected_subnet" --gateway "$expected_gateway" "$net_name"
+                        log_success "$net_name recreated"
+                    fi
+                else
+                    log_info "Creating network $net_name..."
+                    podman network create --subnet "$expected_subnet" --gateway "$expected_gateway" "$net_name" 2>/dev/null || true
+                    log_success "$net_name created"
+                fi
             elif sudo -n true 2>/dev/null; then
-                PCMD="sudo podman"
+                if sudo podman network exists "$net_name" 2>/dev/null; then
+                    current_subnet=$(sudo podman network inspect "$net_name" --format '{{range .Subnets}}{{.Subnet}}{{end}}' 2>/dev/null)
+                    if [[ "$current_subnet" == "$expected_subnet" ]]; then
+                        log_success "$net_name exists with correct subnet ($current_subnet)"
+                    else
+                        log_warn "$net_name has wrong subnet, recreating..."
+                        sudo podman network rm -f "$net_name" 2>/dev/null || true
+                        sudo podman network create --subnet "$expected_subnet" --gateway "$expected_gateway" "$net_name"
+                        log_success "$net_name recreated"
+                    fi
+                else
+                    log_info "Creating network $net_name..."
+                    sudo podman network create --subnet "$expected_subnet" --gateway "$expected_gateway" "$net_name" 2>/dev/null || true
+                    log_success "$net_name created"
+                fi
             else
-                log_warn "Skipping $net_name check (requires sudo)"
-                continue
+                log_warn "Skipping $net_name (requires sudo)"
             fi
         else
             # Rootless network
             if [ "$running_as_root" = true ]; then
-                PCMD="sudo -u $ORIGINAL_USER podman"
+                # Skip rootless network validation when running as root
+                # podman-compose will create it when needed
+                log_info "$net_name will be created by podman-compose"
             else
-                PCMD="podman"
+                if podman network exists "$net_name" 2>/dev/null; then
+                    current_subnet=$(podman network inspect "$net_name" --format '{{range .Subnets}}{{.Subnet}}{{end}}' 2>/dev/null)
+                    if [[ "$current_subnet" == "$expected_subnet" ]]; then
+                        log_success "$net_name exists with correct subnet ($current_subnet)"
+                    else
+                        log_warn "$net_name has wrong subnet, recreating..."
+                        podman network rm -f "$net_name" 2>/dev/null || true
+                        podman network create --subnet "$expected_subnet" --gateway "$expected_gateway" "$net_name"
+                        log_success "$net_name recreated"
+                    fi
+                else
+                    log_info "Creating network $net_name..."
+                    podman network create --subnet "$expected_subnet" --gateway "$expected_gateway" "$net_name" 2>/dev/null || true
+                    log_success "$net_name created"
+                fi
             fi
-        fi
-
-        # Check if network exists
-        if $PCMD network exists "$net_name" 2>/dev/null; then
-            # Get current subnet
-            current_subnet=$($PCMD network inspect "$net_name" --format '{{range .Subnets}}{{.Subnet}}{{end}}' 2>/dev/null)
-
-            if [[ "$current_subnet" == "$expected_subnet" ]]; then
-                log_success "$net_name exists with correct subnet ($current_subnet)"
-            else
-                log_warn "$net_name exists but has wrong subnet: $current_subnet (expected $expected_subnet)"
-                log_info "Recreating $net_name..."
-                $PCMD network rm -f "$net_name" 2>/dev/null || true
-                $PCMD network create --subnet "$expected_subnet" --gateway "$expected_gateway" "$net_name"
-                log_success "$net_name recreated with subnet $expected_subnet"
-            fi
-        else
-            log_info "Creating network $net_name..."
-            $PCMD network create --subnet "$expected_subnet" --gateway "$expected_gateway" "$net_name" 2>/dev/null || true
-            log_success "$net_name created"
         fi
     done
 }
@@ -148,17 +184,6 @@ setup_volumes() {
     # Detect if we're running as root
     local running_as_root=false
     [ "$(id -u)" = "0" ] && running_as_root=true
-
-    # Commands for rootless vs rootful
-    local ROOTLESS_PCMD=""
-    local ROOTFUL_PCMD=""
-    if [ "$running_as_root" = true ]; then
-        ROOTLESS_PCMD="sudo -u $ORIGINAL_USER podman"
-        ROOTFUL_PCMD="podman"
-    else
-        ROOTLESS_PCMD="podman"
-        ROOTFUL_PCMD="sudo podman"
-    fi
 
     # Rootless volumes (main compose)
     ROOTLESS_VOLUMES=(
@@ -187,24 +212,39 @@ setup_volumes() {
     # Check/create rootless volumes
     local created=0
     local existed=0
-    for vol in "${ROOTLESS_VOLUMES[@]}"; do
-        if $ROOTLESS_PCMD volume exists "$vol" 2>/dev/null; then
-            ((existed++))
-        else
-            $ROOTLESS_PCMD volume create "$vol" >/dev/null 2>&1 && ((created++))
-        fi
-    done
-    log_success "Rootless volumes: $existed exist, $created created"
-
-    # Check/create rootful volumes (if sudo available or running as root)
-    if [ "$running_as_root" = true ] || sudo -n true 2>/dev/null; then
-        created=0
-        existed=0
-        for vol in "${ROOTFUL_VOLUMES[@]}"; do
-            if $ROOTFUL_PCMD volume exists "$vol" 2>/dev/null; then
+    if [ "$running_as_root" = true ]; then
+        # Skip rootless volume validation when running as root
+        # podman-compose will create them when needed
+        log_info "Rootless volumes will be created by podman-compose"
+    else
+        for vol in "${ROOTLESS_VOLUMES[@]}"; do
+            if podman volume exists "$vol" 2>/dev/null; then
                 ((existed++))
             else
-                $ROOTFUL_PCMD volume create "$vol" >/dev/null 2>&1 && ((created++))
+                podman volume create "$vol" >/dev/null 2>&1 && ((created++))
+            fi
+        done
+        log_success "Rootless volumes: $existed exist, $created created"
+    fi
+
+    # Check/create rootful volumes (if sudo available or running as root)
+    created=0
+    existed=0
+    if [ "$running_as_root" = true ]; then
+        for vol in "${ROOTFUL_VOLUMES[@]}"; do
+            if podman volume exists "$vol" 2>/dev/null; then
+                ((existed++))
+            else
+                podman volume create "$vol" >/dev/null 2>&1 && ((created++))
+            fi
+        done
+        log_success "Rootful volumes: $existed exist, $created created"
+    elif sudo -n true 2>/dev/null; then
+        for vol in "${ROOTFUL_VOLUMES[@]}"; do
+            if sudo podman volume exists "$vol" 2>/dev/null; then
+                ((existed++))
+            else
+                sudo podman volume create "$vol" >/dev/null 2>&1 && ((created++))
             fi
         done
         log_success "Rootful volumes: $existed exist, $created created"
@@ -543,17 +583,6 @@ quick_start() {
         log_info "Running as root (sudo detected)"
     fi
 
-    # Command prefixes for rootful vs rootless
-    # - Rootful (PKI/FreeIPA): always use sudo (or direct if already root)
-    # - Rootless (other services): run as original user
-    if [ "$RUNNING_AS_ROOT" = true ]; then
-        ROOTFUL_CMD=""  # Already root, no sudo needed
-        ROOTLESS_CMD="sudo -u $ORIGINAL_USER"  # Drop to original user
-    else
-        ROOTFUL_CMD="sudo"
-        ROOTLESS_CMD=""  # Already the right user
-    fi
-
     # Check if sudo is available for rootful commands when not running as root
     if [ "$RUNNING_AS_ROOT" = false ]; then
         if ! sudo -n true 2>/dev/null; then
@@ -569,36 +598,63 @@ quick_start() {
     # Start PKI containers from pki-compose.yml (rootful - has initialized data)
     if [ -f pki-compose.yml ]; then
         log_info "Starting PKI containers (from pki-compose.yml)..."
-        $ROOTFUL_CMD podman-compose -f pki-compose.yml up -d 2>/dev/null || {
-            log_warn "Failed to start PKI containers. Try: sudo podman-compose -f pki-compose.yml up -d"
-        }
+        if [ "$RUNNING_AS_ROOT" = true ]; then
+            podman-compose -f pki-compose.yml up -d 2>/dev/null || {
+                log_warn "Failed to start PKI containers"
+            }
+        else
+            sudo podman-compose -f pki-compose.yml up -d 2>/dev/null || {
+                log_warn "Failed to start PKI containers. Try: sudo podman-compose -f pki-compose.yml up -d"
+            }
+        fi
 
         # Start the PKI servers inside containers
         sleep 5
         for ca in dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca; do
             instance=$(echo $ca | sed 's/dogtag-/pki-/')
             log_info "Starting PKI server in $ca..."
-            $ROOTFUL_CMD podman exec $ca bash -c "
-                if [ -d /var/lib/pki/$instance ]; then
-                    pgrep -f 'catalina' || nohup pki-server run $instance > /var/log/pki/$instance/startup.log 2>&1 &
-                fi
-            " 2>/dev/null || true
+            if [ "$RUNNING_AS_ROOT" = true ]; then
+                podman exec $ca bash -c "
+                    if [ -d /var/lib/pki/$instance ]; then
+                        pgrep -f 'catalina' || nohup pki-server run $instance > /var/log/pki/$instance/startup.log 2>&1 &
+                    fi
+                " 2>/dev/null || true
+            else
+                sudo podman exec $ca bash -c "
+                    if [ -d /var/lib/pki/$instance ]; then
+                        pgrep -f 'catalina' || nohup pki-server run $instance > /var/log/pki/$instance/startup.log 2>&1 &
+                    fi
+                " 2>/dev/null || true
+            fi
         done
     fi
 
     # Start FreeIPA (rootful)
     if [ -f freeipa-compose.yml ]; then
         log_info "Starting FreeIPA..."
-        $ROOTFUL_CMD podman-compose -f freeipa-compose.yml up -d 2>/dev/null || true
+        if [ "$RUNNING_AS_ROOT" = true ]; then
+            podman-compose -f freeipa-compose.yml up -d 2>/dev/null || true
+        else
+            sudo podman-compose -f freeipa-compose.yml up -d 2>/dev/null || true
+        fi
     fi
 
     # Start other containers (rootless) - exclude PKI/DS services
     log_info "Starting other containers (Kafka, AWX, EDA, etc.)..."
-    # Only start non-PKI services from main compose - must run as original user for rootless podman
-    $ROOTLESS_CMD podman-compose up -d postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem jupyter 2>/dev/null || \
-    $ROOTLESS_CMD podman-compose up -d 2>/dev/null || {
-        log_warn "Failed to start rootless containers"
-    }
+    if [ "$RUNNING_AS_ROOT" = true ]; then
+        # Use runuser to run as the original user with proper environment
+        runuser -u "$ORIGINAL_USER" -- env XDG_RUNTIME_DIR="/run/user/$ORIGINAL_UID" \
+            podman-compose up -d postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem jupyter 2>/dev/null || \
+        runuser -u "$ORIGINAL_USER" -- env XDG_RUNTIME_DIR="/run/user/$ORIGINAL_UID" \
+            podman-compose up -d 2>/dev/null || {
+            log_warn "Failed to start rootless containers"
+        }
+    else
+        podman-compose up -d postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem jupyter 2>/dev/null || \
+        podman-compose up -d 2>/dev/null || {
+            log_warn "Failed to start rootless containers"
+        }
+    fi
 
     log_success "Container startup initiated"
 
@@ -615,10 +671,19 @@ quick_start() {
 
     echo ""
     log_info "Running containers (rootless):"
-    $ROOTLESS_CMD podman ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | grep -v "^NAMES" | head -15
+    if [ "$RUNNING_AS_ROOT" = true ]; then
+        runuser -u "$ORIGINAL_USER" -- env XDG_RUNTIME_DIR="/run/user/$ORIGINAL_UID" \
+            podman ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | grep -v "^NAMES" | head -15
+    else
+        podman ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | grep -v "^NAMES" | head -15
+    fi
     echo ""
     log_info "Running containers (rootful/PKI):"
-    $ROOTFUL_CMD podman ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | grep -v "^NAMES" | head -10
+    if [ "$RUNNING_AS_ROOT" = true ]; then
+        podman ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | grep -v "^NAMES" | head -10
+    else
+        sudo podman ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | grep -v "^NAMES" | head -10
+    fi
     echo ""
 }
 
