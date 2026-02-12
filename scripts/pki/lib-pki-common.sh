@@ -232,7 +232,7 @@ print_sign_action() {
     local output="${2:?Output file required}"
     local container="${3:?Container required}"
     local url="${4:?CA URL required}"
-    local profile="${5:-caSubCA}"
+    local profile="${5:-caCACert}"
 
     echo ""
     echo "========================================================================"

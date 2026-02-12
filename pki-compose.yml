@@ -1,0 +1,207 @@
+# PKI Compose File - Run with: sudo podman-compose -f pki-compose.yml up -d
+#
+# Dogtag PKI requires systemd and must run as root (rootful podman).
+# This is separate from the main podman-compose.yml which runs rootless.
+
+version: "3.8"
+
+services:
+  # 389 Directory Server for Root CA
+  ds-root:
+    image: quay.io/389ds/dirsrv:${DS_VERSION:-latest}
+    container_name: ds-root
+    hostname: ds-root.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_SUFFIX_NAME: root-ca
+    volumes:
+      - ds-root-data:/data
+    networks:
+      pki-net:
+        ipv4_address: 172.26.0.14
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/libexec/dirsrv/dscontainer -H || ldapsearch -x -H ldap://localhost:3389 -b '' -s base > /dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 10
+
+  # 389 Directory Server for Intermediate CA
+  ds-intermediate:
+    image: quay.io/389ds/dirsrv:${DS_VERSION:-latest}
+    container_name: ds-intermediate
+    hostname: ds-intermediate.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_SUFFIX_NAME: intermediate-ca
+    volumes:
+      - ds-intermediate-data:/data
+    networks:
+      pki-net:
+        ipv4_address: 172.26.0.15
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/libexec/dirsrv/dscontainer -H || ldapsearch -x -H ldap://localhost:3389 -b '' -s base > /dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 10
+
+  # 389 Directory Server for IoT CA
+  ds-iot:
+    image: quay.io/389ds/dirsrv:${DS_VERSION:-latest}
+    container_name: ds-iot
+    hostname: ds-iot.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_SUFFIX_NAME: iot-ca
+    volumes:
+      - ds-iot-data:/data
+    networks:
+      pki-net:
+        ipv4_address: 172.26.0.16
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/libexec/dirsrv/dscontainer -H || ldapsearch -x -H ldap://localhost:3389 -b '' -s base > /dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 10
+
+  # Dogtag Root CA - Privileged for systemd
+  dogtag-root-ca:
+    image: quay.io/dogtagpki/pki-ca:${PKI_VERSION:-latest}
+    container_name: dogtag-root-ca
+    hostname: root-ca.${LAB_DOMAIN:-cert-lab.local}
+    privileged: true
+    depends_on:
+      ds-root:
+        condition: service_healthy
+    environment:
+      PKI_DS_URL: ldap://ds-root.cert-lab.local:3389
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_INSTANCE_NAME: pki-root-ca
+      DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+    volumes:
+      - ./configs/pki:/etc/pki-configs:ro
+      - ./scripts/pki:/scripts:ro
+      - ./data/certs:/certs
+      - pki-root-data:/var/lib/pki
+      - pki-root-logs:/var/log/pki
+    extra_hosts:
+      - "ds-root.cert-lab.local:172.26.0.14"
+      - "ds-intermediate.cert-lab.local:172.26.0.15"
+      - "ds-iot.cert-lab.local:172.26.0.16"
+      - "root-ca.cert-lab.local:172.26.0.12"
+      - "intermediate-ca.cert-lab.local:172.26.0.11"
+      - "iot-ca.cert-lab.local:172.26.0.13"
+    networks:
+      pki-net:
+        ipv4_address: 172.26.0.12
+    ports:
+      - "8443:8443"
+      - "8480:8080"
+    command: ["/bin/bash", "-c", "sleep infinity"]
+
+  # Dogtag Intermediate CA
+  dogtag-intermediate-ca:
+    image: quay.io/dogtagpki/pki-ca:${PKI_VERSION:-latest}
+    container_name: dogtag-intermediate-ca
+    hostname: intermediate-ca.${LAB_DOMAIN:-cert-lab.local}
+    privileged: true
+    depends_on:
+      ds-intermediate:
+        condition: service_healthy
+      dogtag-root-ca:
+        condition: service_started
+    environment:
+      PKI_DS_URL: ldap://ds-intermediate.cert-lab.local:3389
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_INSTANCE_NAME: pki-intermediate-ca
+      DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+    volumes:
+      - ./configs/pki:/etc/pki-configs:ro
+      - ./scripts/pki:/scripts:ro
+      - ./data/certs:/certs
+      - pki-intermediate-data:/var/lib/pki
+      - pki-intermediate-logs:/var/log/pki
+    extra_hosts:
+      - "ds-root.cert-lab.local:172.26.0.14"
+      - "ds-intermediate.cert-lab.local:172.26.0.15"
+      - "ds-iot.cert-lab.local:172.26.0.16"
+      - "root-ca.cert-lab.local:172.26.0.12"
+      - "intermediate-ca.cert-lab.local:172.26.0.11"
+      - "iot-ca.cert-lab.local:172.26.0.13"
+    networks:
+      pki-net:
+        ipv4_address: 172.26.0.11
+    ports:
+      - "8444:8443"
+      - "8481:8080"
+    command: ["/bin/bash", "-c", "sleep infinity"]
+
+  # Dogtag IoT Sub-CA
+  dogtag-iot-ca:
+    image: quay.io/dogtagpki/pki-ca:${PKI_VERSION:-latest}
+    container_name: dogtag-iot-ca
+    hostname: iot-ca.${LAB_DOMAIN:-cert-lab.local}
+    privileged: true
+    depends_on:
+      ds-iot:
+        condition: service_healthy
+      dogtag-intermediate-ca:
+        condition: service_started
+    environment:
+      PKI_DS_URL: ldap://ds-iot.cert-lab.local:3389
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_INSTANCE_NAME: pki-iot-ca
+      DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+    volumes:
+      - ./configs/pki:/etc/pki-configs:ro
+      - ./scripts/pki:/scripts:ro
+      - ./data/certs:/certs
+      - pki-iot-data:/var/lib/pki
+      - pki-iot-logs:/var/log/pki
+    extra_hosts:
+      - "ds-root.cert-lab.local:172.26.0.14"
+      - "ds-intermediate.cert-lab.local:172.26.0.15"
+      - "ds-iot.cert-lab.local:172.26.0.16"
+      - "root-ca.cert-lab.local:172.26.0.12"
+      - "intermediate-ca.cert-lab.local:172.26.0.11"
+      - "iot-ca.cert-lab.local:172.26.0.13"
+    networks:
+      pki-net:
+        ipv4_address: 172.26.0.13
+    ports:
+      - "8445:8443"
+      - "8482:8080"
+    command: ["/bin/bash", "-c", "sleep infinity"]
+
+networks:
+  pki-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.26.0.0/24
+          gateway: 172.26.0.1
+
+volumes:
+  ds-root-data:
+  ds-intermediate-data:
+  ds-iot-data:
+  pki-root-data:
+  pki-root-logs:
+  pki-intermediate-data:
+  pki-intermediate-logs:
+  pki-iot-data:
+  pki-iot-logs:

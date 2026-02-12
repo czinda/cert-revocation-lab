@@ -73,7 +73,7 @@ phase1_generate_csr() {
         return 1
     fi
 
-    print_sign_action "$CSR_FILE" "$SIGNED_CERT" "dogtag-intermediate-ca" "$INTERMEDIATE_CA_URL" "caSubCA"
+    print_sign_action "$CSR_FILE" "$SIGNED_CERT" "dogtag-intermediate-ca" "$INTERMEDIATE_CA_URL" "caCACert"
 }
 
 phase2_install_cert() {
@@ -124,7 +124,7 @@ init_ipa() {
         phase1_generate_csr
     elif [ ! -f "$SIGNED_CERT" ]; then
         log_warn "CSR exists but not signed yet"
-        print_sign_action "$CSR_FILE" "$SIGNED_CERT" "dogtag-intermediate-ca" "$INTERMEDIATE_CA_URL" "caSubCA"
+        print_sign_action "$CSR_FILE" "$SIGNED_CERT" "dogtag-intermediate-ca" "$INTERMEDIATE_CA_URL" "caCACert"
         exit 1
     else
         phase2_install_cert

@@ -50,27 +50,56 @@ podman-compose build mock-edr mock-siem
 
 ## PKI Initialization (Manual Steps)
 
-After `./start-lab.sh`, initialize the PKI hierarchy:
+After `./start-lab.sh`, initialize the PKI hierarchy using `pki-compose.yml`:
 
 ```bash
+# Start PKI containers (requires rootful podman for systemd support)
+sudo podman-compose -f pki-compose.yml up -d
+
+# Wait for 389DS to be healthy, then initialize each CA
+
 # 1. Initialize Root CA (self-signed)
-podman exec -it dogtag-root-ca /scripts/init-root-ca.sh
+sudo podman exec -it dogtag-root-ca /scripts/init-root-ca.sh
 
-# 2. Initialize Intermediate CA
-podman exec -it dogtag-intermediate-ca /scripts/init-intermediate-ca.sh
-# Sign the CSR with Root CA:
-podman exec dogtag-root-ca /scripts/sign-csr.sh \
-  /certs/intermediate-ca.csr /certs/intermediate-ca-signed.crt
+# 2. Initialize Intermediate CA (Phase 1: generates CSR)
+sudo podman exec -it dogtag-intermediate-ca /scripts/init-intermediate-ca.sh
 
-# 3. Initialize IoT Sub-CA
-podman exec -it dogtag-iot-ca /scripts/init-iot-ca.sh
-# Sign the CSR with Intermediate CA:
-podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \
-  /certs/iot-ca.csr /certs/iot-ca-signed.crt
+# Sign Intermediate CA CSR with Root CA (profile: caCACert)
+sudo podman exec dogtag-root-ca /scripts/sign-csr.sh \
+  /certs/intermediate-ca.csr /certs/intermediate-ca-signed.crt \
+  https://root-ca.cert-lab.local:8443 caCACert
+
+# Complete Intermediate CA (Phase 2: installs cert)
+sudo podman exec -it dogtag-intermediate-ca /scripts/init-intermediate-ca.sh
+
+# 3. Initialize IoT Sub-CA (Phase 1: generates CSR)
+sudo podman exec -it dogtag-iot-ca /scripts/init-iot-ca.sh
+
+# Sign IoT CA CSR with Intermediate CA (profile: caCACert)
+sudo podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \
+  /certs/iot-ca.csr /certs/iot-ca-signed.crt \
+  https://intermediate-ca.cert-lab.local:8443 caCACert
+
+# Complete IoT CA (Phase 2: installs cert)
+sudo podman exec -it dogtag-iot-ca /scripts/init-iot-ca.sh
 
 # 4. FreeIPA uses its internal Dogtag CA
 # (External CA mode is complex; internal CA works out of the box)
 ```
+
+### Container Systemd Workaround
+
+Dogtag PKI requires systemd which is not available in containers. A mock systemctl script is created automatically by the init scripts. If you encounter "Exec format error: systemctl", fix the shebang:
+
+```bash
+sudo podman exec <container> sed -i '1s|.*|#!/usr/bin/bash|' /usr/bin/systemctl
+```
+
+### Certificate Profiles
+
+- `caCACert`: Use for signing subordinate CA certificates
+- `caServerCert`: Use for signing server TLS certificates
+- `caUserCert`: Use for signing user certificates
 
 ## Architecture
 

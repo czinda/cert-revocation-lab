@@ -40,7 +40,7 @@ phase1_generate_csr() {
     rm -f /tmp/step1.cfg
 
     log_info "CSR generated: $CSR_FILE"
-    print_sign_action "$CSR_FILE" "$SIGNED_CERT" "dogtag-intermediate-ca" "$INTERMEDIATE_CA_URL" "caSubCA"
+    print_sign_action "$CSR_FILE" "$SIGNED_CERT" "dogtag-intermediate-ca" "$INTERMEDIATE_CA_URL" "caCACert"
 }
 
 phase2_install_cert() {
@@ -90,7 +90,7 @@ init_ca() {
         phase1_generate_csr
     elif [ ! -f "$SIGNED_CERT" ]; then
         log_warn "CSR exists but not signed yet"
-        print_sign_action "$CSR_FILE" "$SIGNED_CERT" "dogtag-intermediate-ca" "$INTERMEDIATE_CA_URL" "caSubCA"
+        print_sign_action "$CSR_FILE" "$SIGNED_CERT" "dogtag-intermediate-ca" "$INTERMEDIATE_CA_URL" "caCACert"
         exit 1
     else
         phase2_install_cert

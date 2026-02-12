@@ -147,7 +147,7 @@ podman exec dogtag-root-ca /scripts/sign-csr.sh \
   /certs/intermediate-ca.csr \
   /certs/intermediate-ca-signed.crt \
   https://root-ca.cert-lab.local:8443 \
-  caSubCA
+  caCACert
 
 # Step 3: Initialize IoT Sub-CA
 podman exec -it dogtag-iot-ca /scripts/init-iot-ca.sh
@@ -157,7 +157,7 @@ podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \
   /certs/iot-ca.csr \
   /certs/iot-ca-signed.crt \
   https://intermediate-ca.cert-lab.local:8443 \
-  caSubCA
+  caCACert
 ```
 
 ### 5. Run Test Scenario

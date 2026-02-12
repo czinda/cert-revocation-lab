@@ -22,19 +22,19 @@ usage() {
     echo "  csr-file     Path to the CSR file"
     echo "  output-cert  Path to write the signed certificate"
     echo "  ca-url       URL of the CA (e.g., https://root-ca.cert-lab.local:8443)"
-    echo "  profile      Certificate profile (default: caSubCA)"
+    echo "  profile      Certificate profile (default: caCACert)"
     echo ""
     echo "Profiles:"
-    echo "  caSubCA      Sub-CA signing certificate"
-    echo "  caCACert     CA certificate"
+    echo "  caCACert     CA certificate (for Sub-CA signing)"
     echo "  caServerCert Server certificate"
+    echo "  caUserCert   User certificate"
     exit 1
 }
 
 CSR_FILE="$1"
 OUTPUT_CERT="$2"
 CA_URL="${3:-https://root-ca.cert-lab.local:8443}"
-PROFILE="${4:-caSubCA}"
+PROFILE="${4:-caCACert}"
 
 # Validate arguments
 if [ -z "$CSR_FILE" ] || [ -z "$OUTPUT_CERT" ]; then
