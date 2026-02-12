@@ -398,6 +398,17 @@ main() {
     init_iot_ca
     verify_hierarchy
 
+    # Setup agent authentication for each CA
+    log_phase "Setting Up Agent Authentication"
+    for ca_container in dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca; do
+        local instance=$(echo "$ca_container" | sed 's/dogtag-/pki-/')
+        if [ -x "$SCRIPT_DIR/setup-agent-auth.sh" ]; then
+            "$SCRIPT_DIR/setup-agent-auth.sh" "$ca_container" "$instance" || true
+        else
+            bash "$SCRIPT_DIR/setup-agent-auth.sh" "$ca_container" "$instance" || true
+        fi
+    done
+
     # Configure TLS for Directory Servers using certificates from Intermediate CA
     log_phase "Configuring TLS for Directory Servers"
     if [ -x "$SCRIPT_DIR/configure-ds-tls.sh" ]; then
