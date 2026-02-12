@@ -81,7 +81,8 @@ setup_directories() {
     log_success "Directory structure created"
 }
 
-# Helper to run podman as original user when script is run with sudo
+# Helper to run commands as original user when script is run with sudo
+# This is needed for rootless podman services
 run_as_user() {
     if [ "$(id -u)" = "0" ] && [ -n "$ORIGINAL_USER" ] && [ "$ORIGINAL_USER" != "root" ]; then
         # Use runuser with proper environment for rootless podman
@@ -89,6 +90,11 @@ run_as_user() {
     else
         "$@"
     fi
+}
+
+# Check if we're running as root (with sudo)
+is_running_as_root() {
+    [ "$(id -u)" = "0" ]
 }
 
 # Setup and validate podman networks
@@ -346,20 +352,29 @@ clean_start() {
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         # Clean rootless containers
-        podman-compose down -v 2>/dev/null || true
-        podman volume prune -f 2>/dev/null || true
+        run_as_user podman-compose down -v 2>/dev/null || true
+        run_as_user podman volume prune -f 2>/dev/null || true
 
         # Clean rootful PKI containers
         if [ -f pki-compose.yml ]; then
             log_info "Cleaning PKI containers (requires sudo)..."
-            sudo podman-compose -f pki-compose.yml down -v 2>/dev/null || true
-            sudo podman volume prune -f 2>/dev/null || true
+            if is_running_as_root; then
+                podman-compose -f pki-compose.yml down -v 2>/dev/null || true
+                podman volume prune -f 2>/dev/null || true
+            else
+                sudo podman-compose -f pki-compose.yml down -v 2>/dev/null || true
+                sudo podman volume prune -f 2>/dev/null || true
+            fi
         fi
 
         # Clean FreeIPA containers
         if [ -f freeipa-compose.yml ]; then
             log_info "Cleaning FreeIPA containers (requires sudo)..."
-            sudo podman-compose -f freeipa-compose.yml down -v 2>/dev/null || true
+            if is_running_as_root; then
+                podman-compose -f freeipa-compose.yml down -v 2>/dev/null || true
+            else
+                sudo podman-compose -f freeipa-compose.yml down -v 2>/dev/null || true
+            fi
         fi
 
         rm -rf data/certs/*
@@ -376,11 +391,18 @@ start_base_infrastructure() {
     log_phase "Phase 1: Starting Base Infrastructure"
 
     log_info "Starting PostgreSQL, Redis, Zookeeper..."
-    podman-compose up -d postgres redis zookeeper
+    run_as_user podman-compose up -d postgres redis zookeeper
 
-    wait_for_container "postgres" 60
-    wait_for_container "redis" 30
-    wait_for_container "zookeeper" 60
+    # wait_for_container needs to run as user too
+    if is_running_as_root; then
+        run_as_user podman wait --condition=running postgres 2>/dev/null || sleep 30
+        run_as_user podman wait --condition=running redis 2>/dev/null || sleep 10
+        run_as_user podman wait --condition=running zookeeper 2>/dev/null || sleep 30
+    else
+        wait_for_container "postgres" 60
+        wait_for_container "redis" 30
+        wait_for_container "zookeeper" 60
+    fi
 
     log_success "Base infrastructure started"
 }
@@ -389,14 +411,19 @@ start_base_infrastructure() {
 start_kafka() {
     log_phase "Phase 2: Starting Kafka Event Bus"
 
-    podman-compose up -d kafka
-    wait_for_container "kafka" 90
+    run_as_user podman-compose up -d kafka
+
+    if is_running_as_root; then
+        run_as_user podman wait --condition=running kafka 2>/dev/null || sleep 60
+    else
+        wait_for_container "kafka" 90
+    fi
 
     # Create security-events topic
     log_info "Creating Kafka topics..."
     sleep 10  # Wait for Kafka to fully initialize
 
-    podman exec kafka kafka-topics --create \
+    run_as_user podman exec kafka kafka-topics --create \
         --bootstrap-server localhost:9092 \
         --topic security-events \
         --partitions 3 \
@@ -419,24 +446,34 @@ start_pki_hierarchy() {
     log_phase "Phase 4: Starting PKI Infrastructure"
 
     # PKI requires privileged containers with systemd support
-    # Use the separate pki-compose.yml with sudo
     log_info "Starting PKI containers (requires sudo for privileged mode)..."
 
     if [ -f pki-compose.yml ]; then
         # Start PKI containers with rootful podman
-        sudo podman-compose -f pki-compose.yml up -d
+        if is_running_as_root; then
+            podman-compose -f pki-compose.yml up -d
+        else
+            sudo podman-compose -f pki-compose.yml up -d
+        fi
 
         # Wait for 389DS to be healthy
         log_info "Waiting for Directory Servers to be ready..."
         for ds in ds-root ds-intermediate ds-iot; do
             local elapsed=0
             while [ $elapsed -lt 120 ]; do
-                if sudo podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
-                    log_success "$ds is ready"
-                    break
+                if is_running_as_root; then
+                    if podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
+                        log_success "$ds is ready"
+                        break
+                    fi
+                else
+                    if sudo podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
+                        log_success "$ds is ready"
+                        break
+                    fi
                 fi
                 sleep 5
-                ((elapsed += 5))
+                ((elapsed += 5)) || true
             done
         done
 
@@ -483,8 +520,13 @@ start_freeipa() {
 start_awx() {
     log_phase "Phase 6: Starting Ansible AWX"
 
-    podman-compose up -d awx-web awx-task
-    wait_for_container "awx-web" 180
+    run_as_user podman-compose up -d awx-web awx-task
+
+    if is_running_as_root; then
+        run_as_user podman wait --condition=running awx-web 2>/dev/null || sleep 60
+    else
+        wait_for_container "awx-web" 180
+    fi
 
     log_success "AWX started"
     log_info "AWX Web UI: http://localhost:8084"
@@ -495,7 +537,7 @@ start_awx() {
 start_eda() {
     log_phase "Phase 7: Starting Event-Driven Ansible"
 
-    podman-compose up -d eda-server
+    run_as_user podman-compose up -d eda-server
     sleep 10
 
     log_success "EDA Server started"
@@ -508,11 +550,16 @@ start_security_tools() {
 
     # Build containers if needed
     log_info "Building mock security tool containers..."
-    podman-compose build mock-edr mock-siem 2>/dev/null || true
+    run_as_user podman-compose build mock-edr mock-siem 2>/dev/null || true
 
-    podman-compose up -d mock-edr mock-siem
-    wait_for_container "mock-edr" 60
-    wait_for_container "mock-siem" 60
+    run_as_user podman-compose up -d mock-edr mock-siem
+
+    if is_running_as_root; then
+        sleep 30
+    else
+        wait_for_container "mock-edr" 60
+        wait_for_container "mock-siem" 60
+    fi
 
     log_success "Mock EDR and SIEM started"
 }
@@ -521,7 +568,7 @@ start_security_tools() {
 start_jupyter() {
     log_phase "Phase 9: Starting Jupyter Lab"
 
-    podman-compose up -d jupyter
+    run_as_user podman-compose up -d jupyter
     sleep 5
 
     log_success "Jupyter Lab started"
