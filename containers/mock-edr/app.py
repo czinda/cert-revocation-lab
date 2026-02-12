@@ -56,6 +56,13 @@ class SecurityEvent(BaseModel):
     raw_alert: dict
 
 
+class BulkTriggerRequest(BaseModel):
+    """Request to trigger events for multiple devices"""
+    devices: List[str] = Field(..., description="List of device identifiers")
+    scenario: str = Field(default="Generic Malware Detection", description="Attack scenario name")
+    pki_type: Optional[str] = Field(None, pattern="^(rsa|ecc|pqc)$", description="PKI type")
+
+
 class EventResponse(BaseModel):
     """Response from event trigger"""
     status: str
@@ -385,12 +392,12 @@ async def trigger_event(request: TriggerRequest, background_tasks: BackgroundTas
 
 
 @app.post("/trigger/bulk")
-async def trigger_bulk_events(devices: List[str], scenario: str = "Generic Malware Detection", pki_type: Optional[str] = None):
+async def trigger_bulk_events(bulk_request: BulkTriggerRequest):
     """Trigger events for multiple devices"""
     results = []
 
-    for device_id in devices:
-        request = TriggerRequest(device_id=device_id, scenario=scenario, pki_type=pki_type)
+    for device_id in bulk_request.devices:
+        request = TriggerRequest(device_id=device_id, scenario=bulk_request.scenario, pki_type=bulk_request.pki_type)
         try:
             result = await trigger_event(request, BackgroundTasks())
             results.append({"device": device_id, "status": "success", "event_id": result.event_id})
