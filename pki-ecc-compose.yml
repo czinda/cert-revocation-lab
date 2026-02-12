@@ -17,7 +17,7 @@ services:
     container_name: ds-ecc-root
     hostname: ds-ecc-root.${LAB_DOMAIN:-cert-lab.local}
     environment:
-      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123}
       DS_SUFFIX_NAME: ecc-root-ca
     volumes:
       - ds-ecc-root-data:/data
@@ -37,7 +37,7 @@ services:
     container_name: ds-ecc-intermediate
     hostname: ds-ecc-intermediate.${LAB_DOMAIN:-cert-lab.local}
     environment:
-      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123}
       DS_SUFFIX_NAME: ecc-intermediate-ca
     volumes:
       - ds-ecc-intermediate-data:/data
@@ -57,7 +57,7 @@ services:
     container_name: ds-ecc-iot
     hostname: ds-ecc-iot.${LAB_DOMAIN:-cert-lab.local}
     environment:
-      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123}
       DS_SUFFIX_NAME: ecc-iot-ca
     volumes:
       - ds-ecc-iot-data:/data
@@ -82,13 +82,13 @@ services:
         condition: service_healthy
     environment:
       PKI_DS_URL: ldap://ds-ecc-root.cert-lab.local:3389
-      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
-      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
-      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
-      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
-      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
       PKI_INSTANCE_NAME: pki-ecc-root-ca
-      DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
       # ECC-specific settings
       ECC_CA_KEY_TYPE: ecc
       ECC_CA_KEY_ALGORITHM: SHA384withEC
@@ -127,13 +127,13 @@ services:
         condition: service_started
     environment:
       PKI_DS_URL: ldap://ds-ecc-intermediate.cert-lab.local:3389
-      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
-      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
-      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
-      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
-      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
       PKI_INSTANCE_NAME: pki-ecc-intermediate-ca
-      DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
       # ECC-specific settings
       ECC_CA_KEY_TYPE: ecc
       ECC_CA_KEY_ALGORITHM: SHA384withEC
@@ -172,13 +172,13 @@ services:
         condition: service_started
     environment:
       PKI_DS_URL: ldap://ds-ecc-iot.cert-lab.local:3389
-      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
-      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
-      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
-      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
-      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
       PKI_INSTANCE_NAME: pki-ecc-iot-ca
-      DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
       # ECC-specific settings
       ECC_CA_KEY_TYPE: ecc
       ECC_CA_KEY_ALGORITHM: SHA384withEC

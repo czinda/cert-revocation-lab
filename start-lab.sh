@@ -581,12 +581,60 @@ start_pki_hierarchy() {
     log_success "PKI hierarchy initialized"
 }
 
+# Build the PQ Dogtag image if it doesn't exist
+build_pq_image() {
+    local image_name="${PQ_PKI_IMAGE:-localhost/dogtag-pki-pq:latest}"
+
+    log_info "Checking for PQ PKI image: $image_name"
+
+    # Check if image exists (rootful podman)
+    local image_exists=false
+    if is_running_as_root; then
+        if podman image exists "$image_name" 2>/dev/null; then
+            image_exists=true
+        fi
+    else
+        if sudo podman image exists "$image_name" 2>/dev/null; then
+            image_exists=true
+        fi
+    fi
+
+    if [ "$image_exists" = true ]; then
+        log_success "PQ PKI image already exists"
+        return 0
+    fi
+
+    log_warn "PQ PKI image not found. Building from source..."
+    log_info "This compiles Dogtag PKI from master branch and may take 15-30 minutes."
+
+    if [ ! -f containers/dogtag-pq/build.sh ]; then
+        log_error "containers/dogtag-pq/build.sh not found"
+        log_info "Cannot build PQ PKI image. Skipping PQ PKI startup."
+        return 1
+    fi
+
+    # Build the image (needs rootful podman for privileged containers later)
+    if is_running_as_root; then
+        bash containers/dogtag-pq/build.sh "$image_name"
+    else
+        sudo bash containers/dogtag-pq/build.sh "$image_name"
+    fi
+
+    log_success "PQ PKI image built successfully"
+}
+
 # Phase 4b: Start and Initialize PQ (ML-DSA-87) PKI Hierarchy
 start_pq_pki_hierarchy() {
     log_phase "Phase 4b: Starting Post-Quantum PKI Infrastructure (ML-DSA-87)"
 
     if [ ! -f pki-pq-compose.yml ]; then
         log_warn "pki-pq-compose.yml not found. Skipping PQ PKI startup."
+        return
+    fi
+
+    # Build PQ image if needed
+    if ! build_pq_image; then
+        log_warn "Skipping PQ PKI startup due to missing image"
         return
     fi
 

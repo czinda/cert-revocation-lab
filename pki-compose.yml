@@ -12,7 +12,7 @@ services:
     container_name: ds-root
     hostname: ds-root.${LAB_DOMAIN:-cert-lab.local}
     environment:
-      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123}
       DS_SUFFIX_NAME: root-ca
     volumes:
       - ds-root-data:/data
@@ -32,7 +32,7 @@ services:
     container_name: ds-intermediate
     hostname: ds-intermediate.${LAB_DOMAIN:-cert-lab.local}
     environment:
-      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123}
       DS_SUFFIX_NAME: intermediate-ca
     volumes:
       - ds-intermediate-data:/data
@@ -52,7 +52,7 @@ services:
     container_name: ds-iot
     hostname: ds-iot.${LAB_DOMAIN:-cert-lab.local}
     environment:
-      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123}
       DS_SUFFIX_NAME: iot-ca
     volumes:
       - ds-iot-data:/data
@@ -77,13 +77,13 @@ services:
         condition: service_healthy
     environment:
       PKI_DS_URL: ldap://ds-root.cert-lab.local:3389
-      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
-      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
-      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
-      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
-      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
       PKI_INSTANCE_NAME: pki-root-ca
-      DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
     volumes:
       - ./configs/pki:/etc/pki-configs:ro
       - ./scripts/pki:/scripts:ro
@@ -124,13 +124,13 @@ services:
         condition: service_started
     environment:
       PKI_DS_URL: ldap://ds-intermediate.cert-lab.local:3389
-      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
-      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
-      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
-      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
-      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
       PKI_INSTANCE_NAME: pki-intermediate-ca
-      DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
     volumes:
       - ./configs/pki:/etc/pki-configs:ro
       - ./scripts/pki:/scripts:ro
@@ -171,13 +171,13 @@ services:
         condition: service_started
     environment:
       PKI_DS_URL: ldap://ds-iot.cert-lab.local:3389
-      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
-      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
-      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
-      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
-      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
       PKI_INSTANCE_NAME: pki-iot-ca
-      DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
     volumes:
       - ./configs/pki:/etc/pki-configs:ro
       - ./scripts/pki:/scripts:ro
