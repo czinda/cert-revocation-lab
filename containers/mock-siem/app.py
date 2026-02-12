@@ -8,6 +8,7 @@ import os
 import json
 import uuid
 import random
+import asyncio
 from datetime import datetime
 from typing import Optional, List
 from contextlib import asynccontextmanager
@@ -225,24 +226,37 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager"""
     global producer
 
-    print(f"Connecting to Kafka at {KAFKA_BOOTSTRAP_SERVERS}...")
-    producer = AIOKafkaProducer(
-        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-        value_serializer=lambda v: json.dumps(v).encode('utf-8'),
-        key_serializer=lambda k: k.encode('utf-8') if k else None
-    )
+    # Startup with retry logic
+    max_retries = 10
+    retry_delay = 5
 
-    try:
-        await producer.start()
-        print("Kafka producer connected successfully")
-    except Exception as e:
-        print(f"Warning: Failed to connect to Kafka: {e}")
-        producer = None
+    for attempt in range(max_retries):
+        print(f"Connecting to Kafka at {KAFKA_BOOTSTRAP_SERVERS} (attempt {attempt + 1}/{max_retries})...")
+        producer = AIOKafkaProducer(
+            bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+            value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+            key_serializer=lambda k: k.encode('utf-8') if k else None
+        )
+
+        try:
+            await producer.start()
+            print("Kafka producer connected successfully")
+            break
+        except Exception as e:
+            print(f"Warning: Failed to connect to Kafka: {e}")
+            producer = None
+            if attempt < max_retries - 1:
+                print(f"Retrying in {retry_delay} seconds...")
+                await asyncio.sleep(retry_delay)
+
+    if not producer:
+        print("ERROR: Could not connect to Kafka after all retries")
 
     yield
 
     if producer:
         await producer.stop()
+        print("Kafka producer disconnected")
 
 
 app = FastAPI(
