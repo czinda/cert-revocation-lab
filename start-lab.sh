@@ -793,21 +793,47 @@ start_security_tools() {
         return
     fi
 
+    # Verify Kafka is ready before starting mock containers
+    log_info "Verifying Kafka is ready..."
+    local kafka_ready=false
+    for i in {1..10}; do
+        if run_as_user podman exec kafka kafka-topics --bootstrap-server localhost:9092 --list &>/dev/null; then
+            kafka_ready=true
+            break
+        fi
+        log_warn "Waiting for Kafka... (attempt $i/10)"
+        sleep 5
+    done
+
+    if [ "$kafka_ready" = false ]; then
+        log_warn "Kafka may not be fully ready, mock containers will retry connection"
+    fi
+
     # Build containers if needed
     log_info "Building mock security tool containers..."
     run_as_user podman-compose build "${to_start[@]}" 2>/dev/null || true
 
     run_as_user podman-compose up -d "${to_start[@]}"
 
+    # Wait for containers to start and connect to Kafka (retry logic takes up to 50s)
+    log_info "Waiting for mock containers to connect to Kafka..."
     if is_running_as_root; then
-        sleep 30
+        sleep 60
     else
         for svc in "${to_start[@]}"; do
-            wait_for_container "$svc" 60
+            wait_for_container "$svc" 90
         done
     fi
 
-    log_success "Mock EDR and SIEM started"
+    # Verify Kafka connection
+    local edr_connected=$(curl -s http://localhost:8082/health 2>/dev/null | grep -o '"kafka_connected": true' || echo "")
+    local siem_connected=$(curl -s http://localhost:8083/health 2>/dev/null | grep -o '"kafka_connected": true' || echo "")
+
+    if [ -n "$edr_connected" ] && [ -n "$siem_connected" ]; then
+        log_success "Mock EDR and SIEM started and connected to Kafka"
+    else
+        log_warn "Mock containers started but may need restart for Kafka connection"
+    fi
 }
 
 # Phase 9: Start Jupyter

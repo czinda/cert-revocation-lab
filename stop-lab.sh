@@ -160,12 +160,19 @@ if [ "$1" == "--clean" ]; then
         sudo podman volume ls --format "{{.Name}}" 2>/dev/null | grep -E "(pki|freeipa|ds-)" | xargs -r sudo podman volume rm -f 2>/dev/null || true
         sudo podman volume prune -f 2>/dev/null || true
 
-        # Remove lab networks by name pattern
+        # Remove lab networks by name pattern (rootless)
         log_info "Removing lab networks..."
         podman network ls --format "{{.Name}}" 2>/dev/null | grep -E "(lab-network|cert-lab)" | xargs -r podman network rm -f 2>/dev/null || true
 
-        # Remove project-prefixed networks
+        # Remove project-prefixed networks (rootless)
         podman network ls --format "{{.Name}}" 2>/dev/null | grep "^${PROJECT_NAME}_" | xargs -r podman network rm -f 2>/dev/null || true
+
+        # Remove PKI networks (rootful)
+        log_info "Removing PKI networks (requires sudo)..."
+        sudo podman network rm -f pki-net 2>/dev/null || true
+        sudo podman network rm -f pki-ecc-net 2>/dev/null || true
+        sudo podman network rm -f pki-pq-net 2>/dev/null || true
+        sudo podman network rm -f freeipa-net 2>/dev/null || true
 
         # Remove any networks using the lab subnet (172.20.0.0/16)
         log_info "Checking for networks using lab subnet..."
