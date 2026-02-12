@@ -76,6 +76,52 @@ setup_directories() {
     log_success "Directory structure created"
 }
 
+# Setup and validate podman networks
+setup_networks() {
+    log_info "Checking container networks..."
+
+    # Network configurations
+    declare -A NETWORKS
+    NETWORKS["cert-revocation-lab_lab-network"]="172.20.0.0/16:172.20.0.1"
+    NETWORKS["pki-net"]="172.26.0.0/24:172.26.0.1"
+    NETWORKS["freeipa-net"]="172.25.0.0/24:172.25.0.1"
+
+    for net_name in "${!NETWORKS[@]}"; do
+        IFS=':' read -r expected_subnet expected_gateway <<< "${NETWORKS[$net_name]}"
+
+        # Determine if this is a rootful network
+        PCMD="podman"
+        if [[ "$net_name" == "pki-net" || "$net_name" == "freeipa-net" ]]; then
+            if sudo -n true 2>/dev/null; then
+                PCMD="sudo podman"
+            else
+                log_warn "Skipping $net_name check (requires sudo)"
+                continue
+            fi
+        fi
+
+        # Check if network exists
+        if $PCMD network exists "$net_name" 2>/dev/null; then
+            # Get current subnet
+            current_subnet=$($PCMD network inspect "$net_name" --format '{{range .Subnets}}{{.Subnet}}{{end}}' 2>/dev/null)
+
+            if [[ "$current_subnet" == "$expected_subnet" ]]; then
+                log_success "$net_name exists with correct subnet ($current_subnet)"
+            else
+                log_warn "$net_name exists but has wrong subnet: $current_subnet (expected $expected_subnet)"
+                log_info "Recreating $net_name..."
+                $PCMD network rm -f "$net_name" 2>/dev/null || true
+                $PCMD network create --subnet "$expected_subnet" --gateway "$expected_gateway" "$net_name"
+                log_success "$net_name recreated with subnet $expected_subnet"
+            fi
+        else
+            log_info "Creating network $net_name..."
+            $PCMD network create --subnet "$expected_subnet" --gateway "$expected_gateway" "$net_name" 2>/dev/null || true
+            log_success "$net_name created"
+        fi
+    done
+}
+
 # Update /etc/hosts if needed
 setup_hosts() {
     log_info "Checking /etc/hosts entries..."
@@ -405,6 +451,9 @@ quick_start() {
         SUDO_OK=true
     fi
 
+    # Validate networks first
+    setup_networks
+
     # Start PKI containers from pki-compose.yml (rootful - has initialized data)
     if [ -f pki-compose.yml ]; then
         log_info "Starting PKI containers (from pki-compose.yml)..."
@@ -504,6 +553,7 @@ main() {
     # Run startup sequence
     check_prerequisites
     setup_directories
+    setup_networks
     setup_hosts
     start_base_infrastructure
     start_kafka
