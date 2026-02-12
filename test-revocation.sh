@@ -529,31 +529,38 @@ issue_certificate() {
     fi
     log_info "Certificate ID: $cert_id"
 
-    # Step 4: Export the certificate
+    # Step 4: Export the certificate using ca-cert-show --output
     log_info "Exporting certificate..."
-    sudo podman exec "$container" \
+    local export_result=$(sudo podman exec "$container" \
         pki -d /root/.dogtag/nssdb \
             -U "https://${ca_hostname}:8443" \
-            ca-cert-export "$cert_id" \
-            --output /tmp/test-cert.pem 2>/dev/null
+            ca-cert-show "$cert_id" \
+            --output /tmp/test-cert.pem 2>&1) || true
 
-    # Get the certificate serial
-    CERT_SERIAL=$(sudo podman exec "$container" \
-        openssl x509 -in /tmp/test-cert.pem -noout -serial 2>/dev/null | cut -d= -f2)
+    # Check if certificate was exported
+    local cert_exists=$(sudo podman exec "$container" test -f /tmp/test-cert.pem && echo "yes" || echo "no")
 
-    if [ -z "$CERT_SERIAL" ]; then
-        # cert_id might be the serial in hex format
-        if [[ "$cert_id" =~ ^0x ]]; then
-            CERT_SERIAL=$((cert_id))
-        else
-            CERT_SERIAL="$cert_id"
+    if [ "$cert_exists" != "yes" ]; then
+        log_warn "Certificate file not created, trying encoded output..."
+        # Try to get certificate in encoded format
+        sudo podman exec "$container" \
+            pki -d /root/.dogtag/nssdb \
+                -U "https://${ca_hostname}:8443" \
+                ca-cert-show "$cert_id" --encoded 2>/dev/null | \
+            sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p' > /tmp/test-cert-local.pem
+
+        if [ -s /tmp/test-cert-local.pem ]; then
+            sudo podman cp /tmp/test-cert-local.pem "${container}:/tmp/test-cert.pem"
+            rm -f /tmp/test-cert-local.pem
+            log_info "Certificate retrieved via encoded output"
         fi
     fi
 
-    # Convert hex serial to decimal for Dogtag (handle both hex and decimal)
-    if [[ "$CERT_SERIAL" =~ ^[0-9a-fA-F]+$ ]] && [[ ! "$CERT_SERIAL" =~ ^[0-9]+$ ]]; then
-        CERT_SERIAL=$((16#${CERT_SERIAL}))
-    fi
+    # The cert_id IS the serial number in hex format
+    CERT_SERIAL="$cert_id"
+
+    # For display and some operations, keep the hex format
+    log_info "Certificate serial: $CERT_SERIAL"
 
     # Copy certificate to host
     sudo podman cp "${container}:/tmp/test-cert.pem" "$cert_file" 2>/dev/null || true
