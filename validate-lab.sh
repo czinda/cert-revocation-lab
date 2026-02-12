@@ -576,18 +576,19 @@ service_health_checks() {
     fi
 
     # EDA - ansible-rulebook is a CLI tool, not a web server
-    # Check if the process is running and connected to Kafka
+    # Check if container is running and connected to Kafka
     log_test "EDA Server (ansible-rulebook)"
-    if podman exec eda-server pgrep -f "ansible-rulebook" &>/dev/null; then
-        # Check if connected to Kafka by looking at recent logs
-        if podman logs --tail 50 eda-server 2>&1 | grep -q "Subscribed to topic"; then
+    local eda_status=$(podman ps --filter "name=eda-server" --format "{{.Status}}" 2>/dev/null)
+    if [[ "$eda_status" == *"Up"* ]]; then
+        # Check if connected to Kafka by looking at logs
+        if podman logs --tail 100 eda-server 2>&1 | grep -q "Subscribed to topic"; then
             log_pass
             log_detail "Connected to Kafka topic: security-events"
         else
             log_warn "Running but may not be connected to Kafka"
         fi
     else
-        log_fail "ansible-rulebook process not running"
+        log_fail "ansible-rulebook container not running"
     fi
 
     log_section "Security Tools"
