@@ -1,0 +1,58 @@
+#!/bin/bash
+#
+# init-pq-root-ca.sh - Initialize the Dogtag Post-Quantum Root CA (ML-DSA-87)
+#
+set -e
+
+# Configuration
+CA_NAME="PQ-ROOT-CA"
+DS_HOST="${DS_HOST:-ds-pq-root.cert-lab.local}"
+DS_PORT="${DS_PORT:-3389}"
+DS_PASSWORD="${PKI_DS_PASSWORD:-${DS_PASSWORD:-RedHat123!}}"
+PKI_ADMIN_PASSWORD="${PKI_ADMIN_PASSWORD:-${ADMIN_PASSWORD:-RedHat123!}}"
+PKI_INSTANCE="${PKI_INSTANCE_NAME:-pki-pq-root-ca}"
+
+# Legacy variable names
+PKI_PASSWORD="${PKI_ADMIN_PASSWORD}"
+
+# Source common functions
+source "$(dirname "$0")/lib-pki-common.sh"
+
+# Validate required environment
+[ -n "$DS_PASSWORD" ] || { log_error "DS_PASSWORD not set"; exit 1; }
+[ -n "$PKI_ADMIN_PASSWORD" ] || { log_error "PKI_ADMIN_PASSWORD not set"; exit 1; }
+
+init_ca() {
+    print_header "Initializing Dogtag Post-Quantum Root CA (ML-DSA-87)"
+    mkdir -p "$CERTS_DIR"
+
+    # Check if already initialized
+    if check_initialized "$PKI_INSTANCE" "${CERTS_DIR}/pq-root-ca.crt"; then
+        log_info "PQ Root CA already initialized"
+        verify_cert "${CERTS_DIR}/pq-root-ca.crt"
+        return 0
+    fi
+
+    # Wait for DS
+    wait_for_ds "$DS_HOST" "$DS_PORT" "$DS_PASSWORD"
+
+    # Run pkispawn
+    log_info "Running pkispawn with ML-DSA-87 configuration..."
+    export_pki_env
+    prepare_config "${CONFIG_DIR}/pq-root-ca.cfg" /tmp/pq-root-ca.cfg
+    pkispawn -s CA -f /tmp/pq-root-ca.cfg -v
+    rm -f /tmp/pq-root-ca.cfg
+
+    # Export certificate
+    export_ca_cert "$PKI_INSTANCE" "${CERTS_DIR}/pq-root-ca.crt"
+    verify_cert "${CERTS_DIR}/pq-root-ca.crt"
+
+    print_header "PQ Root CA Initialization Complete"
+    echo "Algorithm:   ML-DSA-87 (NIST FIPS 204)"
+    echo "Certificate: ${CERTS_DIR}/pq-root-ca.crt"
+    echo "Web UI:      https://pq-root-ca.cert-lab.local:8443/ca"
+    echo ""
+    echo "Next: podman exec -it dogtag-pq-intermediate-ca /scripts/init-pq-intermediate-ca.sh"
+}
+
+init_ca "$@"

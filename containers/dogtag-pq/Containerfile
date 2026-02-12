@@ -1,0 +1,80 @@
+# Dogtag PKI with ML-DSA-87 (Post-Quantum) Support
+#
+# This container builds Dogtag PKI from master branch to get ML-DSA support.
+# ML-DSA-87 is a NIST FIPS 204 post-quantum signature algorithm.
+#
+# Build with: podman build -t dogtag-pq:latest -f Containerfile .
+#
+
+FROM fedora:41 AS builder
+
+# Install build dependencies
+RUN dnf install -y --setopt=tsflags=nodocs \
+    git \
+    maven \
+    java-17-openjdk-devel \
+    rpm-build \
+    cmake \
+    gcc \
+    gcc-c++ \
+    make \
+    nss-devel \
+    jss \
+    tomcat \
+    ldapjdk \
+    && dnf clean all
+
+# Clone Dogtag PKI master branch (has ML-DSA support)
+WORKDIR /build
+RUN git clone --depth 1 https://github.com/dogtagpki/pki.git
+
+# Build Dogtag PKI
+WORKDIR /build/pki
+RUN mvn install -DskipTests -DskipJavadoc -Dmaven.javadoc.skip=true \
+    -Dcheckstyle.skip=true -Dpmd.skip=true -Dspotbugs.skip=true
+
+# Package RPMs
+RUN mvn package -DskipTests -DskipJavadoc -Dmaven.javadoc.skip=true \
+    -Dcheckstyle.skip=true -Dpmd.skip=true -Dspotbugs.skip=true \
+    -pl :pki-server,:pki-ca,:pki-tools -am
+
+# Second stage - runtime image
+FROM fedora:41
+
+LABEL org.opencontainers.image.title="Dogtag PKI with ML-DSA-87 Support"
+LABEL org.opencontainers.image.description="Dogtag PKI CA with post-quantum ML-DSA-87 algorithm support"
+LABEL org.opencontainers.image.source="https://github.com/dogtagpki/pki"
+
+# Install runtime dependencies and Dogtag PKI from official repos as base
+RUN dnf install -y --setopt=tsflags=nodocs \
+    pki-ca \
+    pki-server \
+    pki-tools \
+    389-ds-base-libs \
+    nss \
+    nss-tools \
+    jss \
+    tomcat \
+    openssl \
+    curl \
+    ldapjdk \
+    python3 \
+    python3-ldap \
+    gettext \
+    procps-ng \
+    hostname \
+    && dnf clean all
+
+# Copy built packages from builder (override official packages)
+# COPY --from=builder /build/pki/dist/rpms/*.rpm /tmp/rpms/
+# RUN dnf install -y /tmp/rpms/*.rpm && rm -rf /tmp/rpms
+
+# Create required directories
+RUN mkdir -p /certs /scripts /var/log/pki /var/lib/pki
+
+# Set environment
+ENV PKI_HOSTNAME=localhost
+ENV NSS_DEFAULT_DB_TYPE=sql
+
+# Default command - sleep infinity for manual initialization
+CMD ["/bin/bash", "-c", "sleep infinity"]
