@@ -730,8 +730,8 @@ pki_validation() {
     if [ -f "data/certs/root-ca.crt" ]; then
         # Validate Root CA is self-signed
         log_test "Root CA is self-signed"
-        local root_issuer=$(openssl x509 -in data/certs/root-ca.crt -noout -issuer 2>/dev/null)
-        local root_subject=$(openssl x509 -in data/certs/root-ca.crt -noout -subject 2>/dev/null)
+        local root_issuer=$(openssl x509 -in data/certs/root-ca.crt -noout -issuer 2>/dev/null | sed 's/^issuer=//')
+        local root_subject=$(openssl x509 -in data/certs/root-ca.crt -noout -subject 2>/dev/null | sed 's/^subject=//')
         if [ "$root_issuer" = "$root_subject" ]; then
             log_pass
         else
