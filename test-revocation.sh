@@ -383,17 +383,38 @@ issue_certificate() {
     log_info "Submitting CSR to Dogtag CA..."
     sudo podman cp "$csr_file" "${container}:/tmp/test-request.csr"
 
-    # Create a temp NSS database with empty password in the container
+    # Create a temp NSS database with empty password and import CA cert
     sudo podman exec "$container" bash -c "
         rm -rf /tmp/test-nssdb
         mkdir -p /tmp/test-nssdb
         certutil -N -d /tmp/test-nssdb --empty-password
+        # Import CA cert for trust
+        if [ -f /certs/ca-chain.crt ]; then
+            certutil -A -d /tmp/test-nssdb -n 'CA Chain' -t 'CT,C,C' -a -i /certs/ca-chain.crt 2>/dev/null || true
+        fi
+        if [ -f /certs/iot-ca.crt ]; then
+            certutil -A -d /tmp/test-nssdb -n 'IoT CA' -t 'CT,C,C' -a -i /certs/iot-ca.crt 2>/dev/null || true
+        fi
+        if [ -f /certs/intermediate-ca.crt ]; then
+            certutil -A -d /tmp/test-nssdb -n 'Intermediate CA' -t 'CT,C,C' -a -i /certs/intermediate-ca.crt 2>/dev/null || true
+        fi
+        if [ -f /certs/root-ca.crt ]; then
+            certutil -A -d /tmp/test-nssdb -n 'Root CA' -t 'CT,C,C' -a -i /certs/root-ca.crt 2>/dev/null || true
+        fi
     " >/dev/null 2>&1
+
+    # Get hostname for internal CA URL
+    local ca_hostname=""
+    case "${CA_LEVEL}" in
+        root) ca_hostname="root-ca.cert-lab.local" ;;
+        intermediate) ca_hostname="intermediate-ca.cert-lab.local" ;;
+        iot) ca_hostname="iot-ca.cert-lab.local" ;;
+    esac
 
     # Submit certificate request using username/password auth
     local request_output=$(sudo podman exec "$container" \
         pki -d /tmp/test-nssdb -c '' \
-            -U "https://localhost:8443" \
+            -U "https://${ca_hostname}:8443" \
             -u caadmin -w "$PKI_ADMIN_PASSWORD" \
             ca-cert-request-submit \
             --profile caServerCert \
@@ -411,7 +432,7 @@ issue_certificate() {
     log_info "Approving certificate request..."
     sudo podman exec "$container" \
         pki -d /tmp/test-nssdb -c '' \
-            -U "https://localhost:8443" \
+            -U "https://${ca_hostname}:8443" \
             -u caadmin -w "$PKI_ADMIN_PASSWORD" \
             ca-cert-request-approve "$request_id" --force 2>&1 || true
 
@@ -419,7 +440,7 @@ issue_certificate() {
     sleep 2
     local cert_info=$(sudo podman exec "$container" \
         pki -d /tmp/test-nssdb -c '' \
-            -U "https://localhost:8443" \
+            -U "https://${ca_hostname}:8443" \
             ca-cert-request-show "$request_id" 2>&1)
 
     CERT_SERIAL=$(echo "$cert_info" | grep "Certificate ID:" | awk '{print $3}')
@@ -432,7 +453,7 @@ issue_certificate() {
     # Export certificate (no auth needed for export)
     sudo podman exec "$container" \
         pki -d /tmp/test-nssdb -c '' \
-            -U "https://localhost:8443" \
+            -U "https://${ca_hostname}:8443" \
             ca-cert-export "$CERT_SERIAL" --output-file /tmp/test-cert.pem 2>&1 || true
 
     sudo podman cp "${container}:/tmp/test-cert.pem" "$cert_file"
@@ -643,9 +664,10 @@ wait_for_automation() {
         # Early exit if certificate is already revoked
         if [ -n "$CERT_SERIAL" ]; then
             local container=$(get_ca_container)
+            local ca_hostname=$(get_ca_hostname)
             local status=$(sudo podman exec "$container" \
                 pki -d /tmp/test-nssdb -c '' \
-                    -U "https://localhost:8443" \
+                    -U "https://${ca_hostname}:8443" \
                     ca-cert-show "$CERT_SERIAL" 2>&1 | grep -i "Status:")
             if echo "$status" | grep -qi "REVOKED"; then
                 echo
@@ -659,10 +681,20 @@ wait_for_automation() {
     log_success "Automation pipeline window completed"
 }
 
+# Get CA hostname for internal URLs
+get_ca_hostname() {
+    case "${CA_LEVEL:-iot}" in
+        root) echo "root-ca.cert-lab.local" ;;
+        intermediate) echo "intermediate-ca.cert-lab.local" ;;
+        iot) echo "iot-ca.cert-lab.local" ;;
+    esac
+}
+
 # Verify revocation in Dogtag
 verify_revocation() {
     local device_fqdn="${DEVICE_NAME}.${LAB_DOMAIN}"
     local container=$(get_ca_container)
+    local ca_hostname=$(get_ca_hostname)
 
     log_phase "Verifying Certificate Revocation in Dogtag"
 
@@ -678,7 +710,7 @@ verify_revocation() {
     # Get certificate status from Dogtag (no auth needed for cert-show)
     local cert_status=$(sudo podman exec "$container" \
         pki -d /tmp/test-nssdb -c '' \
-            -U "https://localhost:8443" \
+            -U "https://${ca_hostname}:8443" \
             ca-cert-show "$CERT_SERIAL" 2>&1 | grep -i "Status:")
 
     if echo "$cert_status" | grep -qi "REVOKED"; then
@@ -724,12 +756,13 @@ show_results() {
 # Cleanup test certificate
 cleanup_device() {
     local container=$(get_ca_container)
+    local ca_hostname=$(get_ca_hostname)
 
     if [ -n "$CERT_SERIAL" ]; then
         log_info "Revoking test certificate (if not already revoked)..."
         sudo podman exec "$container" \
             pki -d /tmp/test-nssdb -c '' \
-                -U "https://localhost:8443" \
+                -U "https://${ca_hostname}:8443" \
                 -u caadmin -w "$PKI_ADMIN_PASSWORD" \
                 ca-cert-revoke "$CERT_SERIAL" --reason 5 --force 2>/dev/null || true
     fi
