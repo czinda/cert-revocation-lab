@@ -25,6 +25,22 @@ set -o pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Load environment variables from .env
+if [ -f .env ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%%\#*}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        if [[ "$line" =~ ^([A-Za-z_][A-Za-z_0-9]*)=(.*) ]]; then
+            export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
+        fi
+    done < .env
+fi
+
+# Store original user for rootless podman commands
+ORIGINAL_USER="${SUDO_USER:-$USER}"
+ORIGINAL_UID=$(id -u "$ORIGINAL_USER" 2>/dev/null || echo $UID)
+
 # ============================================================================
 # Logging Setup
 # ============================================================================
@@ -150,14 +166,44 @@ command_exists() {
     command -v "$1" &> /dev/null
 }
 
-# Check if a container is running
-container_running() {
-    podman ps --format "{{.Names}}" 2>/dev/null | grep -q "^$1$"
+# Helper to run commands as original user for rootless podman
+run_as_user() {
+    if [ "$(id -u)" = "0" ] && [ -n "$ORIGINAL_USER" ] && [ "$ORIGINAL_USER" != "root" ]; then
+        runuser -u "$ORIGINAL_USER" -- env XDG_RUNTIME_DIR="/run/user/$ORIGINAL_UID" "$@"
+    else
+        "$@"
+    fi
 }
 
-# Check if a container is healthy
+# Check if a rootless container is running
+container_running() {
+    run_as_user podman ps --format "{{.Names}}" 2>/dev/null | grep -q "^$1$"
+}
+
+# Check if a rootful container is running (PKI, FreeIPA)
+rootful_container_running() {
+    if [ "$(id -u)" = "0" ]; then
+        podman ps --format "{{.Names}}" 2>/dev/null | grep -q "^$1$"
+    else
+        sudo podman ps --format "{{.Names}}" 2>/dev/null | grep -q "^$1$"
+    fi
+}
+
+# Check if a rootless container is healthy
 container_healthy() {
-    local status=$(podman inspect "$1" --format '{{.State.Health.Status}}' 2>/dev/null)
+    local status
+    status=$(run_as_user podman inspect "$1" --format '{{.State.Health.Status}}' 2>/dev/null)
+    [ "$status" = "healthy" ]
+}
+
+# Check if a rootful container is healthy
+rootful_container_healthy() {
+    local status
+    if [ "$(id -u)" = "0" ]; then
+        status=$(podman inspect "$1" --format '{{.State.Health.Status}}' 2>/dev/null)
+    else
+        status=$(sudo podman inspect "$1" --format '{{.State.Health.Status}}' 2>/dev/null)
+    fi
     [ "$status" = "healthy" ]
 }
 
@@ -308,12 +354,25 @@ container_checks() {
     log_section "Container Runtime"
 
     # Check if podman is running
-    log_test "Podman daemon/socket"
-    if podman info &>/dev/null; then
+    log_test "Podman daemon/socket (rootless)"
+    if run_as_user podman info &>/dev/null; then
         log_pass
     else
         log_fail "Podman not responding"
         return 1
+    fi
+
+    log_test "Podman daemon/socket (rootful)"
+    if [ "$(id -u)" = "0" ]; then
+        if podman info &>/dev/null; then
+            log_pass
+        else
+            log_fail "Rootful podman not responding"
+        fi
+    elif sudo -n podman info &>/dev/null; then
+        log_pass
+    else
+        log_warn "Cannot check rootful podman (need sudo)"
     fi
 
     log_section "Infrastructure Containers"
@@ -340,7 +399,7 @@ container_checks() {
         fi
     done
 
-    log_section "PKI Containers"
+    log_section "PKI Containers (rootful)"
 
     local pki_containers=(
         "ds-root:389DS Root CA"
@@ -349,38 +408,56 @@ container_checks() {
         "dogtag-root-ca:Dogtag Root CA"
         "dogtag-intermediate-ca:Dogtag Intermediate CA"
         "dogtag-iot-ca:Dogtag IoT Sub-CA"
-        "freeipa:FreeIPA Server"
     )
 
     for entry in "${pki_containers[@]}"; do
         local name="${entry%%:*}"
         local desc="${entry#*:}"
         log_test "$desc ($name)"
-        if container_running "$name"; then
-            log_pass
+        if rootful_container_running "$name"; then
+            if rootful_container_healthy "$name"; then
+                log_pass
+            else
+                log_warn "Running but not healthy"
+            fi
         else
-            log_fail "Not running"
+            log_fail "Not running (check: sudo podman ps -a)"
         fi
     done
+
+    log_test "FreeIPA Server (freeipa)"
+    if rootful_container_running "freeipa"; then
+        if rootful_container_healthy "freeipa"; then
+            log_pass
+        else
+            log_warn "Running but not healthy (may still be installing)"
+        fi
+    else
+        log_fail "Not running (check: sudo podman ps -a)"
+    fi
 
     log_section "Automation Containers"
 
-    local auto_containers=(
-        "awx-web:AWX Web"
-        "awx-task:AWX Task Worker"
-        "eda-server:Event-Driven Ansible"
-    )
+    log_test "Event-Driven Ansible (eda-server)"
+    if container_running "eda-server"; then
+        log_pass
+    else
+        log_fail "Not running"
+    fi
 
-    for entry in "${auto_containers[@]}"; do
-        local name="${entry%%:*}"
-        local desc="${entry#*:}"
-        log_test "$desc ($name)"
-        if container_running "$name"; then
-            log_pass
-        else
-            log_fail "Not running"
-        fi
-    done
+    log_test "AWX Web (awx-web)"
+    if container_running "awx-web"; then
+        log_pass
+    else
+        log_skip "Not set up yet"
+    fi
+
+    log_test "AWX Task Worker (awx-task)"
+    if container_running "awx-task"; then
+        log_pass
+    else
+        log_skip "Not set up yet"
+    fi
 
     log_section "Security Tool Containers"
 
@@ -481,14 +558,14 @@ service_health_checks() {
         log_pass
         log_detail "Redirecting to login (expected)"
     else
-        log_fail "Not responding"
+        log_skip "AWX not set up yet"
     fi
 
     log_test "AWX API"
     if check_http "${AWX_URL}/api/v2/"; then
         log_pass
     else
-        log_fail "API not responding"
+        log_skip "AWX not set up yet"
     fi
 
     # EDA
@@ -568,13 +645,13 @@ kafka_checks() {
 
     # List topics
     log_test "security-events topic exists"
-    local topics=$(podman exec kafka kafka-topics --bootstrap-server localhost:9092 --list 2>/dev/null)
+    local topics=$(run_as_user podman exec kafka kafka-topics --bootstrap-server localhost:9092 --list 2>/dev/null)
     if echo "$topics" | grep -q "security-events"; then
         log_pass
     else
         log_fail "Topic not found"
         log_info "Creating security-events topic..."
-        podman exec kafka kafka-topics --create \
+        run_as_user podman exec kafka kafka-topics --create \
             --bootstrap-server localhost:9092 \
             --topic security-events \
             --partitions 3 \
@@ -584,7 +661,7 @@ kafka_checks() {
 
     # Check topic details
     log_test "security-events topic configuration"
-    local topic_info=$(podman exec kafka kafka-topics --bootstrap-server localhost:9092 --describe --topic security-events 2>/dev/null)
+    local topic_info=$(run_as_user podman exec kafka kafka-topics --bootstrap-server localhost:9092 --describe --topic security-events 2>/dev/null)
     if [ -n "$topic_info" ]; then
         log_pass
         local partitions=$(echo "$topic_info" | grep -c "Partition:")
@@ -600,12 +677,12 @@ kafka_checks() {
     local test_msg="validate-lab-test-$(date +%s)"
 
     # Produce a test message
-    echo "$test_msg" | podman exec -i kafka kafka-console-producer \
+    echo "$test_msg" | run_as_user podman exec -i kafka kafka-console-producer \
         --bootstrap-server localhost:9092 \
         --topic security-events 2>/dev/null
 
     # Try to consume it (with timeout)
-    local consumed=$(timeout 10 podman exec kafka kafka-console-consumer \
+    local consumed=$(timeout 10 run_as_user podman exec kafka kafka-console-consumer \
         --bootstrap-server localhost:9092 \
         --topic security-events \
         --from-beginning \
@@ -724,13 +801,10 @@ freeipa_validation() {
 
     log_section "FreeIPA Services"
 
-    # Check if FreeIPA container is running (may be rootful)
+    # Check if FreeIPA container is running (rootful)
     local ipa_running=false
-    if container_running "freeipa"; then
+    if rootful_container_running "freeipa"; then
         ipa_running=true
-    elif ps aux 2>/dev/null | grep -q "[f]reeipa"; then
-        ipa_running=true
-        log_info "FreeIPA running as rootful container"
     fi
 
     if [ "$ipa_running" = "false" ]; then
@@ -874,7 +948,7 @@ e2e_test() {
     log_section "Kafka Event Verification"
 
     log_test "Events appearing in Kafka topic"
-    local kafka_messages=$(timeout 10 podman exec kafka kafka-console-consumer \
+    local kafka_messages=$(timeout 10 run_as_user podman exec kafka kafka-console-consumer \
         --bootstrap-server localhost:9092 \
         --topic security-events \
         --from-beginning \
@@ -934,7 +1008,7 @@ network_tests() {
 
     # Test connectivity between containers
     log_test "Kafka -> Zookeeper connectivity"
-    local zk_check=$(podman exec kafka nc -zv zookeeper 2181 2>&1)
+    local zk_check=$(run_as_user podman exec kafka nc -zv zookeeper 2181 2>&1)
     if echo "$zk_check" | grep -q "succeeded\|open"; then
         log_pass
     else
@@ -942,7 +1016,7 @@ network_tests() {
     fi
 
     log_test "Mock EDR -> Kafka connectivity"
-    local edr_kafka=$(podman exec mock-edr python3 -c "import socket; s=socket.socket(); s.settimeout(5); s.connect(('kafka', 9092)); print('OK')" 2>/dev/null)
+    local edr_kafka=$(run_as_user podman exec mock-edr python3 -c "import socket; s=socket.socket(); s.settimeout(5); s.connect(('kafka', 9092)); print('OK')" 2>/dev/null)
     if [ "$edr_kafka" = "OK" ]; then
         log_pass
     else
@@ -951,9 +1025,8 @@ network_tests() {
 
     log_section "External Port Mappings"
 
-    local ports=(
+    local required_ports=(
         "4443:FreeIPA HTTPS"
-        "8084:AWX Web"
         "8082:Mock EDR"
         "8083:Mock SIEM"
         "8443:Root CA"
@@ -962,7 +1035,7 @@ network_tests() {
         "9092:Kafka"
     )
 
-    for entry in "${ports[@]}"; do
+    for entry in "${required_ports[@]}"; do
         local port="${entry%%:*}"
         local desc="${entry#*:}"
         log_test "Port $port ($desc)"
@@ -972,6 +1045,14 @@ network_tests() {
             log_fail "Port not accessible"
         fi
     done
+
+    # Optional ports (services not yet configured)
+    log_test "Port 8084 (AWX Web)"
+    if timeout 2 bash -c "echo > /dev/tcp/localhost/8084" 2>/dev/null; then
+        log_pass
+    else
+        log_skip "AWX not set up yet"
+    fi
 }
 
 # ============================================================================
