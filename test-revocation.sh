@@ -411,10 +411,14 @@ issue_certificate() {
         ADMIN_P12=\"/root/.dogtag/${instance}/ca_admin_cert.p12\"
         if [ -f \"\$ADMIN_P12\" ]; then
             echo 'Importing admin cert...'
-            pk12util -i \"\$ADMIN_P12\" -d /tmp/test-nssdb -k /dev/null -W '${PKI_CLIENT_PKCS12_PASSWORD}' || \
-            pk12util -i \"\$ADMIN_P12\" -d /tmp/test-nssdb -k /dev/null -W '${PKI_ADMIN_PASSWORD}' || \
-            pk12util -i \"\$ADMIN_P12\" -d /tmp/test-nssdb -k /dev/null -W '' || \
-            echo 'Failed to import admin cert'
+            # Use password from environment variable to avoid shell escaping issues
+            echo \"\$PKI_CLIENT_PKCS12_PASSWORD\" > /tmp/p12pass.txt
+            pk12util -i \"\$ADMIN_P12\" -d /tmp/test-nssdb -k /dev/null -w /tmp/p12pass.txt && echo 'Import succeeded' || {
+                # Try with PKI_ADMIN_PASSWORD
+                echo \"\$PKI_ADMIN_PASSWORD\" > /tmp/p12pass.txt
+                pk12util -i \"\$ADMIN_P12\" -d /tmp/test-nssdb -k /dev/null -w /tmp/p12pass.txt || echo 'Failed to import admin cert'
+            }
+            rm -f /tmp/p12pass.txt
             echo 'Certs in NSS DB:'
             certutil -L -d /tmp/test-nssdb
         else
