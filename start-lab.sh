@@ -496,24 +496,35 @@ start_pki_hierarchy() {
 start_freeipa() {
     log_phase "Phase 5: FreeIPA (Requires Rootful Podman)"
 
-    log_warn "FreeIPA requires systemd support and must run with rootful podman."
-    log_info "Skipping rootless startup. Start FreeIPA with sudo:"
-    echo ""
-    echo "  sudo podman-compose -f freeipa-compose.yml up -d"
-    echo ""
-    echo "  # Or manually:"
-    echo "  sudo podman run -d --name freeipa \\"
-    echo "    --hostname ipa.cert-lab.local --privileged \\"
-    echo "    -e PASSWORD=\${ADMIN_PASSWORD} \\"
-    echo "    -v freeipa-data:/data:Z -v \$(pwd)/data/certs:/certs:Z \\"
-    echo "    -p 4443:443 -p 8180:80 -p 3390:389 -p 6360:636 \\"
-    echo "    quay.io/freeipa/freeipa-server:fedora-42 \\"
-    echo "    ipa-server-install -U --realm=CERT-LAB.LOCAL --domain=cert-lab.local \\"
-    echo "    --ds-password=\${ADMIN_PASSWORD} --admin-password=\${ADMIN_PASSWORD} \\"
-    echo "    --no-ntp --no-host-dns"
-    echo ""
-    log_info "Installation takes 5-10 minutes. Monitor with: sudo podman logs -f freeipa"
-    echo ""
+    if [ ! -f freeipa-compose.yml ]; then
+        log_warn "freeipa-compose.yml not found. Skipping FreeIPA startup."
+        return
+    fi
+
+    if is_running_as_root; then
+        log_info "Starting FreeIPA with rootful podman..."
+        podman-compose -f freeipa-compose.yml up -d
+
+        log_info "FreeIPA installation is running in the background."
+        log_info "Monitor progress with: sudo podman logs -f freeipa"
+        log_info "FreeIPA will be available at https://localhost:4443/ipa/ui once ready."
+        log_success "FreeIPA container started"
+    elif sudo -n true 2>/dev/null; then
+        log_info "Starting FreeIPA with sudo..."
+        sudo podman-compose -f freeipa-compose.yml up -d
+
+        log_info "FreeIPA installation is running in the background."
+        log_info "Monitor progress with: sudo podman logs -f freeipa"
+        log_info "FreeIPA will be available at https://localhost:4443/ipa/ui once ready."
+        log_success "FreeIPA container started"
+    else
+        log_warn "FreeIPA requires systemd support and must run with rootful podman."
+        log_info "Start FreeIPA manually with:"
+        echo ""
+        echo "  sudo podman-compose -f freeipa-compose.yml up -d"
+        echo ""
+        log_info "Monitor with: sudo podman logs -f freeipa"
+    fi
 }
 
 # Phase 6: Start AWX
