@@ -436,10 +436,11 @@ services:
     ports:
       - "8082:8000"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health | grep -q '\"kafka_connected\": true' || exit 1"]
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 5
+      start_period: 60s
 
   mock-siem:
     build:
@@ -460,10 +461,11 @@ services:
     ports:
       - "8083:8000"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health | grep -q '\"kafka_connected\": true' || exit 1"]
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 5
+      start_period: 60s
 
   # ===========================================================================
   # Jupyter Lab (Documentation and Demos)
