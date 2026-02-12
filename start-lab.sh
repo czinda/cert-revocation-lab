@@ -399,25 +399,48 @@ print_summary() {
 quick_start() {
     log_phase "Quick Start - Starting Existing Containers"
 
+    # Check if we can use sudo non-interactively
+    SUDO_OK=false
+    if sudo -n true 2>/dev/null; then
+        SUDO_OK=true
+    fi
+
     # Start PKI containers (rootful)
     if [ -f pki-compose.yml ]; then
         log_info "Starting PKI containers..."
-        sudo podman-compose -f pki-compose.yml start 2>/dev/null || \
-        sudo podman-compose -f pki-compose.yml up -d
+        if [ "$SUDO_OK" = true ]; then
+            sudo podman-compose -f pki-compose.yml up -d
+        else
+            log_warn "PKI containers require sudo. Run: sudo podman-compose -f pki-compose.yml up -d"
+        fi
     fi
 
     # Start FreeIPA (rootful)
     if [ -f freeipa-compose.yml ]; then
         log_info "Starting FreeIPA..."
-        sudo podman-compose -f freeipa-compose.yml start 2>/dev/null || true
+        if [ "$SUDO_OK" = true ]; then
+            sudo podman-compose -f freeipa-compose.yml up -d 2>/dev/null || true
+        else
+            log_warn "FreeIPA requires sudo. Run: sudo podman-compose -f freeipa-compose.yml up -d"
+        fi
     fi
 
     # Start other containers (rootless)
-    log_info "Starting other containers..."
-    podman-compose start 2>/dev/null || podman-compose up -d
+    log_info "Starting rootless containers..."
+    podman-compose up -d
 
     log_success "Containers started"
-    print_summary
+
+    # Show running containers
+    echo ""
+    log_info "Running containers:"
+    podman ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | head -20
+    if [ "$SUDO_OK" = true ]; then
+        echo ""
+        log_info "Rootful containers:"
+        sudo podman ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | head -10
+    fi
+    echo ""
 }
 
 # Main function
