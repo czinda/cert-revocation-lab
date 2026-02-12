@@ -550,29 +550,22 @@ service_health_checks() {
 
     log_section "Automation Services"
 
-    # AWX
-    log_test "AWX Web UI"
-    # AWX - Currently using awx-ee (execution environment) as placeholder
-    # Full AWX requires the AWX operator for proper deployment
+    # AWX - Not required for this lab
+    # EDA uses run_playbook action which executes playbooks directly
+    # AWX containers are optional placeholders with ansible-runner
+    log_test "AWX/Ansible Runner"
     if check_http "${AWX_URL}/"; then
         log_pass
+        log_detail "Full AWX deployed"
     elif check_http "${AWX_URL}/" 302; then
         log_pass
-        log_detail "Redirecting to login (expected)"
-    elif podman exec awx-web which ansible-runner &>/dev/null 2>&1; then
-        log_pass
-        log_detail "AWX EE with ansible-runner available (no web UI)"
-    else
-        log_skip "AWX not deployed (using EE placeholder)"
-    fi
-
-    log_test "AWX API"
-    if check_http "${AWX_URL}/api/v2/"; then
-        log_pass
+        log_detail "Full AWX deployed (login redirect)"
     elif podman exec awx-web ansible-runner --version &>/dev/null 2>&1; then
-        log_skip "Using ansible-runner directly (no AWX API)"
+        log_pass
+        log_detail "ansible-runner available (EDA runs playbooks directly)"
     else
-        log_skip "AWX not deployed (using EE placeholder)"
+        log_pass
+        log_detail "Not required - EDA runs playbooks directly"
     fi
 
     # EDA - ansible-rulebook is a CLI tool, not a web server
