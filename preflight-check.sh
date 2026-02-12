@@ -232,7 +232,7 @@ echo "----------------------------------------------"
 IMAGES=(
     "quay.io/389ds/dirsrv:latest"
     "quay.io/dogtagpki/pki-ca:latest"
-    "quay.io/freeipa/freeipa-server:fedora-42"
+    "quay.io/freeipa/freeipa-server:fedora-43"
     "quay.io/ansible/awx-ee:latest"
     "quay.io/ansible/ansible-rulebook:v1.0.0"
     "confluentinc/cp-kafka:7.5.0"
