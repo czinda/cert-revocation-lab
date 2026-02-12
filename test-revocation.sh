@@ -383,23 +383,34 @@ issue_certificate() {
     log_info "Submitting CSR to Dogtag CA..."
     sudo podman cp "$csr_file" "${container}:/tmp/test-request.csr"
 
-    # Create a temp NSS database with empty password and import CA cert
+    # Create a temp NSS database, import CA certs and admin cert for authentication
     sudo podman exec "$container" bash -c "
         rm -rf /tmp/test-nssdb
         mkdir -p /tmp/test-nssdb
         certutil -N -d /tmp/test-nssdb --empty-password
-        # Import CA cert for trust
+
+        # Import CA certs for trust
         if [ -f /certs/ca-chain.crt ]; then
             certutil -A -d /tmp/test-nssdb -n 'CA Chain' -t 'CT,C,C' -a -i /certs/ca-chain.crt 2>/dev/null || true
         fi
         if [ -f /certs/iot-ca.crt ]; then
             certutil -A -d /tmp/test-nssdb -n 'IoT CA' -t 'CT,C,C' -a -i /certs/iot-ca.crt 2>/dev/null || true
         fi
+        if [ -f /certs/iot-ca-chain.crt ]; then
+            certutil -A -d /tmp/test-nssdb -n 'IoT CA Chain' -t 'CT,C,C' -a -i /certs/iot-ca-chain.crt 2>/dev/null || true
+        fi
         if [ -f /certs/intermediate-ca.crt ]; then
             certutil -A -d /tmp/test-nssdb -n 'Intermediate CA' -t 'CT,C,C' -a -i /certs/intermediate-ca.crt 2>/dev/null || true
         fi
         if [ -f /certs/root-ca.crt ]; then
             certutil -A -d /tmp/test-nssdb -n 'Root CA' -t 'CT,C,C' -a -i /certs/root-ca.crt 2>/dev/null || true
+        fi
+
+        # Import admin certificate for authentication
+        ADMIN_P12=\"/root/.dogtag/${instance}/ca_admin_cert.p12\"
+        if [ -f \"\$ADMIN_P12\" ]; then
+            pk12util -i \"\$ADMIN_P12\" -d /tmp/test-nssdb -k /dev/null -W '${PKI_ADMIN_PASSWORD}' 2>/dev/null || \
+            pk12util -i \"\$ADMIN_P12\" -d /tmp/test-nssdb -k /dev/null -W '' 2>/dev/null || true
         fi
     " >/dev/null 2>&1
 
@@ -411,11 +422,20 @@ issue_certificate() {
         iot) ca_hostname="iot-ca.cert-lab.local" ;;
     esac
 
-    # Submit certificate request using username/password auth
+    # Find admin cert nickname
+    local admin_nick=$(sudo podman exec "$container" \
+        certutil -L -d /tmp/test-nssdb 2>/dev/null | grep -i "administrator" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
+
+    if [ -z "$admin_nick" ]; then
+        log_warn "Admin certificate not found, trying with default nickname"
+        admin_nick="PKI Administrator for ${instance}"
+    fi
+
+    # Submit certificate request using certificate-based auth
     local request_output=$(sudo podman exec "$container" \
         pki -d /tmp/test-nssdb -c '' \
             -U "https://${ca_hostname}:8443" \
-            -u admin -w "$PKI_ADMIN_PASSWORD" \
+            -n "$admin_nick" \
             ca-cert-request-submit \
             --profile caServerCert \
             --csr-file /tmp/test-request.csr 2>&1)
@@ -428,12 +448,12 @@ issue_certificate() {
     fi
     log_info "Request ID: $request_id"
 
-    # Approve the request using username/password auth
+    # Approve the request using certificate-based auth
     log_info "Approving certificate request..."
     sudo podman exec "$container" \
         pki -d /tmp/test-nssdb -c '' \
             -U "https://${ca_hostname}:8443" \
-            -u admin -w "$PKI_ADMIN_PASSWORD" \
+            -n "$admin_nick" \
             ca-cert-request-approve "$request_id" --force 2>&1 || true
 
     # Get certificate serial
@@ -756,14 +776,20 @@ show_results() {
 # Cleanup test certificate
 cleanup_device() {
     local container=$(get_ca_container)
+    local instance=$(get_ca_instance)
     local ca_hostname=$(get_ca_hostname)
 
     if [ -n "$CERT_SERIAL" ]; then
         log_info "Revoking test certificate (if not already revoked)..."
+        # Find admin cert nickname
+        local admin_nick=$(sudo podman exec "$container" \
+            certutil -L -d /tmp/test-nssdb 2>/dev/null | grep -i "administrator" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
+        [ -z "$admin_nick" ] && admin_nick="PKI Administrator for ${instance}"
+
         sudo podman exec "$container" \
             pki -d /tmp/test-nssdb -c '' \
                 -U "https://${ca_hostname}:8443" \
-                -u admin -w "$PKI_ADMIN_PASSWORD" \
+                -n "$admin_nick" \
                 ca-cert-revoke "$CERT_SERIAL" --reason 5 --force 2>/dev/null || true
     fi
 
