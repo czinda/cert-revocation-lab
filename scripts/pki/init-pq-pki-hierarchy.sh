@@ -153,6 +153,14 @@ main() {
         "${CERTS_DIR}/iot-ca.crt" \
         > "${CERTS_DIR}/full-chain.crt" 2>/dev/null || true
 
+    # Configure TLS for Directory Servers
+    log_step "Configuring TLS for PQ Directory Servers"
+    if [ -x "${SCRIPT_DIR}/configure-ds-tls.sh" ]; then
+        "${SCRIPT_DIR}/configure-ds-tls.sh" pq
+    else
+        bash "${SCRIPT_DIR}/configure-ds-tls.sh" pq
+    fi
+
     # Summary
     echo ""
     echo "========================================================================"

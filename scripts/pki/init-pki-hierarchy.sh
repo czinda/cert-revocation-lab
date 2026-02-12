@@ -397,6 +397,15 @@ main() {
     init_intermediate_ca
     init_iot_ca
     verify_hierarchy
+
+    # Configure TLS for Directory Servers using certificates from Intermediate CA
+    log_phase "Configuring TLS for Directory Servers"
+    if [ -x "$SCRIPT_DIR/configure-ds-tls.sh" ]; then
+        "$SCRIPT_DIR/configure-ds-tls.sh" rsa
+    else
+        bash "$SCRIPT_DIR/configure-ds-tls.sh" rsa
+    fi
+
     print_summary
 }
 
