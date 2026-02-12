@@ -155,6 +155,7 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 | 172.20.0.40 | EDA Server | 5000 |
 | 172.20.0.50 | Mock EDR | 8082:8000 |
 | 172.20.0.51 | Mock SIEM | 8083:8000 |
+| 172.20.0.52 | IoT Client | 8085:8000 |
 | 172.20.0.60 | Jupyter | 8888 |
 
 **RSA-4096 PKI Network (172.26.0.0/24)** - rootful podman:
@@ -334,6 +335,38 @@ vi .env  # Set all CHANGEME values
 - `GET /rules` - List correlation rules
 - `POST /alert` - Create SIEM alert
 - `POST /trigger` - Simplified trigger (compatible with test script)
+
+### IoT Client Endpoints (EST Enrollment Simulator)
+The IoT client emulates IoT devices that enroll for certificates via EST against the active Dogtag IoT CA instances.
+
+- `GET /health` - Health check with CA availability status
+- `GET /devices` - List all virtual IoT devices
+- `POST /devices` - Create a new virtual IoT device
+- `GET /devices/{device_id}` - Get device details
+- `DELETE /devices/{device_id}` - Remove a device
+- `POST /devices/{device_id}/enroll` - Enroll device for certificate
+- `POST /devices/{device_id}/renew` - Renew device certificate
+- `GET /devices/{device_id}/certificate` - Get device certificate
+- `GET /devices/{device_id}/csr` - Get device CSR
+- `GET /ca/{pki_type}/cacerts` - Get CA certificates (EST equivalent)
+- `POST /bulk/enroll` - Bulk enroll multiple devices
+- `GET /statistics` - Get enrollment statistics
+
+**Usage Example:**
+```bash
+# Create an IoT device for RSA PKI
+curl -X POST http://localhost:8085/devices \
+  -H "Content-Type: application/json" \
+  -d '{"device_type": "sensor", "pki_type": "rsa"}'
+
+# Enroll the device for a certificate
+curl -X POST http://localhost:8085/devices/{device_id}/enroll
+
+# Create and enroll 10 devices at once
+curl -X POST http://localhost:8085/bulk/enroll \
+  -H "Content-Type: application/json" \
+  -d '{"count": 10, "device_type": "sensor", "pki_type": "ecc"}'
+```
 
 ## Prerequisites
 

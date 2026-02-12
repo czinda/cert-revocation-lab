@@ -897,12 +897,12 @@ start_eda() {
     log_info "EDA listening on port 5000"
 }
 
-# Phase 8: Start Mock Security Tools
+# Phase 8: Start Mock Security Tools and IoT Client
 start_security_tools() {
-    log_phase "Phase 8: Starting Mock EDR and SIEM"
+    log_phase "Phase 8: Starting Mock EDR, SIEM, and IoT Client"
 
     local to_start=()
-    for svc in mock-edr mock-siem; do
+    for svc in mock-edr mock-siem iot-client; do
         if is_rootless_running "$svc"; then
             log_success "$svc is already running"
         else
@@ -1008,6 +1008,7 @@ print_summary() {
     echo "  AWX:             http://localhost:8084"
     echo "  Mock EDR:        http://localhost:8082"
     echo "  Mock SIEM:       http://localhost:8083"
+    echo "  IoT Client:      http://localhost:8085"
     echo "  Jupyter:         http://localhost:8888"
     echo ""
 
@@ -1131,7 +1132,7 @@ quick_start() {
 
     # Start other containers (rootless) - exclude PKI/DS services
     local rootless_to_start=()
-    for svc in postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem jupyter; do
+    for svc in postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem iot-client jupyter; do
         if is_rootless_running "$svc"; then
             log_success "$svc is already running"
         else

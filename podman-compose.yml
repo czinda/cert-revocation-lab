@@ -468,6 +468,44 @@ services:
       start_period: 60s
 
   # ===========================================================================
+  # IoT Client Simulator (EST Enrollment)
+  # ===========================================================================
+
+  iot-client:
+    build:
+      context: ./containers/iot-client
+      dockerfile: Containerfile
+    container_name: iot-client
+    hostname: iot-client.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      # RSA IoT CA (port 8445 from host, 8443 internal)
+      RSA_IOT_CA_HOST: iot-ca.cert-lab.local
+      RSA_IOT_CA_PORT: 8445
+      # ECC IoT CA (port 8465 from host, 8443 internal)
+      ECC_IOT_CA_HOST: ecc-iot-ca.cert-lab.local
+      ECC_IOT_CA_PORT: 8465
+      # PQC IoT CA (port 8455 from host, 8443 internal)
+      PQC_IOT_CA_HOST: pq-iot-ca.cert-lab.local
+      PQC_IOT_CA_PORT: 8455
+      LAB_DOMAIN: ${LAB_DOMAIN:-cert-lab.local}
+    extra_hosts:
+      # Allow connecting to PKI CAs via localhost ports
+      - "iot-ca.cert-lab.local:host-gateway"
+      - "ecc-iot-ca.cert-lab.local:host-gateway"
+      - "pq-iot-ca.cert-lab.local:host-gateway"
+    networks:
+      lab-network:
+        ipv4_address: ${IP_IOT_CLIENT:-172.20.0.52}
+    ports:
+      - "8085:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ===========================================================================
   # Jupyter Lab (Documentation and Demos)
   # ===========================================================================
 
