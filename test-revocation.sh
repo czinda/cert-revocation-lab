@@ -39,12 +39,33 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 # Configuration
-IPA_URL="https://localhost:4443/ipa/session/json"
 EDR_URL="http://localhost:8082"
 SIEM_URL="http://localhost:8083"
-IPA_USER="admin"
-IPA_PASS="${ADMIN_PASSWORD:-RedHat123!}"
 LAB_DOMAIN="cert-lab.local"
+PKI_ADMIN_PASSWORD="${PKI_ADMIN_PASSWORD:-${ADMIN_PASSWORD:-RedHat123!}}"
+
+# Dogtag CA configurations by PKI type and CA level
+declare -A CA_CONTAINERS
+CA_CONTAINERS["rsa-root"]="dogtag-root-ca"
+CA_CONTAINERS["rsa-intermediate"]="dogtag-intermediate-ca"
+CA_CONTAINERS["rsa-iot"]="dogtag-iot-ca"
+CA_CONTAINERS["ecc-root"]="dogtag-ecc-root-ca"
+CA_CONTAINERS["ecc-intermediate"]="dogtag-ecc-intermediate-ca"
+CA_CONTAINERS["ecc-iot"]="dogtag-ecc-iot-ca"
+CA_CONTAINERS["pqc-root"]="dogtag-pq-root-ca"
+CA_CONTAINERS["pqc-intermediate"]="dogtag-pq-intermediate-ca"
+CA_CONTAINERS["pqc-iot"]="dogtag-pq-iot-ca"
+
+declare -A CA_INSTANCES
+CA_INSTANCES["rsa-root"]="pki-root-ca"
+CA_INSTANCES["rsa-intermediate"]="pki-intermediate-ca"
+CA_INSTANCES["rsa-iot"]="pki-iot-ca"
+CA_INSTANCES["ecc-root"]="pki-ecc-root-ca"
+CA_INSTANCES["ecc-intermediate"]="pki-ecc-intermediate-ca"
+CA_INSTANCES["ecc-iot"]="pki-ecc-iot-ca"
+CA_INSTANCES["pqc-root"]="pki-pq-root-ca"
+CA_INSTANCES["pqc-intermediate"]="pki-pq-intermediate-ca"
+CA_INSTANCES["pqc-iot"]="pki-pq-iot-ca"
 
 # Default values
 DEVICE_NAME=""
@@ -52,9 +73,11 @@ SCENARIO=""
 SEVERITY="critical"
 SOURCE="edr"
 ATTACK_CHAIN=""
-PKI_TYPE=""
+PKI_TYPE="rsa"
+CA_LEVEL="iot"
 INTERACTIVE=false
 SKIP_CLEANUP=false
+CERT_SERIAL=""
 
 # Scenario categories
 declare -A SCENARIO_CATEGORIES
@@ -92,39 +115,39 @@ log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_phase() { echo -e "\n${CYAN}========================================================================${NC}"; echo -e "${CYAN}  $1${NC}"; echo -e "${CYAN}========================================================================${NC}\n"; }
 
-# FreeIPA session cookie file
-IPA_COOKIE_FILE="/tmp/ipa_session_$$"
+# Temp directory for test certificates
+CERT_TEMP_DIR="/tmp/test-certs-$$"
 
 # Cleanup on exit
 cleanup() {
-    rm -f "${IPA_COOKIE_FILE}"
+    rm -rf "${CERT_TEMP_DIR}"
 }
 trap cleanup EXIT
 
-# Get FreeIPA session
-ipa_login() {
-    local encoded_pass=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${IPA_PASS}', safe=''))")
-    curl -sk -X POST "https://localhost:4443/ipa/session/login_password" \
-        -H "Host: ipa.cert-lab.local" \
-        -H "Content-Type: application/x-www-form-urlencoded" \
-        -H "Accept: text/plain" \
-        -H "Referer: https://ipa.cert-lab.local/ipa" \
-        -c "${IPA_COOKIE_FILE}" \
-        -d "user=${IPA_USER}&password=${encoded_pass}" \
-        > /dev/null 2>&1
+# Get CA container and instance for current PKI type
+get_ca_container() {
+    local pki="${PKI_TYPE:-rsa}"
+    local level="${CA_LEVEL:-iot}"
+    echo "${CA_CONTAINERS[${pki}-${level}]}"
 }
 
-# IPA API call helper
-ipa_call() {
-    local method=$1
-    local params=$2
-    curl -sk -X POST "https://localhost:4443/ipa/session/json" \
-        -H "Content-Type: application/json" \
-        -H "Referer: https://ipa.cert-lab.local/ipa" \
-        -H "Host: ipa.cert-lab.local" \
-        -H "Accept: application/json" \
-        -b "${IPA_COOKIE_FILE}" \
-        -d "{\"method\":\"${method}\",\"params\":${params}}"
+get_ca_instance() {
+    local pki="${PKI_TYPE:-rsa}"
+    local level="${CA_LEVEL:-iot}"
+    echo "${CA_INSTANCES[${pki}-${level}]}"
+}
+
+# Run pki command in CA container
+pki_exec() {
+    local container=$(get_ca_container)
+    local instance=$(get_ca_instance)
+    local nss_db="/var/lib/pki/${instance}/alias"
+
+    sudo podman exec "$container" \
+        pki -d "$nss_db" \
+            -c "$PKI_ADMIN_PASSWORD" \
+            -n "PKI Administrator for ${instance}" \
+            "$@"
 }
 
 # Show usage
@@ -134,6 +157,13 @@ Usage: $0 [OPTIONS]
 
 Security Event Testing for Certificate Revocation Lab
 
+This script tests the complete event-driven revocation workflow:
+  1. Issues a test certificate from Dogtag PKI
+  2. Triggers a security event (via Mock EDR/SIEM)
+  3. Event flows through Kafka to Event-Driven Ansible
+  4. EDA executes Dogtag revocation playbook
+  5. Verifies certificate was revoked in Dogtag
+
 OPTIONS:
   -s, --scenario NAME      Trigger specific scenario (see --list-scenarios)
   -c, --category CAT       Run all scenarios in category: original, pki, iot, identity, network
@@ -141,30 +171,38 @@ OPTIONS:
   -d, --device NAME        Device name (default: auto-generated)
   --severity LEVEL         Severity: low, medium, high, critical (default: critical)
   --source SOURCE          Event source: edr or siem (default: edr)
-  --pki-type TYPE          PKI type for Dogtag operations: rsa, ecc, pqc (default: none/auto)
+  --pki-type TYPE          PKI type: rsa, ecc, pqc (default: rsa)
+  --ca-level LEVEL         CA level: root, intermediate, iot (default: iot)
   --siem-scenario NAME     Use SIEM scenario directly (e.g., brute_force, key_compromise)
   -i, --interactive        Interactive mode with menu
   -l, --list-scenarios     List all available scenarios
   --list-chains            List available attack chains
-  --skip-cleanup           Don't remove test device after test
-  --cleanup-only           Only remove test devices
+  --skip-cleanup           Don't revoke test certificate after test
+  --cleanup-only           Only cleanup test certificates
   -h, --help               Show this help
 
 PKI TYPES:
-  rsa                      RSA-4096 PKI (traditional cryptography)
-  ecc                      ECC P-384 PKI (elliptic curve cryptography)
-  pqc                      ML-DSA-87 PKI (post-quantum cryptography)
+  rsa                      RSA-4096 PKI (ports 8443-8445)
+  ecc                      ECC P-384 PKI (ports 8463-8465)
+  pqc                      ML-DSA-87 PKI (ports 8453-8455)
+
+CA LEVELS:
+  root                     Root CA (offline, rarely used)
+  intermediate             Intermediate CA (default for user/server certs)
+  iot                      IoT Sub-CA (default for device certs)
 
 EXAMPLES:
-  $0                                    # Run default scenario (Mimikatz)
+  $0                                    # RSA IoT CA, Mimikatz scenario
   $0 -i                                 # Interactive mode
+  $0 --pki-type ecc                     # Use ECC PKI
+  $0 --pki-type pqc --ca-level iot      # PQC with IoT Sub-CA
   $0 -s "IoT Device Cloning Detected"   # Specific EDR scenario
-  $0 -c iot                             # All IoT scenarios
+  $0 -c iot --pki-type ecc              # All IoT scenarios with ECC
   $0 -a pki                             # PKI attack chain simulation
   $0 --siem-scenario key_compromise     # SIEM key compromise event
-  $0 -s "Ransomware Encryption Detected" --severity critical
-  $0 -s "IoT Device Cloning Detected" --pki-type ecc   # Use ECC PKI for revocation
-  $0 -a iot --pki-type pqc              # IoT attack chain with PQC PKI
+
+WORKFLOW:
+  Security Event --> Kafka --> EDA --> Dogtag Playbook --> Certificate Revoked
 
 EOF
 }
@@ -242,40 +280,160 @@ check_services() {
         ((services_ok++)) || true
     fi
 
-    # Check FreeIPA
-    if curl -skf -H "Host: ipa.cert-lab.local" "https://localhost:4443/" > /dev/null 2>&1; then
-        log_success "FreeIPA is responding"
-        ipa_login
-        if [ -f "${IPA_COOKIE_FILE}" ]; then
-            log_success "FreeIPA session established"
+    # Check Dogtag CA for selected PKI type
+    local container=$(get_ca_container)
+    if sudo podman ps --format '{{.Names}}' 2>/dev/null | grep -q "^${container}$"; then
+        # Check if CA is responding
+        local ca_port=8443
+        case "${PKI_TYPE}" in
+            ecc) ca_port=8463 ;;
+            pqc) ca_port=8453 ;;
+        esac
+        case "${CA_LEVEL}" in
+            intermediate) ((ca_port++)) || true ;;
+            iot) ((ca_port+=2)) || true ;;
+        esac
+
+        if curl -sk "https://localhost:${ca_port}/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
+            log_success "Dogtag ${PKI_TYPE^^} ${CA_LEVEL} CA is responding (port ${ca_port})"
         else
-            log_warn "Failed to establish FreeIPA session"
+            log_warn "Dogtag ${PKI_TYPE^^} ${CA_LEVEL} CA not responding (port ${ca_port})"
+            ((services_ok++)) || true
         fi
     else
-        log_warn "FreeIPA is not responding"
+        log_error "Dogtag container ${container} is not running"
+        log_info "Start PKI with: sudo ./start-lab.sh --${PKI_TYPE}"
+        ((services_ok++)) || true
     fi
 
-    if [ $services_ok -gt 1 ]; then
+    # Check EDA server
+    local eda_status=$(podman ps --filter "name=eda-server" --format "{{.Status}}" 2>/dev/null)
+    if [[ "$eda_status" == *"Up"* ]]; then
+        log_success "EDA Server is running"
+    else
+        log_warn "EDA Server is not running"
+        ((services_ok++)) || true
+    fi
+
+    # Check Kafka
+    if podman exec kafka kafka-topics --bootstrap-server localhost:9092 --list &>/dev/null; then
+        log_success "Kafka is responding"
+    else
+        log_warn "Kafka is not responding"
+        ((services_ok++)) || true
+    fi
+
+    if [ $services_ok -gt 2 ]; then
         log_error "Required services are not available. Run ./start-lab.sh first."
         exit 1
     fi
 }
 
-# Enroll device in FreeIPA
-enroll_device() {
+# Issue certificate from Dogtag
+issue_certificate() {
     local device_fqdn="${DEVICE_NAME}.${LAB_DOMAIN}"
-    log_phase "Step 1: Enrolling Test Device in FreeIPA"
+    local pki="${PKI_TYPE:-rsa}"
+    local container=$(get_ca_container)
+    local instance=$(get_ca_instance)
+    local nss_db="/var/lib/pki/${instance}/alias"
 
-    log_info "Creating device: ${device_fqdn}"
+    log_phase "Step 1: Issuing Test Certificate from Dogtag (${pki^^})"
 
-    RESULT=$(ipa_call "host_add" "[[\"${device_fqdn}\"], {\"description\":\"Test device for revocation demo\", \"force\":true}]" 2>/dev/null || echo "{}")
+    log_info "Device FQDN: ${device_fqdn}"
+    log_info "PKI Type: ${pki^^}"
+    log_info "CA: ${container} (${CA_LEVEL})"
 
-    if echo "$RESULT" | grep -q "\"result\""; then
-        log_success "Device enrolled successfully"
-    elif echo "$RESULT" | grep -q "already exists"; then
-        log_info "Device already exists, continuing..."
+    # Create temp directory for certs
+    mkdir -p "${CERT_TEMP_DIR}"
+
+    # Generate key and CSR based on PKI type
+    local key_file="${CERT_TEMP_DIR}/${DEVICE_NAME}.key"
+    local csr_file="${CERT_TEMP_DIR}/${DEVICE_NAME}.csr"
+    local cert_file="${CERT_TEMP_DIR}/${DEVICE_NAME}.crt"
+
+    log_info "Generating private key and CSR..."
+    case "$pki" in
+        rsa)
+            openssl genrsa -out "$key_file" 4096 2>/dev/null
+            ;;
+        ecc)
+            openssl ecparam -genkey -name secp384r1 -out "$key_file" 2>/dev/null
+            ;;
+        pqc)
+            # For PQC, we still generate RSA for CSR (Dogtag handles PQ signing)
+            openssl genrsa -out "$key_file" 4096 2>/dev/null
+            ;;
+    esac
+
+    openssl req -new -key "$key_file" -out "$csr_file" -subj "/CN=${device_fqdn}" 2>/dev/null
+
+    if [ ! -f "$csr_file" ]; then
+        log_error "Failed to generate CSR"
+        return 1
+    fi
+    log_success "CSR generated"
+
+    # Copy CSR to CA container
+    log_info "Submitting CSR to Dogtag CA..."
+    sudo podman cp "$csr_file" "${container}:/tmp/test-request.csr"
+
+    # Submit certificate request
+    local request_output=$(sudo podman exec "$container" \
+        pki -d "$nss_db" \
+            -c "$PKI_ADMIN_PASSWORD" \
+            -n "PKI Administrator for ${instance}" \
+            ca-cert-request-submit \
+            --profile caServerCert \
+            --csr-file /tmp/test-request.csr 2>&1)
+
+    local request_id=$(echo "$request_output" | grep "Request ID:" | awk '{print $3}')
+    if [ -z "$request_id" ]; then
+        log_error "Failed to submit certificate request"
+        echo "$request_output"
+        return 1
+    fi
+    log_info "Request ID: $request_id"
+
+    # Approve the request
+    log_info "Approving certificate request..."
+    sudo podman exec "$container" \
+        pki -d "$nss_db" \
+            -c "$PKI_ADMIN_PASSWORD" \
+            -n "PKI Administrator for ${instance}" \
+            ca-cert-request-approve "$request_id" --force >/dev/null 2>&1
+
+    # Get certificate serial
+    sleep 2
+    local cert_info=$(sudo podman exec "$container" \
+        pki -d "$nss_db" \
+            -c "$PKI_ADMIN_PASSWORD" \
+            -n "PKI Administrator for ${instance}" \
+            ca-cert-request-show "$request_id" 2>&1)
+
+    CERT_SERIAL=$(echo "$cert_info" | grep "Certificate ID:" | awk '{print $3}')
+    if [ -z "$CERT_SERIAL" ]; then
+        log_error "Failed to get certificate serial"
+        echo "$cert_info"
+        return 1
+    fi
+
+    # Export certificate
+    sudo podman exec "$container" \
+        pki -d "$nss_db" \
+            -c "$PKI_ADMIN_PASSWORD" \
+            -n "PKI Administrator for ${instance}" \
+            ca-cert-export "$CERT_SERIAL" --output-file /tmp/test-cert.pem >/dev/null 2>&1
+
+    sudo podman cp "${container}:/tmp/test-cert.pem" "$cert_file"
+
+    # Verify certificate
+    if openssl x509 -in "$cert_file" -noout -subject 2>/dev/null | grep -q "$device_fqdn"; then
+        log_success "Certificate issued successfully"
+        log_info "Serial: $CERT_SERIAL"
+        log_info "Subject: CN=${device_fqdn}"
     else
-        log_warn "Could not enroll device in FreeIPA (may not be running)"
+        log_error "Certificate verification failed"
+        return 1
     fi
 }
 
@@ -460,7 +618,7 @@ run_category() {
 wait_for_automation() {
     log_phase "Waiting for Automation Pipeline"
 
-    log_info "Event flow: EDR/SIEM -> Kafka -> EDA -> Playbook -> FreeIPA"
+    log_info "Event flow: EDR/SIEM -> Kafka -> EDA -> Dogtag Playbook -> Revocation"
     log_info "Waiting for certificate revocation..."
 
     local max_wait=30
@@ -470,26 +628,65 @@ wait_for_automation() {
         echo -n "."
         sleep 5
         ((elapsed += 5)) || true
+
+        # Early exit if certificate is already revoked
+        if [ -n "$CERT_SERIAL" ]; then
+            local container=$(get_ca_container)
+            local instance=$(get_ca_instance)
+            local nss_db="/var/lib/pki/${instance}/alias"
+            local status=$(sudo podman exec "$container" \
+                pki -d "$nss_db" -c "$PKI_ADMIN_PASSWORD" \
+                    -n "PKI Administrator for ${instance}" \
+                    ca-cert-show "$CERT_SERIAL" 2>&1 | grep -i "Status:")
+            if echo "$status" | grep -qi "REVOKED"; then
+                echo
+                log_success "Certificate revoked (early detection)"
+                return 0
+            fi
+        fi
     done
 
     echo
     log_success "Automation pipeline window completed"
 }
 
-# Verify revocation
+# Verify revocation in Dogtag
 verify_revocation() {
     local device_fqdn="${DEVICE_NAME}.${LAB_DOMAIN}"
-    log_phase "Verifying Certificate Revocation"
+    local container=$(get_ca_container)
+    local instance=$(get_ca_instance)
+    local nss_db="/var/lib/pki/${instance}/alias"
 
-    log_info "Checking certificate status for ${device_fqdn}..."
+    log_phase "Verifying Certificate Revocation in Dogtag"
 
-    RESULT=$(ipa_call "cert_find" "[[], {\"subject\": \"${device_fqdn}\"}]" 2>/dev/null || echo "{}")
+    log_info "Checking certificate status..."
+    log_info "Serial: $CERT_SERIAL"
+    log_info "CA: $container"
 
-    if echo "$RESULT" | grep -q "REVOKED"; then
+    if [ -z "$CERT_SERIAL" ]; then
+        log_warn "No certificate serial to verify"
+        return 1
+    fi
+
+    # Get certificate status from Dogtag
+    local cert_status=$(sudo podman exec "$container" \
+        pki -d "$nss_db" \
+            -c "$PKI_ADMIN_PASSWORD" \
+            -n "PKI Administrator for ${instance}" \
+            ca-cert-show "$CERT_SERIAL" 2>&1 | grep -i "Status:")
+
+    if echo "$cert_status" | grep -qi "REVOKED"; then
         log_success "Certificate has been REVOKED"
+        echo "  $cert_status"
+        return 0
+    elif echo "$cert_status" | grep -qi "VALID"; then
+        log_warn "Certificate is still VALID (not revoked)"
+        echo "  $cert_status"
+        log_info "(Check EDA logs: podman logs eda-server)"
+        return 1
     else
-        log_info "Certificate status check completed"
-        log_info "(Revocation depends on EDA rulebook configuration)"
+        log_info "Certificate status: $cert_status"
+        return 1
     fi
 }
 
@@ -507,21 +704,34 @@ show_results() {
     echo -e "${GREEN}============================================================${NC}"
     echo ""
     echo "  Device:           ${DEVICE_NAME}.${LAB_DOMAIN}"
+    echo "  Certificate:      ${CERT_SERIAL:-N/A}"
+    echo "  PKI:              ${PKI_TYPE^^} (${CA_LEVEL})"
     echo "  Scenario:         ${scenario}"
     echo "  Source:           ${SOURCE^^}"
     echo "  Severity:         ${SEVERITY}"
-    [ -n "$PKI_TYPE" ] && echo "  PKI Type:         ${PKI_TYPE^^}"
     echo "  Test Duration:    ${total_time} seconds"
     echo ""
     echo -e "${GREEN}============================================================${NC}"
     echo ""
 }
 
-# Cleanup test device
+# Cleanup test certificate
 cleanup_device() {
-    local device_fqdn="${DEVICE_NAME}.${LAB_DOMAIN}"
-    log_info "Removing test device from FreeIPA..."
-    ipa_call "host_del" "[[\"${device_fqdn}\"], {\"updatedns\": false}]" > /dev/null 2>&1 || true
+    local container=$(get_ca_container)
+    local instance=$(get_ca_instance)
+    local nss_db="/var/lib/pki/${instance}/alias"
+
+    if [ -n "$CERT_SERIAL" ]; then
+        log_info "Revoking test certificate (if not already revoked)..."
+        sudo podman exec "$container" \
+            pki -d "$nss_db" \
+                -c "$PKI_ADMIN_PASSWORD" \
+                -n "PKI Administrator for ${instance}" \
+                ca-cert-revoke "$CERT_SERIAL" --reason 5 --force 2>/dev/null || true
+    fi
+
+    # Clean up temp files
+    rm -rf "${CERT_TEMP_DIR}"
     log_success "Cleanup complete"
 }
 
@@ -538,7 +748,7 @@ interactive_menu() {
         echo -e "${CYAN}║  4) Run all scenarios in category                          ║${NC}"
         echo -e "${CYAN}║  5) List all scenarios                                     ║${NC}"
         echo -e "${CYAN}║  6) Check service status                                   ║${NC}"
-        echo -e "${CYAN}║  7) Set PKI type (current: ${PKI_TYPE:-auto})                          ║${NC}"
+        echo -e "${CYAN}║  7) Set PKI type (current: ${PKI_TYPE:-rsa}, CA: ${CA_LEVEL:-iot})              ║${NC}"
         echo -e "${CYAN}║  q) Quit                                                   ║${NC}"
         echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
         echo ""
@@ -566,7 +776,7 @@ interactive_menu() {
                     [ -z "$PKI_TYPE" ] && read -p "PKI type (rsa/ecc/pqc, or enter for auto): " PKI_TYPE
 
                     DEVICE_NAME="$dev_name"
-                    enroll_device
+                    issue_certificate
                     trigger_edr_event "$scenario_name" "$dev_name" "critical" "$PKI_TYPE"
                 fi
                 ;;
@@ -580,7 +790,7 @@ interactive_menu() {
                 [ -z "$PKI_TYPE" ] && read -p "PKI type (rsa/ecc/pqc, or enter for auto): " PKI_TYPE
 
                 DEVICE_NAME="$dev_name"
-                enroll_device
+                issue_certificate
                 trigger_siem_event "$siem_scenario" "$dev_name" "critical" "$PKI_TYPE"
                 ;;
             3)
@@ -593,7 +803,7 @@ interactive_menu() {
                 [ -z "$PKI_TYPE" ] && read -p "PKI type (rsa/ecc/pqc, or enter for auto): " PKI_TYPE
 
                 DEVICE_NAME="$dev_name"
-                enroll_device
+                issue_certificate
                 trigger_attack_chain "$chain_type" "$dev_name" "$PKI_TYPE"
                 ;;
             4)
@@ -605,7 +815,7 @@ interactive_menu() {
                 [ -z "$PKI_TYPE" ] && read -p "PKI type (rsa/ecc/pqc, or enter for auto): " PKI_TYPE
 
                 DEVICE_NAME="$dev_name"
-                enroll_device
+                issue_certificate
                 run_category "$cat_choice" "$dev_name"
                 ;;
             5)
@@ -620,12 +830,11 @@ interactive_menu() {
             7)
                 echo ""
                 echo "PKI Types:"
-                echo "  rsa - RSA-4096 PKI (traditional cryptography)"
-                echo "  ecc - ECC P-384 PKI (elliptic curve)"
-                echo "  pqc - ML-DSA-87 PKI (post-quantum)"
-                echo "  (empty) - Auto-detect / default to RSA"
+                echo "  rsa - RSA-4096 PKI (ports 8443-8445)"
+                echo "  ecc - ECC P-384 PKI (ports 8463-8465)"
+                echo "  pqc - ML-DSA-87 PKI (ports 8453-8455)"
                 echo ""
-                read -p "PKI type [current: ${PKI_TYPE:-auto}]: " new_pki_type
+                read -p "PKI type [current: ${PKI_TYPE:-rsa}]: " new_pki_type
                 if [ -n "$new_pki_type" ]; then
                     if [[ "$new_pki_type" =~ ^(rsa|ecc|pqc)$ ]]; then
                         PKI_TYPE="$new_pki_type"
@@ -633,9 +842,21 @@ interactive_menu() {
                     else
                         log_error "Invalid PKI type. Use: rsa, ecc, or pqc"
                     fi
-                else
-                    PKI_TYPE=""
-                    log_info "PKI type set to: auto"
+                fi
+                echo ""
+                echo "CA Levels:"
+                echo "  root         - Root CA (rarely used)"
+                echo "  intermediate - Intermediate CA"
+                echo "  iot          - IoT Sub-CA (default for devices)"
+                echo ""
+                read -p "CA level [current: ${CA_LEVEL:-iot}]: " new_ca_level
+                if [ -n "$new_ca_level" ]; then
+                    if [[ "$new_ca_level" =~ ^(root|intermediate|iot)$ ]]; then
+                        CA_LEVEL="$new_ca_level"
+                        log_success "CA level set to: $CA_LEVEL"
+                    else
+                        log_error "Invalid CA level. Use: root, intermediate, or iot"
+                    fi
                 fi
                 ;;
             q|Q)
@@ -681,6 +902,14 @@ parse_args() {
                 PKI_TYPE="$2"
                 if [[ ! "$PKI_TYPE" =~ ^(rsa|ecc|pqc)$ ]]; then
                     log_error "Invalid PKI type: $PKI_TYPE (must be rsa, ecc, or pqc)"
+                    exit 1
+                fi
+                shift 2
+                ;;
+            --ca-level)
+                CA_LEVEL="$2"
+                if [[ ! "$CA_LEVEL" =~ ^(root|intermediate|iot)$ ]]; then
+                    log_error "Invalid CA level: $CA_LEVEL (must be root, intermediate, or iot)"
                     exit 1
                 fi
                 shift 2
@@ -757,7 +986,7 @@ main() {
     local START_TIME=$(date +%s)
 
     check_services
-    enroll_device
+    issue_certificate
 
     # Run the appropriate test
     if [ -n "$ATTACK_CHAIN" ]; then
