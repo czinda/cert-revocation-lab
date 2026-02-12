@@ -137,17 +137,23 @@ get_ca_instance() {
     echo "${CA_INSTANCES[${pki}-${level}]}"
 }
 
-# Run pki command in CA container
-pki_exec() {
-    local container=$(get_ca_container)
-    local instance=$(get_ca_instance)
-    local nss_db="/var/lib/pki/${instance}/alias"
+# Get CA URL for current PKI type and level
+get_ca_url() {
+    local pki="${PKI_TYPE:-rsa}"
+    local level="${CA_LEVEL:-iot}"
+    local port=8443
 
-    sudo podman exec "$container" \
-        pki -d "$nss_db" \
-            -c "$PKI_ADMIN_PASSWORD" \
-            -n "PKI Administrator for ${instance}" \
-            "$@"
+    case "$pki" in
+        ecc) port=8463 ;;
+        pqc) port=8453 ;;
+    esac
+
+    case "$level" in
+        intermediate) ((port++)) ;;
+        iot) ((port+=2)) ;;
+    esac
+
+    echo "https://localhost:${port}"
 }
 
 # Show usage
@@ -335,7 +341,7 @@ issue_certificate() {
     local pki="${PKI_TYPE:-rsa}"
     local container=$(get_ca_container)
     local instance=$(get_ca_instance)
-    local nss_db="/var/lib/pki/${instance}/alias"
+    local ca_url=$(get_ca_url)
 
     log_phase "Step 1: Issuing Test Certificate from Dogtag (${pki^^})"
 
@@ -377,11 +383,18 @@ issue_certificate() {
     log_info "Submitting CSR to Dogtag CA..."
     sudo podman cp "$csr_file" "${container}:/tmp/test-request.csr"
 
-    # Submit certificate request
+    # Create a temp NSS database with empty password in the container
+    sudo podman exec "$container" bash -c "
+        rm -rf /tmp/test-nssdb
+        mkdir -p /tmp/test-nssdb
+        certutil -N -d /tmp/test-nssdb --empty-password
+    " >/dev/null 2>&1
+
+    # Submit certificate request using username/password auth
     local request_output=$(sudo podman exec "$container" \
-        pki -d "$nss_db" \
-            -c "$PKI_ADMIN_PASSWORD" \
-            -n "PKI Administrator for ${instance}" \
+        pki -d /tmp/test-nssdb -c '' \
+            -U "https://localhost:8443" \
+            -u caadmin -w "$PKI_ADMIN_PASSWORD" \
             ca-cert-request-submit \
             --profile caServerCert \
             --csr-file /tmp/test-request.csr 2>&1)
@@ -394,20 +407,19 @@ issue_certificate() {
     fi
     log_info "Request ID: $request_id"
 
-    # Approve the request
+    # Approve the request using username/password auth
     log_info "Approving certificate request..."
     sudo podman exec "$container" \
-        pki -d "$nss_db" \
-            -c "$PKI_ADMIN_PASSWORD" \
-            -n "PKI Administrator for ${instance}" \
-            ca-cert-request-approve "$request_id" --force >/dev/null 2>&1
+        pki -d /tmp/test-nssdb -c '' \
+            -U "https://localhost:8443" \
+            -u caadmin -w "$PKI_ADMIN_PASSWORD" \
+            ca-cert-request-approve "$request_id" --force 2>&1 || true
 
     # Get certificate serial
     sleep 2
     local cert_info=$(sudo podman exec "$container" \
-        pki -d "$nss_db" \
-            -c "$PKI_ADMIN_PASSWORD" \
-            -n "PKI Administrator for ${instance}" \
+        pki -d /tmp/test-nssdb -c '' \
+            -U "https://localhost:8443" \
             ca-cert-request-show "$request_id" 2>&1)
 
     CERT_SERIAL=$(echo "$cert_info" | grep "Certificate ID:" | awk '{print $3}')
@@ -417,12 +429,11 @@ issue_certificate() {
         return 1
     fi
 
-    # Export certificate
+    # Export certificate (no auth needed for export)
     sudo podman exec "$container" \
-        pki -d "$nss_db" \
-            -c "$PKI_ADMIN_PASSWORD" \
-            -n "PKI Administrator for ${instance}" \
-            ca-cert-export "$CERT_SERIAL" --output-file /tmp/test-cert.pem >/dev/null 2>&1
+        pki -d /tmp/test-nssdb -c '' \
+            -U "https://localhost:8443" \
+            ca-cert-export "$CERT_SERIAL" --output-file /tmp/test-cert.pem 2>&1 || true
 
     sudo podman cp "${container}:/tmp/test-cert.pem" "$cert_file"
 
@@ -632,11 +643,9 @@ wait_for_automation() {
         # Early exit if certificate is already revoked
         if [ -n "$CERT_SERIAL" ]; then
             local container=$(get_ca_container)
-            local instance=$(get_ca_instance)
-            local nss_db="/var/lib/pki/${instance}/alias"
             local status=$(sudo podman exec "$container" \
-                pki -d "$nss_db" -c "$PKI_ADMIN_PASSWORD" \
-                    -n "PKI Administrator for ${instance}" \
+                pki -d /tmp/test-nssdb -c '' \
+                    -U "https://localhost:8443" \
                     ca-cert-show "$CERT_SERIAL" 2>&1 | grep -i "Status:")
             if echo "$status" | grep -qi "REVOKED"; then
                 echo
@@ -654,8 +663,6 @@ wait_for_automation() {
 verify_revocation() {
     local device_fqdn="${DEVICE_NAME}.${LAB_DOMAIN}"
     local container=$(get_ca_container)
-    local instance=$(get_ca_instance)
-    local nss_db="/var/lib/pki/${instance}/alias"
 
     log_phase "Verifying Certificate Revocation in Dogtag"
 
@@ -668,11 +675,10 @@ verify_revocation() {
         return 1
     fi
 
-    # Get certificate status from Dogtag
+    # Get certificate status from Dogtag (no auth needed for cert-show)
     local cert_status=$(sudo podman exec "$container" \
-        pki -d "$nss_db" \
-            -c "$PKI_ADMIN_PASSWORD" \
-            -n "PKI Administrator for ${instance}" \
+        pki -d /tmp/test-nssdb -c '' \
+            -U "https://localhost:8443" \
             ca-cert-show "$CERT_SERIAL" 2>&1 | grep -i "Status:")
 
     if echo "$cert_status" | grep -qi "REVOKED"; then
@@ -718,15 +724,13 @@ show_results() {
 # Cleanup test certificate
 cleanup_device() {
     local container=$(get_ca_container)
-    local instance=$(get_ca_instance)
-    local nss_db="/var/lib/pki/${instance}/alias"
 
     if [ -n "$CERT_SERIAL" ]; then
         log_info "Revoking test certificate (if not already revoked)..."
         sudo podman exec "$container" \
-            pki -d "$nss_db" \
-                -c "$PKI_ADMIN_PASSWORD" \
-                -n "PKI Administrator for ${instance}" \
+            pki -d /tmp/test-nssdb -c '' \
+                -U "https://localhost:8443" \
+                -u caadmin -w "$PKI_ADMIN_PASSWORD" \
                 ca-cert-revoke "$CERT_SERIAL" --reason 5 --force 2>/dev/null || true
     fi
 
