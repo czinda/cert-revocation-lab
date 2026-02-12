@@ -73,8 +73,7 @@ case "$CMD" in
         # Start Tomcat directly using the correct method
         if [[ "$INSTANCE" == pki-* ]]; then
             export CATALINA_BASE="/var/lib/pki/$INSTANCE"
-            export CATALINA_HOME="/usr/share/tomcat"
-            export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/jre}"
+            export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/jre-17-openjdk}"
 
             # Check if already running
             if [ -f "$CATALINA_BASE/conf/tomcat.pid" ]; then
@@ -85,13 +84,34 @@ case "$CMD" in
                 fi
             fi
 
-            # Start tomcat
             log_msg "Starting Tomcat for $INSTANCE..."
-            cd "$CATALINA_BASE"
-            /usr/share/tomcat/bin/startup.sh 2>&1 | while read line; do log_msg "$line"; done
+
+            # Try multiple methods to start Tomcat
+            # Method 1: pkidaemon (traditional)
+            if [ -x /usr/share/pki/server/bin/pkidaemon ]; then
+                log_msg "Using pkidaemon..."
+                /usr/share/pki/server/bin/pkidaemon start "$INSTANCE" 2>&1 | while read line; do log_msg "$line"; done
+            # Method 2: pki-server run (newer method, but runs foreground)
+            elif command -v pki-server &>/dev/null; then
+                log_msg "Using pki-server..."
+                # Start in background
+                nohup pki-server run "$INSTANCE" > /var/log/pki/$INSTANCE/catalina.out 2>&1 &
+                echo $! > "$CATALINA_BASE/conf/tomcat.pid"
+            # Method 3: Direct Java invocation
+            else
+                log_msg "Using direct Java invocation..."
+                CLASSPATH="/usr/share/tomcat/lib/*:/usr/share/pki/server/lib/*"
+                nohup java -Dcatalina.base="$CATALINA_BASE" \
+                    -Dcatalina.home="/usr/share/tomcat" \
+                    -Djava.io.tmpdir="$CATALINA_BASE/temp" \
+                    -classpath "$CLASSPATH" \
+                    org.apache.catalina.startup.Bootstrap start \
+                    > /var/log/pki/$INSTANCE/catalina.out 2>&1 &
+                echo $! > "$CATALINA_BASE/conf/tomcat.pid"
+            fi
 
             # Wait a moment for startup
-            sleep 2
+            sleep 3
         fi
         exit 0
         ;;
