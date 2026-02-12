@@ -97,6 +97,26 @@ is_running_as_root() {
     [ "$(id -u)" = "0" ]
 }
 
+# Check if a rootless container is already running
+is_rootless_running() {
+    local name=$1
+    local status
+    status=$(run_as_user podman inspect --format '{{.State.Status}}' "$name" 2>/dev/null) || return 1
+    [ "$status" = "running" ]
+}
+
+# Check if a rootful container is already running
+is_rootful_running() {
+    local name=$1
+    local status
+    if is_running_as_root; then
+        status=$(podman inspect --format '{{.State.Status}}' "$name" 2>/dev/null) || return 1
+    else
+        status=$(sudo podman inspect --format '{{.State.Status}}' "$name" 2>/dev/null) || return 1
+    fi
+    [ "$status" = "running" ]
+}
+
 # Setup and validate podman networks
 setup_networks() {
     log_info "Checking container networks..."
@@ -390,19 +410,33 @@ clean_start() {
 start_base_infrastructure() {
     log_phase "Phase 1: Starting Base Infrastructure"
 
-    log_info "Starting PostgreSQL, Redis, Zookeeper..."
-    run_as_user podman-compose up -d postgres redis zookeeper
+    local to_start=()
+    for svc in postgres redis zookeeper; do
+        if is_rootless_running "$svc"; then
+            log_success "$svc is already running"
+        else
+            to_start+=("$svc")
+        fi
+    done
+
+    if [ ${#to_start[@]} -eq 0 ]; then
+        log_success "Base infrastructure already running"
+        return
+    fi
+
+    log_info "Starting ${to_start[*]}..."
+    run_as_user podman-compose up -d "${to_start[@]}"
 
     # wait_for_container needs to run as user too
-    if is_running_as_root; then
-        run_as_user podman wait --condition=running postgres 2>/dev/null || sleep 30
-        run_as_user podman wait --condition=running redis 2>/dev/null || sleep 10
-        run_as_user podman wait --condition=running zookeeper 2>/dev/null || sleep 30
-    else
-        wait_for_container "postgres" 60
-        wait_for_container "redis" 30
-        wait_for_container "zookeeper" 60
-    fi
+    for svc in "${to_start[@]}"; do
+        if is_running_as_root; then
+            run_as_user podman wait --condition=running "$svc" 2>/dev/null || sleep 30
+        else
+            local wait_time=60
+            [ "$svc" = "redis" ] && wait_time=30
+            wait_for_container "$svc" "$wait_time"
+        fi
+    done
 
     log_success "Base infrastructure started"
 }
@@ -410,6 +444,12 @@ start_base_infrastructure() {
 # Phase 2: Start Kafka
 start_kafka() {
     log_phase "Phase 2: Starting Kafka Event Bus"
+
+    if is_rootless_running "kafka"; then
+        log_success "kafka is already running"
+        log_success "Kafka already running, skipping topic creation"
+        return
+    fi
 
     run_as_user podman-compose up -d kafka
 
@@ -445,51 +485,67 @@ start_directory_servers() {
 start_pki_hierarchy() {
     log_phase "Phase 4: Starting PKI Infrastructure"
 
+    if [ ! -f pki-compose.yml ]; then
+        log_warn "pki-compose.yml not found. PKI initialization requires manual steps."
+        log_info "Create pki-compose.yml or run PKI containers manually."
+        return
+    fi
+
+    # Check if all PKI containers are already running
+    local all_running=true
+    for ctr in ds-root ds-intermediate ds-iot dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca; do
+        if is_rootful_running "$ctr"; then
+            log_success "$ctr is already running"
+        else
+            all_running=false
+        fi
+    done
+
+    if [ "$all_running" = true ]; then
+        log_success "All PKI containers already running, skipping initialization"
+        return
+    fi
+
     # PKI requires privileged containers with systemd support
     log_info "Starting PKI containers (requires sudo for privileged mode)..."
 
-    if [ -f pki-compose.yml ]; then
-        # Start PKI containers with rootful podman
-        if is_running_as_root; then
-            podman-compose -f pki-compose.yml up -d
-        else
-            sudo podman-compose -f pki-compose.yml up -d
-        fi
-
-        # Wait for 389DS to be healthy
-        log_info "Waiting for Directory Servers to be ready..."
-        for ds in ds-root ds-intermediate ds-iot; do
-            local elapsed=0
-            while [ $elapsed -lt 120 ]; do
-                if is_running_as_root; then
-                    if podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
-                        log_success "$ds is ready"
-                        break
-                    fi
-                else
-                    if sudo podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
-                        log_success "$ds is ready"
-                        break
-                    fi
-                fi
-                sleep 5
-                ((elapsed += 5)) || true
-            done
-        done
-
-        # Initialize PKI hierarchy automatically
-        log_info "Initializing PKI hierarchy..."
-        if [ -x scripts/pki/init-pki-hierarchy.sh ]; then
-            scripts/pki/init-pki-hierarchy.sh
-        else
-            bash scripts/pki/init-pki-hierarchy.sh
-        fi
-
-        log_success "PKI hierarchy initialized"
+    # Start PKI containers with rootful podman
+    if is_running_as_root; then
+        podman-compose -f pki-compose.yml up -d
     else
-        log_warn "pki-compose.yml not found. PKI initialization requires manual steps."
-        log_info "Create pki-compose.yml or run PKI containers manually."
+        sudo podman-compose -f pki-compose.yml up -d
     fi
+
+    # Wait for 389DS to be healthy
+    log_info "Waiting for Directory Servers to be ready..."
+    for ds in ds-root ds-intermediate ds-iot; do
+        local elapsed=0
+        while [ $elapsed -lt 120 ]; do
+            if is_running_as_root; then
+                if podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
+                    log_success "$ds is ready"
+                    break
+                fi
+            else
+                if sudo podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
+                    log_success "$ds is ready"
+                    break
+                fi
+            fi
+            sleep 5
+            ((elapsed += 5)) || true
+        done
+    done
+
+    # Initialize PKI hierarchy automatically
+    log_info "Initializing PKI hierarchy..."
+    if [ -x scripts/pki/init-pki-hierarchy.sh ]; then
+        scripts/pki/init-pki-hierarchy.sh
+    else
+        bash scripts/pki/init-pki-hierarchy.sh
+    fi
+
+    log_success "PKI hierarchy initialized"
 }
 
 # Phase 5: Start FreeIPA
@@ -498,6 +554,11 @@ start_freeipa() {
 
     if [ ! -f freeipa-compose.yml ]; then
         log_warn "freeipa-compose.yml not found. Skipping FreeIPA startup."
+        return
+    fi
+
+    if is_rootful_running "freeipa"; then
+        log_success "freeipa is already running"
         return
     fi
 
@@ -531,13 +592,32 @@ start_freeipa() {
 start_awx() {
     log_phase "Phase 6: Starting Ansible AWX"
 
-    run_as_user podman-compose up -d awx-web awx-task
+    local to_start=()
+    for svc in awx-web awx-task; do
+        if is_rootless_running "$svc"; then
+            log_success "$svc is already running"
+        else
+            to_start+=("$svc")
+        fi
+    done
 
-    if is_running_as_root; then
-        run_as_user podman wait --condition=running awx-web 2>/dev/null || sleep 60
-    else
-        wait_for_container "awx-web" 180
+    if [ ${#to_start[@]} -eq 0 ]; then
+        log_success "AWX already running"
+        return
     fi
+
+    run_as_user podman-compose up -d "${to_start[@]}"
+
+    # Only wait if awx-web was just started
+    for svc in "${to_start[@]}"; do
+        if [ "$svc" = "awx-web" ]; then
+            if is_running_as_root; then
+                run_as_user podman wait --condition=running awx-web 2>/dev/null || sleep 60
+            else
+                wait_for_container "awx-web" 180
+            fi
+        fi
+    done
 
     log_success "AWX started"
     log_info "AWX Web UI: http://localhost:8084"
@@ -547,6 +627,11 @@ start_awx() {
 # Phase 7: Start EDA
 start_eda() {
     log_phase "Phase 7: Starting Event-Driven Ansible"
+
+    if is_rootless_running "eda-server"; then
+        log_success "eda-server is already running"
+        return
+    fi
 
     run_as_user podman-compose up -d eda-server
     sleep 10
@@ -559,17 +644,32 @@ start_eda() {
 start_security_tools() {
     log_phase "Phase 8: Starting Mock EDR and SIEM"
 
+    local to_start=()
+    for svc in mock-edr mock-siem; do
+        if is_rootless_running "$svc"; then
+            log_success "$svc is already running"
+        else
+            to_start+=("$svc")
+        fi
+    done
+
+    if [ ${#to_start[@]} -eq 0 ]; then
+        log_success "Mock security tools already running"
+        return
+    fi
+
     # Build containers if needed
     log_info "Building mock security tool containers..."
-    run_as_user podman-compose build mock-edr mock-siem 2>/dev/null || true
+    run_as_user podman-compose build "${to_start[@]}" 2>/dev/null || true
 
-    run_as_user podman-compose up -d mock-edr mock-siem
+    run_as_user podman-compose up -d "${to_start[@]}"
 
     if is_running_as_root; then
         sleep 30
     else
-        wait_for_container "mock-edr" 60
-        wait_for_container "mock-siem" 60
+        for svc in "${to_start[@]}"; do
+            wait_for_container "$svc" 60
+        done
     fi
 
     log_success "Mock EDR and SIEM started"
@@ -578,6 +678,11 @@ start_security_tools() {
 # Phase 9: Start Jupyter
 start_jupyter() {
     log_phase "Phase 9: Starting Jupyter Lab"
+
+    if is_rootless_running "jupyter"; then
+        log_success "jupyter is already running"
+        return
+    fi
 
     run_as_user podman-compose up -d jupyter
     sleep 5
@@ -655,63 +760,89 @@ quick_start() {
 
     # Start PKI containers from pki-compose.yml (rootful - has initialized data)
     if [ -f pki-compose.yml ]; then
-        log_info "Starting PKI containers (from pki-compose.yml)..."
-        if [ "$RUNNING_AS_ROOT" = true ]; then
-            podman-compose -f pki-compose.yml up -d 2>/dev/null || {
-                log_warn "Failed to start PKI containers"
-            }
-        else
-            sudo podman-compose -f pki-compose.yml up -d 2>/dev/null || {
-                log_warn "Failed to start PKI containers. Try: sudo podman-compose -f pki-compose.yml up -d"
-            }
-        fi
-
-        # Start the PKI servers inside containers
-        sleep 5
-        for ca in dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca; do
-            instance=$(echo $ca | sed 's/dogtag-/pki-/')
-            log_info "Starting PKI server in $ca..."
-            if [ "$RUNNING_AS_ROOT" = true ]; then
-                podman exec $ca bash -c "
-                    if [ -d /var/lib/pki/$instance ]; then
-                        pgrep -f 'catalina' || nohup pki-server run $instance > /var/log/pki/$instance/startup.log 2>&1 &
-                    fi
-                " 2>/dev/null || true
+        local pki_all_running=true
+        for ctr in ds-root ds-intermediate ds-iot dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca; do
+            if is_rootful_running "$ctr"; then
+                log_success "$ctr is already running"
             else
-                sudo podman exec $ca bash -c "
-                    if [ -d /var/lib/pki/$instance ]; then
-                        pgrep -f 'catalina' || nohup pki-server run $instance > /var/log/pki/$instance/startup.log 2>&1 &
-                    fi
-                " 2>/dev/null || true
+                pki_all_running=false
             fi
         done
+
+        if [ "$pki_all_running" = true ]; then
+            log_success "All PKI containers already running"
+        else
+            log_info "Starting PKI containers (from pki-compose.yml)..."
+            if [ "$RUNNING_AS_ROOT" = true ]; then
+                podman-compose -f pki-compose.yml up -d 2>/dev/null || {
+                    log_warn "Failed to start PKI containers"
+                }
+            else
+                sudo podman-compose -f pki-compose.yml up -d 2>/dev/null || {
+                    log_warn "Failed to start PKI containers. Try: sudo podman-compose -f pki-compose.yml up -d"
+                }
+            fi
+
+            # Start the PKI servers inside containers
+            sleep 5
+            for ca in dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca; do
+                instance=$(echo $ca | sed 's/dogtag-/pki-/')
+                log_info "Starting PKI server in $ca..."
+                if [ "$RUNNING_AS_ROOT" = true ]; then
+                    podman exec $ca bash -c "
+                        if [ -d /var/lib/pki/$instance ]; then
+                            pgrep -f 'catalina' || nohup pki-server run $instance > /var/log/pki/$instance/startup.log 2>&1 &
+                        fi
+                    " 2>/dev/null || true
+                else
+                    sudo podman exec $ca bash -c "
+                        if [ -d /var/lib/pki/$instance ]; then
+                            pgrep -f 'catalina' || nohup pki-server run $instance > /var/log/pki/$instance/startup.log 2>&1 &
+                        fi
+                    " 2>/dev/null || true
+                fi
+            done
+        fi
     fi
 
     # Start FreeIPA (rootful)
     if [ -f freeipa-compose.yml ]; then
-        log_info "Starting FreeIPA..."
-        if [ "$RUNNING_AS_ROOT" = true ]; then
-            podman-compose -f freeipa-compose.yml up -d 2>/dev/null || true
+        if is_rootful_running "freeipa"; then
+            log_success "freeipa is already running"
         else
-            sudo podman-compose -f freeipa-compose.yml up -d 2>/dev/null || true
+            log_info "Starting FreeIPA..."
+            if [ "$RUNNING_AS_ROOT" = true ]; then
+                podman-compose -f freeipa-compose.yml up -d 2>/dev/null || true
+            else
+                sudo podman-compose -f freeipa-compose.yml up -d 2>/dev/null || true
+            fi
         fi
     fi
 
     # Start other containers (rootless) - exclude PKI/DS services
-    log_info "Starting other containers (Kafka, AWX, EDA, etc.)..."
-    if [ "$RUNNING_AS_ROOT" = true ]; then
-        # Use runuser to run as the original user with proper environment
-        runuser -u "$ORIGINAL_USER" -- env XDG_RUNTIME_DIR="/run/user/$ORIGINAL_UID" \
-            podman-compose up -d postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem jupyter 2>/dev/null || \
-        runuser -u "$ORIGINAL_USER" -- env XDG_RUNTIME_DIR="/run/user/$ORIGINAL_UID" \
-            podman-compose up -d 2>/dev/null || {
-            log_warn "Failed to start rootless containers"
-        }
+    local rootless_to_start=()
+    for svc in postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem jupyter; do
+        if is_rootless_running "$svc"; then
+            log_success "$svc is already running"
+        else
+            rootless_to_start+=("$svc")
+        fi
+    done
+
+    if [ ${#rootless_to_start[@]} -eq 0 ]; then
+        log_success "All rootless containers already running"
     else
-        podman-compose up -d postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem jupyter 2>/dev/null || \
-        podman-compose up -d 2>/dev/null || {
-            log_warn "Failed to start rootless containers"
-        }
+        log_info "Starting ${rootless_to_start[*]}..."
+        if [ "$RUNNING_AS_ROOT" = true ]; then
+            runuser -u "$ORIGINAL_USER" -- env XDG_RUNTIME_DIR="/run/user/$ORIGINAL_UID" \
+                podman-compose up -d "${rootless_to_start[@]}" 2>/dev/null || {
+                log_warn "Failed to start rootless containers"
+            }
+        else
+            podman-compose up -d "${rootless_to_start[@]}" 2>/dev/null || {
+                log_warn "Failed to start rootless containers"
+            }
+        fi
     fi
 
     log_success "Container startup initiated"
