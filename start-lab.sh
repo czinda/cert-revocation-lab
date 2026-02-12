@@ -29,6 +29,11 @@ log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_phase() { echo -e "\n${CYAN}========================================================================${NC}"; echo -e "${CYAN}  $1${NC}"; echo -e "${CYAN}========================================================================${NC}\n"; }
 
+# PKI Selection flags (default: RSA only for backward compatibility)
+START_RSA_PKI=false
+START_PQ_PKI=false
+START_ECC_PKI=false
+
 # Check prerequisites
 check_prerequisites() {
     log_phase "Checking Prerequisites"
@@ -130,13 +135,15 @@ setup_networks() {
     NETWORKS["cert-revocation-lab_lab-network"]="172.20.0.0/16:172.20.0.1"
     NETWORKS["pki-net"]="172.26.0.0/24:172.26.0.1"
     NETWORKS["freeipa-net"]="172.25.0.0/24:172.25.0.1"
+    NETWORKS["pki-pq-net"]="172.27.0.0/24:172.27.0.1"
+    NETWORKS["pki-ecc-net"]="172.28.0.0/24:172.28.0.1"
 
     for net_name in "${!NETWORKS[@]}"; do
         IFS=':' read -r expected_subnet expected_gateway <<< "${NETWORKS[$net_name]}"
 
         # Determine if this is a rootful or rootless network
         local is_rootful=false
-        [[ "$net_name" == "pki-net" || "$net_name" == "freeipa-net" ]] && is_rootful=true
+        [[ "$net_name" == "pki-net" || "$net_name" == "freeipa-net" || "$net_name" == "pki-pq-net" || "$net_name" == "pki-ecc-net" ]] && is_rootful=true
 
         if [ "$is_rootful" = true ]; then
             # Rootful network - use sudo or direct if already root
@@ -548,6 +555,134 @@ start_pki_hierarchy() {
     log_success "PKI hierarchy initialized"
 }
 
+# Phase 4b: Start and Initialize PQ (ML-DSA-87) PKI Hierarchy
+start_pq_pki_hierarchy() {
+    log_phase "Phase 4b: Starting Post-Quantum PKI Infrastructure (ML-DSA-87)"
+
+    if [ ! -f pki-pq-compose.yml ]; then
+        log_warn "pki-pq-compose.yml not found. Skipping PQ PKI startup."
+        return
+    fi
+
+    # Check if all PQ PKI containers are already running
+    local all_running=true
+    for ctr in ds-pq-root ds-pq-intermediate ds-pq-iot dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca; do
+        if is_rootful_running "$ctr"; then
+            log_success "$ctr is already running"
+        else
+            all_running=false
+        fi
+    done
+
+    if [ "$all_running" = true ]; then
+        log_success "All PQ PKI containers already running, skipping initialization"
+        return
+    fi
+
+    log_info "Starting PQ PKI containers (requires sudo for privileged mode)..."
+
+    if is_running_as_root; then
+        podman-compose -f pki-pq-compose.yml up -d
+    else
+        sudo podman-compose -f pki-pq-compose.yml up -d
+    fi
+
+    # Wait for PQ 389DS to be healthy
+    log_info "Waiting for PQ Directory Servers to be ready..."
+    for ds in ds-pq-root ds-pq-intermediate ds-pq-iot; do
+        local elapsed=0
+        while [ $elapsed -lt 120 ]; do
+            if is_running_as_root; then
+                if podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
+                    log_success "$ds is ready"
+                    break
+                fi
+            else
+                if sudo podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
+                    log_success "$ds is ready"
+                    break
+                fi
+            fi
+            sleep 5
+            ((elapsed += 5)) || true
+        done
+    done
+
+    # Initialize PQ PKI hierarchy automatically
+    log_info "Initializing PQ PKI hierarchy (ML-DSA-87)..."
+    if [ -x scripts/pki/init-pq-pki-hierarchy.sh ]; then
+        scripts/pki/init-pq-pki-hierarchy.sh
+    else
+        bash scripts/pki/init-pq-pki-hierarchy.sh
+    fi
+
+    log_success "PQ PKI hierarchy initialized"
+}
+
+# Phase 4c: Start and Initialize ECC PKI Hierarchy
+start_ecc_pki_hierarchy() {
+    log_phase "Phase 4c: Starting ECC PKI Infrastructure (P-384)"
+
+    if [ ! -f pki-ecc-compose.yml ]; then
+        log_warn "pki-ecc-compose.yml not found. Skipping ECC PKI startup."
+        return
+    fi
+
+    # Check if all ECC PKI containers are already running
+    local all_running=true
+    for ctr in ds-ecc-root ds-ecc-intermediate ds-ecc-iot dogtag-ecc-root-ca dogtag-ecc-intermediate-ca dogtag-ecc-iot-ca; do
+        if is_rootful_running "$ctr"; then
+            log_success "$ctr is already running"
+        else
+            all_running=false
+        fi
+    done
+
+    if [ "$all_running" = true ]; then
+        log_success "All ECC PKI containers already running, skipping initialization"
+        return
+    fi
+
+    log_info "Starting ECC PKI containers (requires sudo for privileged mode)..."
+
+    if is_running_as_root; then
+        podman-compose -f pki-ecc-compose.yml up -d
+    else
+        sudo podman-compose -f pki-ecc-compose.yml up -d
+    fi
+
+    # Wait for ECC 389DS to be healthy
+    log_info "Waiting for ECC Directory Servers to be ready..."
+    for ds in ds-ecc-root ds-ecc-intermediate ds-ecc-iot; do
+        local elapsed=0
+        while [ $elapsed -lt 120 ]; do
+            if is_running_as_root; then
+                if podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
+                    log_success "$ds is ready"
+                    break
+                fi
+            else
+                if sudo podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
+                    log_success "$ds is ready"
+                    break
+                fi
+            fi
+            sleep 5
+            ((elapsed += 5)) || true
+        done
+    done
+
+    # Initialize ECC PKI hierarchy automatically
+    log_info "Initializing ECC PKI hierarchy (P-384)..."
+    if [ -x scripts/pki/init-ecc-pki-hierarchy.sh ]; then
+        scripts/pki/init-ecc-pki-hierarchy.sh
+    else
+        bash scripts/pki/init-ecc-pki-hierarchy.sh
+    fi
+
+    log_success "ECC PKI hierarchy initialized"
+}
+
 # Phase 5: Start FreeIPA
 start_freeipa() {
     log_phase "Phase 5: FreeIPA (Requires Rootful Podman)"
@@ -698,39 +833,66 @@ print_summary() {
     echo -e "${GREEN}  Certificate Revocation Lab - Started Successfully${NC}"
     echo -e "${GREEN}========================================================================${NC}"
     echo ""
-    echo "Service URLs:"
-    echo "  Root CA:         https://localhost:8443/ca"
-    echo "  Intermediate CA: https://localhost:8444/ca"
-    echo "  IoT CA:          https://localhost:8445/ca"
+
+    echo "PKI Service URLs:"
+    if [ "$START_RSA_PKI" = true ]; then
+        echo "  RSA-4096 PKI:"
+        echo "    Root CA:         https://localhost:8443/ca"
+        echo "    Intermediate CA: https://localhost:8444/ca"
+        echo "    IoT CA:          https://localhost:8445/ca"
+    fi
+    if [ "$START_ECC_PKI" = true ]; then
+        echo "  ECC P-384 PKI:"
+        echo "    Root CA:         https://localhost:8463/ca"
+        echo "    Intermediate CA: https://localhost:8464/ca"
+        echo "    IoT CA:          https://localhost:8465/ca"
+    fi
+    if [ "$START_PQ_PKI" = true ]; then
+        echo "  ML-DSA-87 (Post-Quantum) PKI:"
+        echo "    Root CA:         https://localhost:8453/ca"
+        echo "    Intermediate CA: https://localhost:8454/ca"
+        echo "    IoT CA:          https://localhost:8455/ca"
+    fi
+    echo ""
+
+    echo "Other Services:"
     echo "  FreeIPA:         https://localhost:4443/ipa/ui"
     echo "  AWX:             http://localhost:8084"
     echo "  Mock EDR:        http://localhost:8082"
     echo "  Mock SIEM:       http://localhost:8083"
     echo "  Jupyter:         http://localhost:8888"
     echo ""
+
     echo "Default Credentials:"
     echo "  PKI Admin:    caadmin / (see .env)"
     echo "  IPA Admin:    admin / (see .env)"
     echo "  AWX Admin:    admin / (see .env)"
     echo "  Jupyter:      Token: (see .env)"
     echo ""
-    echo "PKI Hierarchy (automatically initialized):"
-    echo "  Root CA (self-signed)"
-    echo "    └── Intermediate CA"
-    echo "        └── IoT Sub-CA"
+
+    echo "PKI Hierarchies Initialized:"
+    if [ "$START_RSA_PKI" = true ]; then
+        echo "  RSA-4096:    Root CA -> Intermediate CA -> IoT Sub-CA"
+        echo "               Certs: data/certs/rsa/"
+    fi
+    if [ "$START_ECC_PKI" = true ]; then
+        echo "  ECC P-384:   Root CA -> Intermediate CA -> IoT Sub-CA"
+        echo "               Certs: data/certs/ecc/"
+    fi
+    if [ "$START_PQ_PKI" = true ]; then
+        echo "  ML-DSA-87:   Root CA -> Intermediate CA -> IoT Sub-CA"
+        echo "               Certs: data/certs/pq/"
+    fi
     echo ""
-    echo "Certificates:"
-    echo "  data/certs/root-ca.crt"
-    echo "  data/certs/intermediate-ca.crt"
-    echo "  data/certs/iot-ca.crt"
-    echo "  data/certs/ca-chain.crt"
-    echo ""
+
     echo "Testing:"
     echo "  ./test-revocation.sh"
     echo ""
     echo "View logs:"
     echo "  podman-compose logs -f <service-name>"
-    echo "  sudo podman-compose -f pki-compose.yml logs -f <service-name>"
+    [ "$START_RSA_PKI" = true ] && echo "  sudo podman-compose -f pki-compose.yml logs -f <service-name>"
+    [ "$START_ECC_PKI" = true ] && echo "  sudo podman-compose -f pki-ecc-compose.yml logs -f <service-name>"
+    [ "$START_PQ_PKI" = true ] && echo "  sudo podman-compose -f pki-pq-compose.yml logs -f <service-name>"
     echo ""
     echo -e "${GREEN}========================================================================${NC}"
 }
@@ -881,34 +1043,107 @@ main() {
     echo -e "${CYAN}"
     echo "========================================================================"
     echo "  Event-Driven Certificate Revocation Lab"
-    echo "  PKI Hierarchy: Root CA -> Intermediate CA -> Sub-CAs"
+    echo "  Multi-Algorithm PKI: RSA-4096 | ECC P-384 | ML-DSA-87 (Post-Quantum)"
     echo "========================================================================"
     echo -e "${NC}"
 
-    # Handle arguments
-    case "${1:-}" in
-        --clean)
-            clean_start
-            ;;
-        --quick|--restart|-q)
-            quick_start
-            exit 0
-            ;;
-        --help|-h)
-            echo "Usage: $0 [OPTIONS]"
-            echo ""
-            echo "Options:"
-            echo "  --quick    Start existing containers without initialization"
-            echo "  --clean    Remove all containers and volumes before starting"
-            echo "  --help     Show this help message"
-            echo ""
-            echo "Examples:"
-            echo "  $0           # Full startup with PKI initialization"
-            echo "  $0 --quick   # Quick restart of existing containers"
-            echo "  $0 --clean   # Clean start (removes all data)"
-            exit 0
-            ;;
-    esac
+    # Parse arguments
+    local do_clean=false
+    local do_quick=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --clean)
+                do_clean=true
+                shift
+                ;;
+            --quick|--restart|-q)
+                do_quick=true
+                shift
+                ;;
+            --rsa)
+                START_RSA_PKI=true
+                shift
+                ;;
+            --ecc)
+                START_ECC_PKI=true
+                shift
+                ;;
+            --pqc|--pq|--ml-dsa)
+                START_PQ_PKI=true
+                shift
+                ;;
+            --dual)
+                START_RSA_PKI=true
+                START_PQ_PKI=true
+                shift
+                ;;
+            --all)
+                START_RSA_PKI=true
+                START_ECC_PKI=true
+                START_PQ_PKI=true
+                shift
+                ;;
+            --help|-h)
+                echo "Usage: $0 [OPTIONS]"
+                echo ""
+                echo "PKI Selection (default: --rsa if none specified):"
+                echo "  --rsa      Start RSA-4096 PKI hierarchy only"
+                echo "  --ecc      Start ECC P-384 PKI hierarchy only"
+                echo "  --pqc      Start ML-DSA-87 (post-quantum) PKI hierarchy only"
+                echo "  --dual     Start RSA-4096 + ML-DSA-87 PKI hierarchies"
+                echo "  --all      Start all three PKI hierarchies (RSA + ECC + PQ)"
+                echo ""
+                echo "General Options:"
+                echo "  --quick    Start existing containers without initialization"
+                echo "  --clean    Remove all containers and volumes before starting"
+                echo "  --help     Show this help message"
+                echo ""
+                echo "Examples:"
+                echo "  $0                 # Start RSA-4096 PKI only (default)"
+                echo "  $0 --ecc           # Start ECC P-384 PKI only"
+                echo "  $0 --pqc           # Start ML-DSA-87 PKI only"
+                echo "  $0 --dual          # Start RSA + PQ PKI (hybrid deployment)"
+                echo "  $0 --all           # Start all three PKI hierarchies"
+                echo "  $0 --rsa --ecc     # Start RSA + ECC PKI"
+                echo "  $0 --quick         # Quick restart of existing containers"
+                echo "  $0 --clean --all   # Clean start with all PKI types"
+                echo ""
+                echo "PKI Algorithm Details:"
+                echo "  RSA-4096:   Traditional cryptography (SHA-512 signatures)"
+                echo "  ECC P-384:  Elliptic curve (ECDSA with SHA-384)"
+                echo "  ML-DSA-87:  NIST FIPS 204 Level 5 post-quantum signatures"
+                exit 0
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                echo "Use --help for usage information"
+                exit 1
+                ;;
+        esac
+    done
+
+    # Default to RSA if no PKI type specified
+    if [ "$START_RSA_PKI" = false ] && [ "$START_ECC_PKI" = false ] && [ "$START_PQ_PKI" = false ]; then
+        START_RSA_PKI=true
+    fi
+
+    # Handle clean start
+    if [ "$do_clean" = true ]; then
+        clean_start
+    fi
+
+    # Handle quick start
+    if [ "$do_quick" = true ]; then
+        quick_start
+        exit 0
+    fi
+
+    # Show which PKI types will be started
+    log_info "PKI Types to start:"
+    [ "$START_RSA_PKI" = true ] && echo "  - RSA-4096 (ports 8443-8445)"
+    [ "$START_ECC_PKI" = true ] && echo "  - ECC P-384 (ports 8463-8465)"
+    [ "$START_PQ_PKI" = true ] && echo "  - ML-DSA-87 (ports 8453-8455)"
+    echo ""
 
     # Run startup sequence
     check_prerequisites
@@ -919,7 +1154,12 @@ main() {
     start_base_infrastructure
     start_kafka
     start_directory_servers
-    start_pki_hierarchy
+
+    # Start selected PKI hierarchies
+    [ "$START_RSA_PKI" = true ] && start_pki_hierarchy
+    [ "$START_ECC_PKI" = true ] && start_ecc_pki_hierarchy
+    [ "$START_PQ_PKI" = true ] && start_pq_pki_hierarchy
+
     start_freeipa
     start_awx
     start_eda

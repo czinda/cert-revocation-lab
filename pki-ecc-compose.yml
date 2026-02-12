@@ -1,0 +1,224 @@
+# ECC PKI Compose File - ECDSA P-384 with SHA-384
+#
+# Run with: sudo podman-compose -f pki-ecc-compose.yml up -d
+#
+# This creates a complete ECC PKI hierarchy using ECDSA with P-384 curve,
+# completely independent from the RSA-4096 and ML-DSA-87 PKI hierarchies.
+#
+# Network: 172.28.0.0/24 (pki-ecc-net)
+# Ports: 8463-8465 (CA), 3389 internal (DS)
+
+version: "3.8"
+
+services:
+  # 389 Directory Server for ECC Root CA
+  ds-ecc-root:
+    image: quay.io/389ds/dirsrv:${DS_VERSION:-latest}
+    container_name: ds-ecc-root
+    hostname: ds-ecc-root.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_SUFFIX_NAME: ecc-root-ca
+    volumes:
+      - ds-ecc-root-data:/data
+    networks:
+      pki-ecc-net:
+        ipv4_address: 172.28.0.14
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/libexec/dirsrv/dscontainer -H || ldapsearch -x -H ldap://localhost:3389 -b '' -s base > /dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 10
+
+  # 389 Directory Server for ECC Intermediate CA
+  ds-ecc-intermediate:
+    image: quay.io/389ds/dirsrv:${DS_VERSION:-latest}
+    container_name: ds-ecc-intermediate
+    hostname: ds-ecc-intermediate.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_SUFFIX_NAME: ecc-intermediate-ca
+    volumes:
+      - ds-ecc-intermediate-data:/data
+    networks:
+      pki-ecc-net:
+        ipv4_address: 172.28.0.15
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/libexec/dirsrv/dscontainer -H || ldapsearch -x -H ldap://localhost:3389 -b '' -s base > /dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 10
+
+  # 389 Directory Server for ECC IoT CA
+  ds-ecc-iot:
+    image: quay.io/389ds/dirsrv:${DS_VERSION:-latest}
+    container_name: ds-ecc-iot
+    hostname: ds-ecc-iot.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_SUFFIX_NAME: ecc-iot-ca
+    volumes:
+      - ds-ecc-iot-data:/data
+    networks:
+      pki-ecc-net:
+        ipv4_address: 172.28.0.16
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/libexec/dirsrv/dscontainer -H || ldapsearch -x -H ldap://localhost:3389 -b '' -s base > /dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 10
+
+  # Dogtag ECC Root CA - ECDSA P-384 Self-Signed
+  dogtag-ecc-root-ca:
+    image: quay.io/dogtagpki/pki-ca:${PKI_VERSION:-latest}
+    container_name: dogtag-ecc-root-ca
+    hostname: ecc-root-ca.${LAB_DOMAIN:-cert-lab.local}
+    privileged: true
+    depends_on:
+      ds-ecc-root:
+        condition: service_healthy
+    environment:
+      PKI_DS_URL: ldap://ds-ecc-root.cert-lab.local:3389
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_INSTANCE_NAME: pki-ecc-root-ca
+      DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      # ECC-specific settings
+      ECC_CA_KEY_TYPE: ecc
+      ECC_CA_KEY_ALGORITHM: SHA384withEC
+      ECC_CA_KEY_SIZE: nistp384
+    volumes:
+      - ./configs/pki:/etc/pki-configs:ro
+      - ./scripts/pki:/scripts:ro
+      - ./data/certs/ecc:/certs
+      - pki-ecc-root-data:/var/lib/pki
+      - pki-ecc-root-logs:/var/log/pki
+    extra_hosts:
+      - "ds-ecc-root.cert-lab.local:172.28.0.14"
+      - "ds-ecc-intermediate.cert-lab.local:172.28.0.15"
+      - "ds-ecc-iot.cert-lab.local:172.28.0.16"
+      - "ecc-root-ca.cert-lab.local:172.28.0.12"
+      - "ecc-intermediate-ca.cert-lab.local:172.28.0.11"
+      - "ecc-iot-ca.cert-lab.local:172.28.0.13"
+    networks:
+      pki-ecc-net:
+        ipv4_address: 172.28.0.12
+    ports:
+      - "8463:8443"
+      - "8493:8080"
+    command: ["/bin/bash", "-c", "sleep infinity"]
+
+  # Dogtag ECC Intermediate CA - ECDSA P-384
+  dogtag-ecc-intermediate-ca:
+    image: quay.io/dogtagpki/pki-ca:${PKI_VERSION:-latest}
+    container_name: dogtag-ecc-intermediate-ca
+    hostname: ecc-intermediate-ca.${LAB_DOMAIN:-cert-lab.local}
+    privileged: true
+    depends_on:
+      ds-ecc-intermediate:
+        condition: service_healthy
+      dogtag-ecc-root-ca:
+        condition: service_started
+    environment:
+      PKI_DS_URL: ldap://ds-ecc-intermediate.cert-lab.local:3389
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_INSTANCE_NAME: pki-ecc-intermediate-ca
+      DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      # ECC-specific settings
+      ECC_CA_KEY_TYPE: ecc
+      ECC_CA_KEY_ALGORITHM: SHA384withEC
+      ECC_CA_KEY_SIZE: nistp384
+    volumes:
+      - ./configs/pki:/etc/pki-configs:ro
+      - ./scripts/pki:/scripts:ro
+      - ./data/certs/ecc:/certs
+      - pki-ecc-intermediate-data:/var/lib/pki
+      - pki-ecc-intermediate-logs:/var/log/pki
+    extra_hosts:
+      - "ds-ecc-root.cert-lab.local:172.28.0.14"
+      - "ds-ecc-intermediate.cert-lab.local:172.28.0.15"
+      - "ds-ecc-iot.cert-lab.local:172.28.0.16"
+      - "ecc-root-ca.cert-lab.local:172.28.0.12"
+      - "ecc-intermediate-ca.cert-lab.local:172.28.0.11"
+      - "ecc-iot-ca.cert-lab.local:172.28.0.13"
+    networks:
+      pki-ecc-net:
+        ipv4_address: 172.28.0.11
+    ports:
+      - "8464:8443"
+      - "8494:8080"
+    command: ["/bin/bash", "-c", "sleep infinity"]
+
+  # Dogtag ECC IoT Sub-CA - ECDSA P-384
+  dogtag-ecc-iot-ca:
+    image: quay.io/dogtagpki/pki-ca:${PKI_VERSION:-latest}
+    container_name: dogtag-ecc-iot-ca
+    hostname: ecc-iot-ca.${LAB_DOMAIN:-cert-lab.local}
+    privileged: true
+    depends_on:
+      ds-ecc-iot:
+        condition: service_healthy
+      dogtag-ecc-intermediate-ca:
+        condition: service_started
+    environment:
+      PKI_DS_URL: ldap://ds-ecc-iot.cert-lab.local:3389
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_INSTANCE_NAME: pki-ecc-iot-ca
+      DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      # ECC-specific settings
+      ECC_CA_KEY_TYPE: ecc
+      ECC_CA_KEY_ALGORITHM: SHA384withEC
+      ECC_CA_KEY_SIZE: nistp384
+    volumes:
+      - ./configs/pki:/etc/pki-configs:ro
+      - ./scripts/pki:/scripts:ro
+      - ./data/certs/ecc:/certs
+      - pki-ecc-iot-data:/var/lib/pki
+      - pki-ecc-iot-logs:/var/log/pki
+    extra_hosts:
+      - "ds-ecc-root.cert-lab.local:172.28.0.14"
+      - "ds-ecc-intermediate.cert-lab.local:172.28.0.15"
+      - "ds-ecc-iot.cert-lab.local:172.28.0.16"
+      - "ecc-root-ca.cert-lab.local:172.28.0.12"
+      - "ecc-intermediate-ca.cert-lab.local:172.28.0.11"
+      - "ecc-iot-ca.cert-lab.local:172.28.0.13"
+    networks:
+      pki-ecc-net:
+        ipv4_address: 172.28.0.13
+    ports:
+      - "8465:8443"
+      - "8495:8080"
+    command: ["/bin/bash", "-c", "sleep infinity"]
+
+networks:
+  pki-ecc-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+          gateway: 172.28.0.1
+
+volumes:
+  ds-ecc-root-data:
+  ds-ecc-intermediate-data:
+  ds-ecc-iot-data:
+  pki-ecc-root-data:
+  pki-ecc-root-logs:
+  pki-ecc-intermediate-data:
+  pki-ecc-intermediate-logs:
+  pki-ecc-iot-data:
+  pki-ecc-iot-logs:

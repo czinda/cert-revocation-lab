@@ -24,14 +24,57 @@ if [ "${1:-}" == "--help" ] || [ "${1:-}" == "-h" ]; then
     echo ""
     echo "Options:"
     echo "  (none)     Stop all containers (preserves data)"
+    echo "  --rsa      Stop RSA-4096 PKI containers only"
+    echo "  --ecc      Stop ECC P-384 PKI containers only"
+    echo "  --pqc      Stop ML-DSA-87 PKI containers only"
+    echo "  --all      Stop all PKI containers (RSA + ECC + PQ)"
     echo "  --clean    Stop and remove all containers, volumes, and data"
     echo "  --help     Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0           # Quick stop (preserves data)"
+    echo "  $0           # Stop all containers (preserves data)"
+    echo "  $0 --rsa     # Stop only RSA PKI containers"
     echo "  $0 --clean   # Full cleanup (removes all data)"
     exit 0
 fi
+
+# Parse PKI selection arguments
+STOP_RSA_PKI=true
+STOP_ECC_PKI=true
+STOP_PQ_PKI=true
+STOP_ALL=true
+
+for arg in "$@"; do
+    case "$arg" in
+        --rsa)
+            STOP_ALL=false
+            STOP_RSA_PKI=true
+            STOP_ECC_PKI=false
+            STOP_PQ_PKI=false
+            ;;
+        --ecc)
+            STOP_ALL=false
+            STOP_RSA_PKI=false
+            STOP_ECC_PKI=true
+            STOP_PQ_PKI=false
+            ;;
+        --pqc|--pq|--ml-dsa)
+            STOP_ALL=false
+            STOP_RSA_PKI=false
+            STOP_ECC_PKI=false
+            STOP_PQ_PKI=true
+            ;;
+        --all)
+            STOP_ALL=true
+            STOP_RSA_PKI=true
+            STOP_ECC_PKI=true
+            STOP_PQ_PKI=true
+            ;;
+        --clean)
+            STOP_ALL=true
+            ;;
+    esac
+done
 
 echo "========================================================================"
 echo "  Stopping Certificate Revocation Lab"
@@ -42,24 +85,38 @@ echo
 PROJECT_NAME=$(basename "$SCRIPT_DIR")
 
 # Stop all containers
-log_info "Stopping all rootless containers..."
-podman-compose down 2>/dev/null || true
+if [ "$STOP_ALL" = true ]; then
+    log_info "Stopping all rootless containers..."
+    podman-compose down 2>/dev/null || true
+fi
 
-# Stop PKI containers (rootful)
-if [ -f pki-compose.yml ]; then
-    log_info "Stopping PKI containers (requires sudo)..."
+# Stop RSA PKI containers (rootful)
+if [ "$STOP_RSA_PKI" = true ] && [ -f pki-compose.yml ]; then
+    log_info "Stopping RSA-4096 PKI containers (requires sudo)..."
     sudo podman-compose -f pki-compose.yml down 2>/dev/null || true
 fi
 
+# Stop ECC PKI containers (rootful)
+if [ "$STOP_ECC_PKI" = true ] && [ -f pki-ecc-compose.yml ]; then
+    log_info "Stopping ECC P-384 PKI containers (requires sudo)..."
+    sudo podman-compose -f pki-ecc-compose.yml down 2>/dev/null || true
+fi
+
+# Stop PQ PKI containers (rootful)
+if [ "$STOP_PQ_PKI" = true ] && [ -f pki-pq-compose.yml ]; then
+    log_info "Stopping ML-DSA-87 PKI containers (requires sudo)..."
+    sudo podman-compose -f pki-pq-compose.yml down 2>/dev/null || true
+fi
+
 # Stop FreeIPA containers (rootful)
-if [ -f freeipa-compose.yml ]; then
+if [ "$STOP_ALL" = true ] && [ -f freeipa-compose.yml ]; then
     log_info "Stopping FreeIPA containers (requires sudo)..."
     sudo podman-compose -f freeipa-compose.yml down 2>/dev/null || true
 fi
 
 # Force stop any remaining lab containers (rootless)
 log_info "Checking for remaining containers..."
-REMAINING=$(podman ps -a --format "{{.Names}}" 2>/dev/null | grep -E "(dogtag|freeipa|kafka|zookeeper|awx|eda|mock-|ds-root|ds-intermediate|ds-iot|postgres|redis|jupyter)" || true)
+REMAINING=$(podman ps -a --format "{{.Names}}" 2>/dev/null | grep -E "(dogtag|freeipa|kafka|zookeeper|awx|eda|mock-|ds-root|ds-intermediate|ds-iot|ds-ecc|ds-pq|postgres|redis|jupyter)" || true)
 if [ -n "$REMAINING" ]; then
     log_warn "Force stopping remaining rootless containers..."
     echo "$REMAINING" | xargs -r podman stop -t 5 2>/dev/null || true
@@ -67,9 +124,9 @@ if [ -n "$REMAINING" ]; then
 fi
 
 # Force stop any remaining rootful containers
-REMAINING_ROOT=$(sudo podman ps -a --format "{{.Names}}" 2>/dev/null | grep -E "(dogtag|freeipa|ds-root|ds-intermediate|ds-iot)" || true)
+REMAINING_ROOT=$(sudo podman ps -a --format "{{.Names}}" 2>/dev/null | grep -E "(dogtag|freeipa|ds-root|ds-intermediate|ds-iot|ds-ecc|ds-pq)" || true)
 if [ -n "$REMAINING_ROOT" ]; then
-    log_warn "Force stopping remaining rootful containers..."
+    log_warn "Force stopping rootful containers..."
     echo "$REMAINING_ROOT" | xargs -r sudo podman stop -t 5 2>/dev/null || true
     echo "$REMAINING_ROOT" | xargs -r sudo podman rm -f 2>/dev/null || true
 fi
@@ -123,9 +180,18 @@ if [ "$1" == "--clean" ]; then
         # Clean data directories
         log_info "Cleaning data directories..."
         rm -rf data/certs/* 2>/dev/null || true
+        rm -rf data/certs/rsa/* 2>/dev/null || true
+        rm -rf data/certs/ecc/* 2>/dev/null || true
+        rm -rf data/certs/pq/* 2>/dev/null || true
         rm -rf data/pki/root/* 2>/dev/null || true
         rm -rf data/pki/intermediate/* 2>/dev/null || true
         rm -rf data/pki/iot/* 2>/dev/null || true
+        rm -rf data/pki/ecc-root/* 2>/dev/null || true
+        rm -rf data/pki/ecc-intermediate/* 2>/dev/null || true
+        rm -rf data/pki/ecc-iot/* 2>/dev/null || true
+        rm -rf data/pki/pq-root/* 2>/dev/null || true
+        rm -rf data/pki/pq-intermediate/* 2>/dev/null || true
+        rm -rf data/pki/pq-iot/* 2>/dev/null || true
         rm -rf data/postgres/* 2>/dev/null || true
         rm -rf data/redis/* 2>/dev/null || true
         rm -rf data/freeipa/* 2>/dev/null || true

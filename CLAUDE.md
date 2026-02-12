@@ -4,20 +4,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Event-Driven Certificate Revocation Lab demonstrating automated certificate lifecycle management in Zero Trust Architecture. Uses a proper PKI hierarchy with Dogtag PKI and FreeIPA, integrated with Event-Driven Ansible for real-time security response.
+Event-Driven Certificate Revocation Lab demonstrating automated certificate lifecycle management in Zero Trust Architecture. Supports **three independent PKI hierarchies** with different cryptographic algorithms:
 
-## PKI Hierarchy
+- **RSA-4096**: Traditional cryptography (SHA-512 signatures)
+- **ECC P-384**: Elliptic Curve Cryptography (ECDSA with SHA-384)
+- **ML-DSA-87**: Post-Quantum Cryptography (NIST FIPS 204 Level 5)
+
+Uses Dogtag PKI and FreeIPA, integrated with Event-Driven Ansible for real-time security response.
+
+## Multi-Algorithm PKI Architecture
 
 ```
-Dogtag Root CA (172.20.0.12:8443) - Self-signed trust anchor
-       │
-Dogtag Intermediate CA (172.20.0.11:8444) - Online issuing CA
-       │
-       ├─────────────────────────────────────┐
-       │                                     │
-FreeIPA Internal CA (172.25.0.10:4443)  Dogtag IoT Sub-CA (172.20.0.13:8445)
-(Users, Hosts, Services)                (IoT Devices)
-[rootful podman - separate network]     [rootless podman]
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        Triple PKI Infrastructure                             │
+├─────────────────────────┬─────────────────────────┬─────────────────────────┤
+│   RSA-4096 PKI          │   ECC P-384 PKI         │   ML-DSA-87 PKI         │
+│   (Traditional)         │   (Elliptic Curve)      │   (Post-Quantum)        │
+├─────────────────────────┼─────────────────────────┼─────────────────────────┤
+│ Root CA (8443)          │ Root CA (8463)          │ Root CA (8453)          │
+│     │                   │     │                   │     │                   │
+│ Intermediate CA (8444)  │ Intermediate CA (8464)  │ Intermediate CA (8454)  │
+│     │                   │     │                   │     │                   │
+│ IoT Sub-CA (8445)       │ IoT Sub-CA (8465)       │ IoT Sub-CA (8455)       │
+├─────────────────────────┼─────────────────────────┼─────────────────────────┤
+│ Network: 172.26.0.0/24  │ Network: 172.28.0.0/24  │ Network: 172.27.0.0/24  │
+│ Security: CERT-LAB      │ Security: CERT-LAB-ECC  │ Security: CERT-LAB-PQ   │
+│ Certs: data/certs/rsa/  │ Certs: data/certs/ecc/  │ Certs: data/certs/pq/   │
+└─────────────────────────┴─────────────────────────┴─────────────────────────┘
+
+FreeIPA (172.25.0.10:4443) - Identity Management with internal CA
 ```
 
 ## Common Commands
@@ -26,14 +41,29 @@ FreeIPA Internal CA (172.25.0.10:4443)  Dogtag IoT Sub-CA (172.20.0.13:8445)
 # Install prerequisites (RHEL or Ubuntu)
 ./setup-prerequisites.sh
 
-# Start the lab
+# Start with RSA-4096 PKI only (default)
 ./start-lab.sh
 
+# Start with specific PKI type
+./start-lab.sh --rsa      # RSA-4096 only
+./start-lab.sh --ecc      # ECC P-384 only
+./start-lab.sh --pqc      # ML-DSA-87 only (post-quantum)
+
+# Start multiple PKI types
+./start-lab.sh --dual     # RSA + ML-DSA-87 (hybrid deployment)
+./start-lab.sh --all      # All three PKI types
+./start-lab.sh --rsa --ecc  # RSA + ECC
+
 # Start fresh (remove all data)
-./start-lab.sh --clean
+./start-lab.sh --clean --all
 
 # Stop the lab
 ./stop-lab.sh
+
+# Stop specific PKI only
+./stop-lab.sh --rsa       # Stop RSA PKI containers only
+./stop-lab.sh --ecc       # Stop ECC PKI containers only
+./stop-lab.sh --pqc       # Stop PQ PKI containers only
 
 # Stop and remove all volumes
 ./stop-lab.sh --clean
@@ -43,6 +73,9 @@ FreeIPA Internal CA (172.25.0.10:4443)  Dogtag IoT Sub-CA (172.20.0.13:8445)
 
 # View logs
 podman-compose logs -f <service-name>
+sudo podman-compose -f pki-compose.yml logs -f <service-name>      # RSA PKI
+sudo podman-compose -f pki-ecc-compose.yml logs -f <service-name>  # ECC PKI
+sudo podman-compose -f pki-pq-compose.yml logs -f <service-name>   # PQ PKI
 
 # Build mock security containers
 podman-compose build mock-edr mock-siem
@@ -114,10 +147,6 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 
 | IP | Service | Ports |
 |----|---------|-------|
-| 172.20.0.11 | Intermediate CA | 8444:8443 |
-| 172.20.0.12 | Root CA | 8443:8443 |
-| 172.20.0.13 | IoT CA | 8445:8443 |
-| 172.20.0.14-16 | 389DS instances | internal |
 | 172.20.0.20 | PostgreSQL | internal |
 | 172.20.0.21 | Redis | internal |
 | 172.20.0.22-23 | AWX web/task | 8084:8052 |
@@ -128,7 +157,34 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 | 172.20.0.51 | Mock SIEM | 8083:8000 |
 | 172.20.0.60 | Jupyter | 8888 |
 
-**FreeIPA Network (172.25.0.0/24)** - rootful podman (separate compose file):
+**RSA-4096 PKI Network (172.26.0.0/24)** - rootful podman:
+
+| IP | Service | Ports |
+|----|---------|-------|
+| 172.26.0.12 | RSA Root CA | 8443:8443 |
+| 172.26.0.11 | RSA Intermediate CA | 8444:8443 |
+| 172.26.0.13 | RSA IoT CA | 8445:8443 |
+| 172.26.0.14-16 | 389DS instances | internal |
+
+**ECC P-384 PKI Network (172.28.0.0/24)** - rootful podman:
+
+| IP | Service | Ports |
+|----|---------|-------|
+| 172.28.0.12 | ECC Root CA | 8463:8443 |
+| 172.28.0.11 | ECC Intermediate CA | 8464:8443 |
+| 172.28.0.13 | ECC IoT CA | 8465:8443 |
+| 172.28.0.14-16 | 389DS instances | internal |
+
+**ML-DSA-87 PKI Network (172.27.0.0/24)** - rootful podman:
+
+| IP | Service | Ports |
+|----|---------|-------|
+| 172.27.0.12 | PQ Root CA | 8453:8443 |
+| 172.27.0.11 | PQ Intermediate CA | 8454:8443 |
+| 172.27.0.13 | PQ IoT CA | 8455:8443 |
+| 172.27.0.14-16 | 389DS instances | internal |
+
+**FreeIPA Network (172.25.0.0/24)** - rootful podman:
 
 | IP | Service | Ports |
 |----|---------|-------|
@@ -137,53 +193,66 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 ## Directory Structure
 
 ```
-├── podman-compose.yml          # All container definitions
+├── podman-compose.yml          # Main services (Kafka, AWX, etc.)
+├── pki-compose.yml             # RSA-4096 PKI containers
+├── pki-ecc-compose.yml         # ECC P-384 PKI containers
+├── pki-pq-compose.yml          # ML-DSA-87 PKI containers
+├── freeipa-compose.yml         # FreeIPA container
 ├── setup-prerequisites.sh      # Cross-platform setup (RHEL/Ubuntu)
-├── start-lab.sh               # Phased startup orchestration
+├── start-lab.sh               # Phased startup (--rsa, --ecc, --pqc, --all)
 ├── stop-lab.sh                # Shutdown script
 ├── test-revocation.sh         # End-to-end test
 ├── .env                       # Environment configuration
 │
 ├── configs/pki/               # pkispawn configurations
-│   ├── root-ca.cfg
-│   ├── intermediate-ca-step1.cfg
-│   ├── intermediate-ca-step2.cfg
-│   ├── iot-ca-step1.cfg
-│   └── iot-ca-step2.cfg
+│   ├── root-ca.cfg                      # RSA Root CA
+│   ├── intermediate-ca-step1.cfg        # RSA Intermediate (CSR)
+│   ├── intermediate-ca-step2.cfg        # RSA Intermediate (install)
+│   ├── iot-ca-step1.cfg                 # RSA IoT (CSR)
+│   ├── iot-ca-step2.cfg                 # RSA IoT (install)
+│   ├── ecc-root-ca.cfg                  # ECC Root CA
+│   ├── ecc-intermediate-ca-step1.cfg    # ECC Intermediate (CSR)
+│   ├── ecc-intermediate-ca-step2.cfg    # ECC Intermediate (install)
+│   ├── ecc-iot-ca-step1.cfg             # ECC IoT (CSR)
+│   ├── ecc-iot-ca-step2.cfg             # ECC IoT (install)
+│   ├── pq-root-ca.cfg                   # PQ Root CA (ML-DSA-87)
+│   ├── pq-intermediate-ca-step1.cfg     # PQ Intermediate (CSR)
+│   ├── pq-intermediate-ca-step2.cfg     # PQ Intermediate (install)
+│   ├── pq-iot-ca-step1.cfg              # PQ IoT (CSR)
+│   └── pq-iot-ca-step2.cfg              # PQ IoT (install)
 │
 ├── scripts/pki/               # PKI initialization scripts
-│   ├── init-root-ca.sh
-│   ├── init-intermediate-ca.sh
-│   ├── init-iot-ca.sh
-│   ├── init-freeipa.sh
+│   ├── lib-pki-common.sh              # Shared functions
+│   ├── init-root-ca.sh                # RSA Root CA
+│   ├── init-intermediate-ca.sh        # RSA Intermediate CA
+│   ├── init-iot-ca.sh                 # RSA IoT CA
+│   ├── init-pki-hierarchy.sh          # RSA full hierarchy
+│   ├── init-ecc-root-ca.sh            # ECC Root CA
+│   ├── init-ecc-intermediate-ca.sh    # ECC Intermediate CA
+│   ├── init-ecc-iot-ca.sh             # ECC IoT CA
+│   ├── init-ecc-pki-hierarchy.sh      # ECC full hierarchy
+│   ├── init-pq-root-ca.sh             # PQ Root CA
+│   ├── init-pq-intermediate-ca.sh     # PQ Intermediate CA
+│   ├── init-pq-iot-ca.sh              # PQ IoT CA
+│   ├── init-pq-pki-hierarchy.sh       # PQ full hierarchy
 │   ├── sign-csr.sh
 │   └── export-chain.sh
 │
 ├── containers/
 │   ├── mock-edr/              # FastAPI EDR simulator
-│   │   ├── app.py
-│   │   ├── Containerfile
-│   │   └── requirements.txt
-│   └── mock-siem/             # FastAPI SIEM simulator
-│       ├── app.py
-│       ├── Containerfile
-│       └── requirements.txt
+│   ├── mock-siem/             # FastAPI SIEM simulator
+│   └── dogtag-pq/             # Custom Dogtag build with ML-DSA support
 │
 ├── ansible/
 │   ├── playbooks/
-│   │   ├── revoke-certificate.yml
-│   │   ├── issue-certificate.yml
-│   │   ├── device-enrollment.yml
-│   │   └── check-revocation-status.yml
 │   ├── rulebooks/
-│   │   ├── security-events.yml    # Kafka consumer
-│   │   └── webhook-events.yml     # HTTP webhook handler
 │   └── inventory/
-│       ├── hosts.yml
-│       └── group_vars/all.yml
 │
 └── data/
-    ├── certs/                 # Generated certificates
+    ├── certs/
+    │   ├── rsa/               # RSA-4096 certificates
+    │   ├── ecc/               # ECC P-384 certificates
+    │   └── pq/                # ML-DSA-87 certificates
     └── pki/                   # PKI data volumes
 ```
 
@@ -196,6 +265,34 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 - **Event-Driven Ansible**: Rulebook engine consuming Kafka events
 - **AWX**: Ansible automation platform
 - **FastAPI**: Mock EDR/SIEM implementations
+
+## PKI Algorithm Configurations
+
+### RSA-4096 (Traditional)
+```ini
+pki_ca_signing_key_type=rsa
+pki_ca_signing_key_algorithm=SHA512withRSA
+pki_ca_signing_key_size=4096
+pki_ca_signing_signing_algorithm=SHA512withRSA
+```
+
+### ECC P-384 (Elliptic Curve)
+```ini
+pki_ca_signing_key_type=ecc
+pki_ca_signing_key_algorithm=SHA384withEC
+pki_ca_signing_key_size=nistp384
+pki_ca_signing_signing_algorithm=SHA384withEC
+```
+
+### ML-DSA-87 (Post-Quantum - NIST FIPS 204)
+```ini
+pki_ca_signing_key_type=mldsa
+pki_ca_signing_key_algorithm=ML-DSA-87
+pki_ca_signing_key_size=87
+pki_ca_signing_signing_algorithm=ML-DSA-87
+```
+
+**Note**: ML-DSA-87 requires building Dogtag PKI from the master branch. The `containers/dogtag-pq/` directory contains the Containerfile for building a custom image with ML-DSA support.
 
 ## Environment Configuration
 

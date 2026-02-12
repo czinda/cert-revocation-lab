@@ -1,0 +1,228 @@
+# Post-Quantum PKI Compose File - ML-DSA-87 (NIST FIPS 204)
+#
+# Run with: sudo podman-compose -f pki-pq-compose.yml up -d
+#
+# This creates a complete Post-Quantum PKI hierarchy using ML-DSA-87,
+# completely independent from the RSA-4096 and ECC P-384 PKI hierarchies.
+#
+# NOTE: ML-DSA-87 requires building Dogtag PKI from the master branch.
+# Use the custom image built from containers/dogtag-pq/Containerfile
+#
+# Network: 172.27.0.0/24 (pki-pq-net)
+# Ports: 8453-8455 (CA), 3389 internal (DS)
+
+version: "3.8"
+
+services:
+  # 389 Directory Server for PQ Root CA
+  ds-pq-root:
+    image: quay.io/389ds/dirsrv:${DS_VERSION:-latest}
+    container_name: ds-pq-root
+    hostname: ds-pq-root.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_SUFFIX_NAME: pq-root-ca
+    volumes:
+      - ds-pq-root-data:/data
+    networks:
+      pki-pq-net:
+        ipv4_address: 172.27.0.14
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/libexec/dirsrv/dscontainer -H || ldapsearch -x -H ldap://localhost:3389 -b '' -s base > /dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 10
+
+  # 389 Directory Server for PQ Intermediate CA
+  ds-pq-intermediate:
+    image: quay.io/389ds/dirsrv:${DS_VERSION:-latest}
+    container_name: ds-pq-intermediate
+    hostname: ds-pq-intermediate.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_SUFFIX_NAME: pq-intermediate-ca
+    volumes:
+      - ds-pq-intermediate-data:/data
+    networks:
+      pki-pq-net:
+        ipv4_address: 172.27.0.15
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/libexec/dirsrv/dscontainer -H || ldapsearch -x -H ldap://localhost:3389 -b '' -s base > /dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 10
+
+  # 389 Directory Server for PQ IoT CA
+  ds-pq-iot:
+    image: quay.io/389ds/dirsrv:${DS_VERSION:-latest}
+    container_name: ds-pq-iot
+    hostname: ds-pq-iot.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      DS_SUFFIX_NAME: pq-iot-ca
+    volumes:
+      - ds-pq-iot-data:/data
+    networks:
+      pki-pq-net:
+        ipv4_address: 172.27.0.16
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/libexec/dirsrv/dscontainer -H || ldapsearch -x -H ldap://localhost:3389 -b '' -s base > /dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 10
+
+  # Dogtag PQ Root CA - ML-DSA-87 Self-Signed
+  # NOTE: Replace with custom image built from containers/dogtag-pq/
+  dogtag-pq-root-ca:
+    image: ${PQ_PKI_IMAGE:-localhost/dogtag-pki-pq:latest}
+    container_name: dogtag-pq-root-ca
+    hostname: pq-root-ca.${LAB_DOMAIN:-cert-lab.local}
+    privileged: true
+    depends_on:
+      ds-pq-root:
+        condition: service_healthy
+    environment:
+      PKI_DS_URL: ldap://ds-pq-root.cert-lab.local:3389
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_INSTANCE_NAME: pki-pq-root-ca
+      DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      # ML-DSA-87 specific settings
+      PQ_CA_KEY_TYPE: mldsa
+      PQ_CA_KEY_ALGORITHM: ML-DSA-87
+      PQ_CA_KEY_SIZE: 87
+    volumes:
+      - ./configs/pki:/etc/pki-configs:ro
+      - ./scripts/pki:/scripts:ro
+      - ./data/certs/pq:/certs
+      - pki-pq-root-data:/var/lib/pki
+      - pki-pq-root-logs:/var/log/pki
+    extra_hosts:
+      - "ds-pq-root.cert-lab.local:172.27.0.14"
+      - "ds-pq-intermediate.cert-lab.local:172.27.0.15"
+      - "ds-pq-iot.cert-lab.local:172.27.0.16"
+      - "pq-root-ca.cert-lab.local:172.27.0.12"
+      - "pq-intermediate-ca.cert-lab.local:172.27.0.11"
+      - "pq-iot-ca.cert-lab.local:172.27.0.13"
+    networks:
+      pki-pq-net:
+        ipv4_address: 172.27.0.12
+    ports:
+      - "8453:8443"
+      - "8483:8080"
+    command: ["/bin/bash", "-c", "sleep infinity"]
+
+  # Dogtag PQ Intermediate CA - ML-DSA-87
+  dogtag-pq-intermediate-ca:
+    image: ${PQ_PKI_IMAGE:-localhost/dogtag-pki-pq:latest}
+    container_name: dogtag-pq-intermediate-ca
+    hostname: pq-intermediate-ca.${LAB_DOMAIN:-cert-lab.local}
+    privileged: true
+    depends_on:
+      ds-pq-intermediate:
+        condition: service_healthy
+      dogtag-pq-root-ca:
+        condition: service_started
+    environment:
+      PKI_DS_URL: ldap://ds-pq-intermediate.cert-lab.local:3389
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_INSTANCE_NAME: pki-pq-intermediate-ca
+      DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      # ML-DSA-87 specific settings
+      PQ_CA_KEY_TYPE: mldsa
+      PQ_CA_KEY_ALGORITHM: ML-DSA-87
+      PQ_CA_KEY_SIZE: 87
+    volumes:
+      - ./configs/pki:/etc/pki-configs:ro
+      - ./scripts/pki:/scripts:ro
+      - ./data/certs/pq:/certs
+      - pki-pq-intermediate-data:/var/lib/pki
+      - pki-pq-intermediate-logs:/var/log/pki
+    extra_hosts:
+      - "ds-pq-root.cert-lab.local:172.27.0.14"
+      - "ds-pq-intermediate.cert-lab.local:172.27.0.15"
+      - "ds-pq-iot.cert-lab.local:172.27.0.16"
+      - "pq-root-ca.cert-lab.local:172.27.0.12"
+      - "pq-intermediate-ca.cert-lab.local:172.27.0.11"
+      - "pq-iot-ca.cert-lab.local:172.27.0.13"
+    networks:
+      pki-pq-net:
+        ipv4_address: 172.27.0.11
+    ports:
+      - "8454:8443"
+      - "8484:8080"
+    command: ["/bin/bash", "-c", "sleep infinity"]
+
+  # Dogtag PQ IoT Sub-CA - ML-DSA-87
+  dogtag-pq-iot-ca:
+    image: ${PQ_PKI_IMAGE:-localhost/dogtag-pki-pq:latest}
+    container_name: dogtag-pq-iot-ca
+    hostname: pq-iot-ca.${LAB_DOMAIN:-cert-lab.local}
+    privileged: true
+    depends_on:
+      ds-pq-iot:
+        condition: service_healthy
+      dogtag-pq-intermediate-ca:
+        condition: service_started
+    environment:
+      PKI_DS_URL: ldap://ds-pq-iot.cert-lab.local:3389
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123!}
+      PKI_INSTANCE_NAME: pki-pq-iot-ca
+      DS_PASSWORD: ${DS_PASSWORD:-RedHat123!}
+      # ML-DSA-87 specific settings
+      PQ_CA_KEY_TYPE: mldsa
+      PQ_CA_KEY_ALGORITHM: ML-DSA-87
+      PQ_CA_KEY_SIZE: 87
+    volumes:
+      - ./configs/pki:/etc/pki-configs:ro
+      - ./scripts/pki:/scripts:ro
+      - ./data/certs/pq:/certs
+      - pki-pq-iot-data:/var/lib/pki
+      - pki-pq-iot-logs:/var/log/pki
+    extra_hosts:
+      - "ds-pq-root.cert-lab.local:172.27.0.14"
+      - "ds-pq-intermediate.cert-lab.local:172.27.0.15"
+      - "ds-pq-iot.cert-lab.local:172.27.0.16"
+      - "pq-root-ca.cert-lab.local:172.27.0.12"
+      - "pq-intermediate-ca.cert-lab.local:172.27.0.11"
+      - "pq-iot-ca.cert-lab.local:172.27.0.13"
+    networks:
+      pki-pq-net:
+        ipv4_address: 172.27.0.13
+    ports:
+      - "8455:8443"
+      - "8485:8080"
+    command: ["/bin/bash", "-c", "sleep infinity"]
+
+networks:
+  pki-pq-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.27.0.0/24
+          gateway: 172.27.0.1
+
+volumes:
+  ds-pq-root-data:
+  ds-pq-intermediate-data:
+  ds-pq-iot-data:
+  pki-pq-root-data:
+  pki-pq-root-logs:
+  pki-pq-intermediate-data:
+  pki-pq-intermediate-logs:
+  pki-pq-iot-data:
+  pki-pq-iot-logs:

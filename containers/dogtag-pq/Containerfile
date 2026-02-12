@@ -1,0 +1,73 @@
+# Dogtag PKI with ML-DSA-87 (Post-Quantum) Support
+#
+# This Containerfile builds Dogtag PKI from the master branch
+# which includes support for ML-DSA (NIST FIPS 204) post-quantum signatures.
+#
+# Build with:
+#   podman build -t localhost/dogtag-pki-pq:latest -f Containerfile .
+#
+# Or use the provided build script:
+#   ./build.sh
+
+FROM fedora:41 AS builder
+
+# Install build dependencies
+RUN dnf install -y \
+    git \
+    maven \
+    java-17-openjdk-devel \
+    rpm-build \
+    cmake \
+    gcc \
+    gcc-c++ \
+    make \
+    openssl-devel \
+    nss-devel \
+    && dnf clean all
+
+# Clone Dogtag PKI from master (includes ML-DSA support)
+WORKDIR /build
+RUN git clone --depth 1 https://github.com/dogtagpki/pki.git
+
+# Build Dogtag PKI
+WORKDIR /build/pki
+RUN mvn install -DskipTests -Dmaven.javadoc.skip=true
+
+# Final image
+FROM fedora:41
+
+# Install runtime dependencies
+RUN dnf install -y \
+    java-17-openjdk-headless \
+    tomcat \
+    nss \
+    nss-tools \
+    openssl \
+    ldapsearch \
+    389-ds-base \
+    python3 \
+    python3-pip \
+    curl \
+    && dnf clean all
+
+# Copy built packages from builder
+COPY --from=builder /build/pki/dist/rpms/*.rpm /tmp/rpms/
+
+# Install Dogtag PKI packages
+RUN dnf install -y /tmp/rpms/*.rpm && \
+    rm -rf /tmp/rpms && \
+    dnf clean all
+
+# Create required directories
+RUN mkdir -p /var/lib/pki /var/log/pki /certs /scripts /etc/pki-configs
+
+# Environment variables
+ENV PKI_INSTANCE_NAME=pki-pq-ca
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=300s --retries=5 \
+    CMD curl -sk https://localhost:8443/ca/admin/ca/getStatus || exit 1
+
+# Default command - wait for initialization
+CMD ["/bin/bash", "-c", "sleep infinity"]
