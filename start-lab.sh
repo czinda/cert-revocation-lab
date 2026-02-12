@@ -219,9 +219,9 @@ setup_volumes() {
     else
         for vol in "${ROOTLESS_VOLUMES[@]}"; do
             if podman volume exists "$vol" 2>/dev/null; then
-                ((existed++))
+                ((existed++)) || true
             else
-                podman volume create "$vol" >/dev/null 2>&1 && ((created++))
+                podman volume create "$vol" >/dev/null 2>&1 && { ((created++)) || true; }
             fi
         done
         log_success "Rootless volumes: $existed exist, $created created"
@@ -233,18 +233,18 @@ setup_volumes() {
     if [ "$running_as_root" = true ]; then
         for vol in "${ROOTFUL_VOLUMES[@]}"; do
             if podman volume exists "$vol" 2>/dev/null; then
-                ((existed++))
+                ((existed++)) || true
             else
-                podman volume create "$vol" >/dev/null 2>&1 && ((created++))
+                podman volume create "$vol" >/dev/null 2>&1 && { ((created++)) || true; }
             fi
         done
         log_success "Rootful volumes: $existed exist, $created created"
     elif sudo -n true 2>/dev/null; then
         for vol in "${ROOTFUL_VOLUMES[@]}"; do
             if sudo podman volume exists "$vol" 2>/dev/null; then
-                ((existed++))
+                ((existed++)) || true
             else
-                sudo podman volume create "$vol" >/dev/null 2>&1 && ((created++))
+                sudo podman volume create "$vol" >/dev/null 2>&1 && { ((created++)) || true; }
             fi
         done
         log_success "Rootful volumes: $existed exist, $created created"
