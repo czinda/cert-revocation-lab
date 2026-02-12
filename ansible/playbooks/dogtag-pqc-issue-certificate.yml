@@ -1,0 +1,260 @@
+---
+# Dogtag ML-DSA-87 PKI - Certificate Issuance Playbook
+# Issues certificates using the Post-Quantum ML-DSA-87 PKI hierarchy
+#
+# NOTE: ML-DSA-87 requires OpenSSL 3.5+ or a PQC-enabled library for key generation
+# This playbook uses the Dogtag container which has PQC support built-in
+#
+# Variables:
+#   target_host - FQDN for the certificate subject
+#   cert_profile - Certificate profile (caServerCert, caUserCert, caCACert)
+#   ca_level - Which CA to use (root, intermediate, iot)
+#   output_dir - Directory for certificate output
+
+- name: Issue Certificate - ML-DSA-87 PKI (Post-Quantum)
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # PKI type
+    pki_type: "pqc"
+    pki_name: "ML-DSA-87"
+
+    # CA selection
+    target_ca: "{{ ca_level | default('intermediate') }}"
+
+    # Certificate request parameters
+    target_host: "{{ host_fqdn | default('device.cert-lab.local') }}"
+    cert_profile: "{{ profile | default('caServerCert') }}"
+    pq_algorithm: "ML-DSA-87"
+    validity_days: 365
+
+    # Output paths
+    output_dir: "{{ cert_output_dir | default('/tmp/certs/pqc') }}"
+    private_key_file: "{{ output_dir }}/{{ target_host }}.key"
+    csr_file: "{{ output_dir }}/{{ target_host }}.csr"
+    cert_file: "{{ output_dir }}/{{ target_host }}.crt"
+
+    # Logging
+    log_file: "/var/log/dogtag-issuance.log"
+
+    # PQC PKI configuration
+    ca_configs:
+      root:
+        container: "dogtag-pq-root-ca"
+        url: "https://pq-root-ca.cert-lab.local:8443"
+        instance: "pki-pq-root-ca"
+        nss_db: "/var/lib/pki/pki-pq-root-ca/alias"
+      intermediate:
+        container: "dogtag-pq-intermediate-ca"
+        url: "https://pq-intermediate-ca.cert-lab.local:8443"
+        instance: "pki-pq-intermediate-ca"
+        nss_db: "/var/lib/pki/pki-pq-intermediate-ca/alias"
+      iot:
+        container: "dogtag-pq-iot-ca"
+        url: "https://pq-iot-ca.cert-lab.local:8443"
+        instance: "pki-pq-iot-ca"
+        nss_db: "/var/lib/pki/pki-pq-iot-ca/alias"
+
+  tasks:
+    - name: Set CA configuration
+      ansible.builtin.set_fact:
+        ca_config: "{{ ca_configs[target_ca] }}"
+
+    - name: Display certificate request info
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          DOGTAG {{ pki_name }} - CERTIFICATE ISSUANCE (POST-QUANTUM)
+          ============================================================
+          Host:        {{ target_host }}
+          Profile:     {{ cert_profile }}
+          Algorithm:   {{ pq_algorithm }}
+          CA:          {{ target_ca | upper }} ({{ ca_config.container }})
+          Output:      {{ output_dir }}
+          ============================================================
+      tags: [always]
+
+    - name: Create output directory
+      ansible.builtin.file:
+        path: "{{ output_dir }}"
+        state: directory
+        mode: '0700'
+      tags: [setup]
+
+    - name: Block for certificate issuance
+      block:
+        # For PQC, we generate the key and CSR inside the container
+        # because standard OpenSSL may not support ML-DSA-87
+        - name: Generate ML-DSA-87 key and CSR inside container
+          ansible.builtin.shell: |
+            podman exec {{ ca_config.container }} bash -c '
+              # Create temp directory
+              mkdir -p /tmp/pqc-csr
+
+              # Generate ML-DSA-87 key pair using NSS tools
+              # Note: This uses the NSS certutil which supports ML-DSA in newer versions
+              cd /tmp/pqc-csr
+
+              # Create a temporary NSS database for key generation
+              rm -rf /tmp/pqc-csr/nssdb
+              mkdir -p /tmp/pqc-csr/nssdb
+              certutil -N -d /tmp/pqc-csr/nssdb --empty-password
+
+              # Generate key and CSR
+              # Using PKCS10Client for CSR generation with ML-DSA support
+              PKCS10Client -d /tmp/pqc-csr/nssdb \
+                -p "" \
+                -a mldsa \
+                -l 87 \
+                -o /tmp/pqc-csr/request.csr \
+                -n "CN={{ target_host }}"
+
+              # Output the CSR
+              cat /tmp/pqc-csr/request.csr
+            '
+          register: csr_gen
+          tags: [keygen, csr]
+
+        - name: Display CSR generation result
+          ansible.builtin.debug:
+            msg: "ML-DSA-87 CSR generated for {{ target_host }}"
+          tags: [csr]
+
+        - name: Submit certificate request to Dogtag
+          ansible.builtin.shell: |
+            podman exec {{ ca_config.container }} \
+              pki -d {{ ca_config.nss_db }} \
+                  -c "{{ lookup('env', 'PKI_ADMIN_PASSWORD') | default(lookup('env', 'ADMIN_PASSWORD')) }}" \
+                  -n "PKI Administrator for {{ ca_config.instance }}" \
+                  -U {{ ca_config.url }} \
+                  ca-cert-request-submit \
+                  --profile {{ cert_profile }} \
+                  --csr-file /tmp/pqc-csr/request.csr \
+              | grep "Request ID:" | awk '{print $3}'
+          register: request_submit
+          tags: [request]
+
+        - name: Set request ID
+          ansible.builtin.set_fact:
+            request_id: "{{ request_submit.stdout | trim }}"
+          tags: [request]
+
+        - name: Display request ID
+          ansible.builtin.debug:
+            msg: "Certificate request submitted - Request ID: {{ request_id }}"
+          tags: [request]
+
+        - name: Approve certificate request
+          ansible.builtin.shell: |
+            podman exec {{ ca_config.container }} \
+              pki -d {{ ca_config.nss_db }} \
+                  -c "{{ lookup('env', 'PKI_ADMIN_PASSWORD') | default(lookup('env', 'ADMIN_PASSWORD')) }}" \
+                  -n "PKI Administrator for {{ ca_config.instance }}" \
+                  -U {{ ca_config.url }} \
+                  ca-cert-request-approve {{ request_id }} --force
+          register: approve_result
+          tags: [approve]
+
+        - name: Get certificate serial from approval
+          ansible.builtin.shell: |
+            podman exec {{ ca_config.container }} \
+              pki -d {{ ca_config.nss_db }} \
+                  -c "{{ lookup('env', 'PKI_ADMIN_PASSWORD') | default(lookup('env', 'ADMIN_PASSWORD')) }}" \
+                  -n "PKI Administrator for {{ ca_config.instance }}" \
+                  -U {{ ca_config.url }} \
+                  ca-cert-request-show {{ request_id }} \
+              | grep "Certificate ID:" | awk '{print $3}'
+          register: cert_id_result
+          tags: [retrieve]
+
+        - name: Set certificate serial
+          ansible.builtin.set_fact:
+            cert_serial: "{{ cert_id_result.stdout | trim }}"
+          tags: [retrieve]
+
+        - name: Export certificate from Dogtag
+          ansible.builtin.shell: |
+            podman exec {{ ca_config.container }} \
+              pki -d {{ ca_config.nss_db }} \
+                  -c "{{ lookup('env', 'PKI_ADMIN_PASSWORD') | default(lookup('env', 'ADMIN_PASSWORD')) }}" \
+                  -n "PKI Administrator for {{ ca_config.instance }}" \
+                  -U {{ ca_config.url }} \
+                  ca-cert-export {{ cert_serial }} --output-file /tmp/cert.pem
+          tags: [retrieve]
+
+        - name: Copy certificate from container
+          ansible.builtin.shell: |
+            podman cp {{ ca_config.container }}:/tmp/cert.pem {{ cert_file }}
+          tags: [retrieve]
+
+        - name: Export private key from container
+          ansible.builtin.shell: |
+            podman exec {{ ca_config.container }} bash -c '
+              # Export the private key from NSS database
+              pk12util -o /tmp/pqc-key.p12 -d /tmp/pqc-csr/nssdb -n "{{ target_host }}" -W ""
+            ' || true
+            podman cp {{ ca_config.container }}:/tmp/pqc-key.p12 {{ output_dir }}/{{ target_host }}.p12 || true
+          tags: [retrieve]
+          ignore_errors: true
+
+        - name: Verify certificate (basic check)
+          ansible.builtin.shell: |
+            # Use openssl if it supports ML-DSA, otherwise use pki tool
+            podman exec {{ ca_config.container }} \
+              pki -d {{ ca_config.nss_db }} \
+                  -c "{{ lookup('env', 'PKI_ADMIN_PASSWORD') | default(lookup('env', 'ADMIN_PASSWORD')) }}" \
+                  ca-cert-show {{ cert_serial }}
+          register: cert_info
+          tags: [verify]
+
+        - name: Display certificate info
+          ansible.builtin.debug:
+            msg: "{{ cert_info.stdout_lines }}"
+          tags: [verify]
+
+        - name: Log issuance to file
+          ansible.builtin.lineinfile:
+            path: "{{ log_file }}"
+            line: "{{ lookup('pipe', 'date -Iseconds') }} | PKI={{ pki_name }} | CA={{ target_ca }} | SERIAL={{ cert_serial }} | CN={{ target_host }} | PROFILE={{ cert_profile }} | ALGORITHM={{ pq_algorithm }} | STATUS=ISSUED"
+            create: true
+            mode: '0644'
+          delegate_to: localhost
+          tags: [logging]
+
+      rescue:
+        - name: Log failure
+          ansible.builtin.debug:
+            msg: "Certificate issuance failed: {{ ansible_failed_result.msg | default('Unknown error') }}"
+          tags: [error]
+
+        - name: Log error to file
+          ansible.builtin.lineinfile:
+            path: "{{ log_file }}"
+            line: "{{ lookup('pipe', 'date -Iseconds') }} | PKI={{ pki_name }} | CA={{ target_ca }} | CN={{ target_host }} | STATUS=FAILED | ERROR={{ ansible_failed_result.msg | default('Unknown') }}"
+            create: true
+            mode: '0644'
+          delegate_to: localhost
+          tags: [error, logging]
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          DOGTAG {{ pki_name }} - CERTIFICATE ISSUED (POST-QUANTUM)
+          ============================================================
+          Serial:      {{ cert_serial | default('N/A') }}
+          Subject:     CN={{ target_host }}
+          CA:          {{ target_ca | upper }}
+          Profile:     {{ cert_profile }}
+          Algorithm:   {{ pq_algorithm }}
+
+          Files:
+            Certificate: {{ cert_file }}
+            PKCS#12:     {{ output_dir }}/{{ target_host }}.p12 (if available)
+
+          NOTE: ML-DSA-87 provides NIST Level 5 post-quantum security
+          (equivalent to 256-bit classical security)
+
+          {{ cert_info.stdout | default('') }}
+          ============================================================
+      tags: [always]

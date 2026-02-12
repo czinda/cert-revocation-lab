@@ -1,0 +1,246 @@
+---
+# Dogtag ECC P-384 PKI - Certificate Issuance Playbook
+# Issues certificates using the ECC P-384 PKI hierarchy
+#
+# Variables:
+#   target_host - FQDN for the certificate subject
+#   cert_profile - Certificate profile (caServerCert, caUserCert, caCACert)
+#   ca_level - Which CA to use (root, intermediate, iot)
+#   output_dir - Directory for certificate output
+
+- name: Issue Certificate - ECC P-384 PKI
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # PKI type
+    pki_type: "ecc"
+    pki_name: "ECC P-384"
+
+    # CA selection
+    target_ca: "{{ ca_level | default('intermediate') }}"
+
+    # Certificate request parameters
+    target_host: "{{ host_fqdn | default('device.cert-lab.local') }}"
+    cert_profile: "{{ profile | default('caServerCert') }}"
+    ec_curve: "secp384r1"
+    validity_days: 365
+
+    # Output paths
+    output_dir: "{{ cert_output_dir | default('/tmp/certs/ecc') }}"
+    private_key_file: "{{ output_dir }}/{{ target_host }}.key"
+    csr_file: "{{ output_dir }}/{{ target_host }}.csr"
+    cert_file: "{{ output_dir }}/{{ target_host }}.crt"
+
+    # Logging
+    log_file: "/var/log/dogtag-issuance.log"
+
+    # ECC PKI configuration
+    ca_configs:
+      root:
+        container: "dogtag-ecc-root-ca"
+        url: "https://ecc-root-ca.cert-lab.local:8443"
+        instance: "pki-ecc-root-ca"
+        nss_db: "/var/lib/pki/pki-ecc-root-ca/alias"
+      intermediate:
+        container: "dogtag-ecc-intermediate-ca"
+        url: "https://ecc-intermediate-ca.cert-lab.local:8443"
+        instance: "pki-ecc-intermediate-ca"
+        nss_db: "/var/lib/pki/pki-ecc-intermediate-ca/alias"
+      iot:
+        container: "dogtag-ecc-iot-ca"
+        url: "https://ecc-iot-ca.cert-lab.local:8443"
+        instance: "pki-ecc-iot-ca"
+        nss_db: "/var/lib/pki/pki-ecc-iot-ca/alias"
+
+  tasks:
+    - name: Set CA configuration
+      ansible.builtin.set_fact:
+        ca_config: "{{ ca_configs[target_ca] }}"
+
+    - name: Display certificate request info
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          DOGTAG {{ pki_name }} - CERTIFICATE ISSUANCE
+          ============================================================
+          Host:       {{ target_host }}
+          Profile:    {{ cert_profile }}
+          EC Curve:   {{ ec_curve }}
+          CA:         {{ target_ca | upper }} ({{ ca_config.container }})
+          Output:     {{ output_dir }}
+          ============================================================
+      tags: [always]
+
+    - name: Create output directory
+      ansible.builtin.file:
+        path: "{{ output_dir }}"
+        state: directory
+        mode: '0700'
+      tags: [setup]
+
+    - name: Block for certificate issuance
+      block:
+        - name: Generate ECC private key
+          ansible.builtin.command:
+            cmd: >
+              openssl ecparam -name {{ ec_curve }} -genkey -out {{ private_key_file }}
+          args:
+            creates: "{{ private_key_file }}"
+          tags: [keygen]
+
+        - name: Set private key permissions
+          ansible.builtin.file:
+            path: "{{ private_key_file }}"
+            mode: '0600'
+          tags: [keygen]
+
+        - name: Generate CSR
+          ansible.builtin.command:
+            cmd: >
+              openssl req -new
+              -key {{ private_key_file }}
+              -out {{ csr_file }}
+              -subj "/CN={{ target_host }}"
+              -sha384
+          args:
+            creates: "{{ csr_file }}"
+          tags: [csr]
+
+        - name: Read CSR content
+          ansible.builtin.slurp:
+            src: "{{ csr_file }}"
+          register: csr_content
+          tags: [csr]
+
+        - name: Display CSR info
+          ansible.builtin.debug:
+            msg: "CSR generated for {{ target_host }} using {{ ec_curve }}"
+          tags: [csr]
+
+        - name: Copy CSR to CA container
+          ansible.builtin.shell: |
+            podman cp {{ csr_file }} {{ ca_config.container }}:/tmp/request.csr
+          tags: [request]
+
+        - name: Submit certificate request to Dogtag
+          ansible.builtin.shell: |
+            podman exec {{ ca_config.container }} \
+              pki -d {{ ca_config.nss_db }} \
+                  -c "{{ lookup('env', 'PKI_ADMIN_PASSWORD') | default(lookup('env', 'ADMIN_PASSWORD')) }}" \
+                  -n "PKI Administrator for {{ ca_config.instance }}" \
+                  -U {{ ca_config.url }} \
+                  ca-cert-request-submit \
+                  --profile {{ cert_profile }} \
+                  --csr-file /tmp/request.csr \
+              | grep "Request ID:" | awk '{print $3}'
+          register: request_submit
+          tags: [request]
+
+        - name: Set request ID
+          ansible.builtin.set_fact:
+            request_id: "{{ request_submit.stdout | trim }}"
+          tags: [request]
+
+        - name: Display request ID
+          ansible.builtin.debug:
+            msg: "Certificate request submitted - Request ID: {{ request_id }}"
+          tags: [request]
+
+        - name: Approve certificate request
+          ansible.builtin.shell: |
+            podman exec {{ ca_config.container }} \
+              pki -d {{ ca_config.nss_db }} \
+                  -c "{{ lookup('env', 'PKI_ADMIN_PASSWORD') | default(lookup('env', 'ADMIN_PASSWORD')) }}" \
+                  -n "PKI Administrator for {{ ca_config.instance }}" \
+                  -U {{ ca_config.url }} \
+                  ca-cert-request-approve {{ request_id }} --force
+          register: approve_result
+          tags: [approve]
+
+        - name: Get certificate serial from approval
+          ansible.builtin.shell: |
+            podman exec {{ ca_config.container }} \
+              pki -d {{ ca_config.nss_db }} \
+                  -c "{{ lookup('env', 'PKI_ADMIN_PASSWORD') | default(lookup('env', 'ADMIN_PASSWORD')) }}" \
+                  -n "PKI Administrator for {{ ca_config.instance }}" \
+                  -U {{ ca_config.url }} \
+                  ca-cert-request-show {{ request_id }} \
+              | grep "Certificate ID:" | awk '{print $3}'
+          register: cert_id_result
+          tags: [retrieve]
+
+        - name: Set certificate serial
+          ansible.builtin.set_fact:
+            cert_serial: "{{ cert_id_result.stdout | trim }}"
+          tags: [retrieve]
+
+        - name: Export certificate from Dogtag
+          ansible.builtin.shell: |
+            podman exec {{ ca_config.container }} \
+              pki -d {{ ca_config.nss_db }} \
+                  -c "{{ lookup('env', 'PKI_ADMIN_PASSWORD') | default(lookup('env', 'ADMIN_PASSWORD')) }}" \
+                  -n "PKI Administrator for {{ ca_config.instance }}" \
+                  -U {{ ca_config.url }} \
+                  ca-cert-export {{ cert_serial }} --output-file /tmp/cert.pem
+          tags: [retrieve]
+
+        - name: Copy certificate from container
+          ansible.builtin.shell: |
+            podman cp {{ ca_config.container }}:/tmp/cert.pem {{ cert_file }}
+          tags: [retrieve]
+
+        - name: Verify certificate
+          ansible.builtin.command:
+            cmd: "openssl x509 -in {{ cert_file }} -noout -subject -issuer -dates -serial"
+          register: cert_info
+          tags: [verify]
+
+        - name: Display certificate info
+          ansible.builtin.debug:
+            msg: "{{ cert_info.stdout_lines }}"
+          tags: [verify]
+
+        - name: Log issuance to file
+          ansible.builtin.lineinfile:
+            path: "{{ log_file }}"
+            line: "{{ lookup('pipe', 'date -Iseconds') }} | PKI={{ pki_name }} | CA={{ target_ca }} | SERIAL={{ cert_serial }} | CN={{ target_host }} | PROFILE={{ cert_profile }} | STATUS=ISSUED"
+            create: true
+            mode: '0644'
+          delegate_to: localhost
+          tags: [logging]
+
+      rescue:
+        - name: Log failure
+          ansible.builtin.debug:
+            msg: "Certificate issuance failed: {{ ansible_failed_result.msg | default('Unknown error') }}"
+          tags: [error]
+
+        - name: Log error to file
+          ansible.builtin.lineinfile:
+            path: "{{ log_file }}"
+            line: "{{ lookup('pipe', 'date -Iseconds') }} | PKI={{ pki_name }} | CA={{ target_ca }} | CN={{ target_host }} | STATUS=FAILED | ERROR={{ ansible_failed_result.msg | default('Unknown') }}"
+            create: true
+            mode: '0644'
+          delegate_to: localhost
+          tags: [error, logging]
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          DOGTAG {{ pki_name }} - CERTIFICATE ISSUED
+          ============================================================
+          Serial:      {{ cert_serial | default('N/A') }}
+          Subject:     CN={{ target_host }}
+          CA:          {{ target_ca | upper }}
+          Profile:     {{ cert_profile }}
+          EC Curve:    {{ ec_curve }}
+
+          Files:
+            Private Key: {{ private_key_file }}
+            Certificate: {{ cert_file }}
+            CSR:         {{ csr_file }}
+
+          {{ cert_info.stdout | default('') }}
+          ============================================================
+      tags: [always]

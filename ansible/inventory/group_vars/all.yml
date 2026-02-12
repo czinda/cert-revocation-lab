@@ -43,6 +43,7 @@ auto_revoke_severities:
 
 # Event types that trigger automatic revocation
 auto_revoke_event_types:
+  # Original event types
   - malware_detection
   - credential_theft
   - ransomware
@@ -51,6 +52,28 @@ auto_revoke_event_types:
   - certificate_misuse
   - data_exfiltration
   - unauthorized_access
+  - privilege_escalation
+  - suspicious_script
+  # PKI/Certificate events
+  - key_compromise
+  - geo_anomaly
+  - compliance_violation
+  - mitm_detected
+  - rogue_ca
+  # IoT events
+  - firmware_integrity
+  - device_cloning
+  - iot_anomaly
+  - protocol_attack
+  # Identity events
+  - impossible_travel
+  - service_account_abuse
+  - mfa_bypass
+  - kerberoasting
+  # Network events
+  - tls_downgrade
+  - ct_log_mismatch
+  - ocsp_bypass
 
 # Logging
 log_directory: /var/log/cert-revocation

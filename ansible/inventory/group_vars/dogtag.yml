@@ -1,0 +1,194 @@
+---
+# Dogtag PKI Configuration for RSA, ECC, and PQC deployments
+# Used by dogtag-*-revoke-certificate.yml and dogtag-*-issue-certificate.yml playbooks
+
+# Lab domain
+lab_domain: cert-lab.local
+
+# PKI Admin credentials
+pki_admin_user: caadmin
+pki_admin_password: "{{ lookup('env', 'PKI_ADMIN_PASSWORD') | default(lookup('env', 'ADMIN_PASSWORD')) | mandatory }}"
+pki_client_db_password: "{{ lookup('env', 'PKI_CLIENT_DB_PASSWORD') | default(pki_admin_password) }}"
+
+# Security domain
+pki_security_domain: CERT-LAB
+
+# ============================================================================
+# RSA-4096 PKI Configuration (Traditional Cryptography)
+# ============================================================================
+rsa_pki:
+  name: "RSA-4096"
+  key_type: "rsa"
+  key_size: 4096
+  signing_algorithm: "SHA512withRSA"
+
+  # CA endpoints
+  root_ca:
+    host: "root-ca.cert-lab.local"
+    url: "https://root-ca.cert-lab.local:8443"
+    port: 8443
+    instance: "pki-root-ca"
+    nss_db: "/var/lib/pki/pki-root-ca/alias"
+
+  intermediate_ca:
+    host: "intermediate-ca.cert-lab.local"
+    url: "https://intermediate-ca.cert-lab.local:8443"
+    port: 8444
+    instance: "pki-intermediate-ca"
+    nss_db: "/var/lib/pki/pki-intermediate-ca/alias"
+
+  iot_ca:
+    host: "iot-ca.cert-lab.local"
+    url: "https://iot-ca.cert-lab.local:8443"
+    port: 8445
+    instance: "pki-iot-ca"
+    nss_db: "/var/lib/pki/pki-iot-ca/alias"
+
+  # Certificate output paths
+  cert_dir: "/certs/rsa"
+
+  # Container names
+  containers:
+    root: "dogtag-root-ca"
+    intermediate: "dogtag-intermediate-ca"
+    iot: "dogtag-iot-ca"
+
+# ============================================================================
+# ECC P-384 PKI Configuration (Elliptic Curve Cryptography)
+# ============================================================================
+ecc_pki:
+  name: "ECC P-384"
+  key_type: "ec"
+  key_size: 384
+  signing_algorithm: "SHA384withEC"
+  curve: "nistp384"
+
+  # CA endpoints
+  root_ca:
+    host: "ecc-root-ca.cert-lab.local"
+    url: "https://ecc-root-ca.cert-lab.local:8443"
+    port: 8463
+    instance: "pki-ecc-root-ca"
+    nss_db: "/var/lib/pki/pki-ecc-root-ca/alias"
+
+  intermediate_ca:
+    host: "ecc-intermediate-ca.cert-lab.local"
+    url: "https://ecc-intermediate-ca.cert-lab.local:8443"
+    port: 8464
+    instance: "pki-ecc-intermediate-ca"
+    nss_db: "/var/lib/pki/pki-ecc-intermediate-ca/alias"
+
+  iot_ca:
+    host: "ecc-iot-ca.cert-lab.local"
+    url: "https://ecc-iot-ca.cert-lab.local:8443"
+    port: 8465
+    instance: "pki-ecc-iot-ca"
+    nss_db: "/var/lib/pki/pki-ecc-iot-ca/alias"
+
+  # Certificate output paths
+  cert_dir: "/certs/ecc"
+
+  # Container names
+  containers:
+    root: "dogtag-ecc-root-ca"
+    intermediate: "dogtag-ecc-intermediate-ca"
+    iot: "dogtag-ecc-iot-ca"
+
+# ============================================================================
+# ML-DSA-87 PKI Configuration (Post-Quantum Cryptography)
+# ============================================================================
+pqc_pki:
+  name: "ML-DSA-87"
+  key_type: "mldsa"
+  key_size: 87
+  signing_algorithm: "ML-DSA-87"
+
+  # CA endpoints
+  root_ca:
+    host: "pq-root-ca.cert-lab.local"
+    url: "https://pq-root-ca.cert-lab.local:8443"
+    port: 8453
+    instance: "pki-pq-root-ca"
+    nss_db: "/var/lib/pki/pki-pq-root-ca/alias"
+
+  intermediate_ca:
+    host: "pq-intermediate-ca.cert-lab.local"
+    url: "https://pq-intermediate-ca.cert-lab.local:8443"
+    port: 8454
+    instance: "pki-pq-intermediate-ca"
+    nss_db: "/var/lib/pki/pki-pq-intermediate-ca/alias"
+
+  iot_ca:
+    host: "pq-iot-ca.cert-lab.local"
+    url: "https://pq-iot-ca.cert-lab.local:8443"
+    port: 8455
+    instance: "pki-pq-iot-ca"
+    nss_db: "/var/lib/pki/pki-pq-iot-ca/alias"
+
+  # Certificate output paths
+  cert_dir: "/certs/pq"
+
+  # Container names
+  containers:
+    root: "dogtag-pq-root-ca"
+    intermediate: "dogtag-pq-intermediate-ca"
+    iot: "dogtag-pq-iot-ca"
+
+# ============================================================================
+# Certificate Profiles
+# ============================================================================
+cert_profiles:
+  ca_cert: "caCACert"           # For subordinate CA certificates
+  server_cert: "caServerCert"   # For server TLS certificates
+  user_cert: "caUserCert"       # For user certificates
+  iot_cert: "caServerCert"      # For IoT device certificates
+
+# ============================================================================
+# Revocation Reasons (RFC 5280)
+# ============================================================================
+revocation_reasons:
+  unspecified: 0
+  key_compromise: 1
+  ca_compromise: 2
+  affiliation_changed: 3
+  superseded: 4
+  cessation_of_operation: 5
+  certificate_hold: 6
+  remove_from_crl: 8
+  privilege_withdrawn: 9
+  aa_compromise: 10
+
+# Default reason for security events
+default_revocation_reason: 1  # keyCompromise
+
+# ============================================================================
+# Event Type to PKI Mapping
+# ============================================================================
+# Determines which PKI should handle revocation based on event type
+event_pki_mapping:
+  # IoT-related events use IoT CA
+  firmware_integrity: "iot"
+  device_cloning: "iot"
+  iot_anomaly: "iot"
+  protocol_attack: "iot"
+
+  # PKI-specific events use the affected PKI
+  key_compromise: "auto"       # Detect from certificate
+  rogue_ca: "auto"
+  ct_log_mismatch: "auto"
+  ocsp_bypass: "auto"
+
+  # Identity events use Intermediate CA
+  impossible_travel: "intermediate"
+  service_account_abuse: "intermediate"
+  mfa_bypass: "intermediate"
+  kerberoasting: "intermediate"
+
+  # Network/general events use Intermediate CA
+  geo_anomaly: "intermediate"
+  compliance_violation: "intermediate"
+  mitm_detected: "intermediate"
+  tls_downgrade: "intermediate"
+
+  # Default fallback
+  default: "intermediate"

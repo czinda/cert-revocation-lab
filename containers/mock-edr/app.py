@@ -33,6 +33,7 @@ class TriggerRequest(BaseModel):
     scenario: str = Field(default="Generic Malware Detection", description="Attack scenario name")
     severity: str = Field(default="high", pattern="^(low|medium|high|critical)$")
     certificate_cn: Optional[str] = Field(None, description="Certificate CN to revoke")
+    pki_type: Optional[str] = Field(None, pattern="^(rsa|ecc|pqc)$", description="PKI type for certificate operations (rsa, ecc, pqc)")
 
 
 class SecurityEvent(BaseModel):
@@ -50,6 +51,7 @@ class SecurityEvent(BaseModel):
     file_hash: Optional[str] = None
     network_ioc: Optional[str] = None
     certificate_cn: Optional[str] = None
+    pki_type: Optional[str] = None
     action_required: str
     raw_alert: dict
 
@@ -354,11 +356,13 @@ async def trigger_event(request: TriggerRequest, background_tasks: BackgroundTas
         file_hash=scenario.get("file_hash"),
         network_ioc=scenario.get("network_ioc"),
         certificate_cn=cert_cn,
+        pki_type=request.pki_type,
         action_required="revoke_certificate",
         raw_alert={
             "scenario": request.scenario,
             "triggered_at": datetime.utcnow().isoformat(),
-            "edr_version": "1.0.0"
+            "edr_version": "1.0.0",
+            "pki_type": request.pki_type
         }
     )
 
@@ -381,12 +385,12 @@ async def trigger_event(request: TriggerRequest, background_tasks: BackgroundTas
 
 
 @app.post("/trigger/bulk")
-async def trigger_bulk_events(devices: List[str], scenario: str = "Generic Malware Detection"):
+async def trigger_bulk_events(devices: List[str], scenario: str = "Generic Malware Detection", pki_type: Optional[str] = None):
     """Trigger events for multiple devices"""
     results = []
 
     for device_id in devices:
-        request = TriggerRequest(device_id=device_id, scenario=scenario)
+        request = TriggerRequest(device_id=device_id, scenario=scenario, pki_type=pki_type)
         try:
             result = await trigger_event(request, BackgroundTasks())
             results.append({"device": device_id, "status": "success", "event_id": result.event_id})

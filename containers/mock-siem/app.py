@@ -35,6 +35,7 @@ class SIEMAlert(BaseModel):
     device_hostname: Optional[str] = Field(None, description="Associated device hostname")
     username: Optional[str] = Field(None, description="Associated username")
     description: Optional[str] = Field(None, description="Alert description")
+    pki_type: Optional[str] = Field(None, pattern="^(rsa|ecc|pqc)$", description="PKI type for certificate operations (rsa, ecc, pqc)")
 
 
 class CorrelatedEvent(BaseModel):
@@ -53,6 +54,7 @@ class CorrelatedEvent(BaseModel):
     description: str
     rule_name: str
     certificate_cn: Optional[str]
+    pki_type: Optional[str]
     action_required: str
     related_events: List[str]
     raw_logs: dict
@@ -331,6 +333,7 @@ async def create_alert(alert: SIEMAlert):
         description=alert.description or rule["description"],
         rule_name=rule["rule_name"],
         certificate_cn=device_fqdn,
+        pki_type=alert.pki_type,
         action_required=rule["action_required"],
         related_events=[str(uuid.uuid4()) for _ in range(random.randint(1, 5))],
         raw_logs={
@@ -340,7 +343,8 @@ async def create_alert(alert: SIEMAlert):
             "log_sources": ["firewall", "ids", "dns"],
             "event_count": random.randint(10, 100),
             "first_seen": (datetime.utcnow()).isoformat(),
-            "siem_version": "1.0.0"
+            "siem_version": "1.0.0",
+            "pki_type": alert.pki_type
         }
     )
 
@@ -360,10 +364,16 @@ async def create_alert(alert: SIEMAlert):
 
 
 @app.post("/trigger")
-async def trigger_event(device_id: str, scenario: str = "malware_callback", severity: str = "high"):
+async def trigger_event(device_id: str, scenario: str = "malware_callback", severity: str = "high", pki_type: Optional[str] = None):
     """
     Simplified trigger endpoint (compatible with test script).
     Creates a SIEM alert for the specified device.
+
+    Args:
+        device_id: Device hostname
+        scenario: SIEM correlation rule/scenario name
+        severity: Alert severity (low, medium, high, critical)
+        pki_type: PKI type for certificate operations (rsa, ecc, pqc)
     """
     alert = SIEMAlert(
         source_ip="10.0.0." + str(random.randint(1, 254)),
@@ -371,7 +381,8 @@ async def trigger_event(device_id: str, scenario: str = "malware_callback", seve
         alert_type=scenario,
         severity=severity,
         device_hostname=device_id,
-        description=f"SIEM Alert: {scenario} detected on {device_id}"
+        description=f"SIEM Alert: {scenario} detected on {device_id}",
+        pki_type=pki_type
     )
 
     result = await create_alert(alert)
@@ -381,15 +392,21 @@ async def trigger_event(device_id: str, scenario: str = "malware_callback", seve
         "event_id": result.event_id,
         "device_id": device_id,
         "scenario": scenario,
+        "pki_type": pki_type,
         "message": result.message
     }
 
 
 @app.post("/simulate/attack-chain")
-async def simulate_attack_chain(target_device: str, attack_phases: int = 4):
+async def simulate_attack_chain(target_device: str, attack_phases: int = 4, pki_type: Optional[str] = None):
     """
     Simulate a multi-phase attack with correlated events.
     Useful for demonstrating SIEM correlation capabilities.
+
+    Args:
+        target_device: Target device hostname
+        attack_phases: Number of attack phases to simulate (1-4)
+        pki_type: PKI type for certificate operations (rsa, ecc, pqc)
     """
     phases = [
         ("brute_force_attack", "medium", "Initial Access"),
@@ -408,7 +425,8 @@ async def simulate_attack_chain(target_device: str, attack_phases: int = 4):
             alert_type=alert_type,
             severity=severity,
             device_hostname=target_device,
-            description=f"Attack Phase {i+1}: {phase_name}"
+            description=f"Attack Phase {i+1}: {phase_name}",
+            pki_type=pki_type
         )
 
         try:
@@ -430,16 +448,21 @@ async def simulate_attack_chain(target_device: str, attack_phases: int = 4):
     return {
         "attack_chain_id": correlation_id,
         "target": target_device,
+        "pki_type": pki_type,
         "phases_executed": len(results),
         "results": results
     }
 
 
 @app.post("/simulate/iot-compromise")
-async def simulate_iot_compromise(target_device: str):
+async def simulate_iot_compromise(target_device: str, pki_type: Optional[str] = None):
     """
     Simulate an IoT device compromise attack chain.
     Demonstrates IoT-specific security events.
+
+    Args:
+        target_device: Target IoT device hostname
+        pki_type: PKI type for certificate operations (rsa, ecc, pqc)
     """
     phases = [
         ("protocol_exploitation", "medium", "Protocol Exploitation"),
@@ -459,7 +482,8 @@ async def simulate_iot_compromise(target_device: str):
             alert_type=alert_type,
             severity=severity,
             device_hostname=target_device,
-            description=f"IoT Attack Phase {i+1}: {phase_name}"
+            description=f"IoT Attack Phase {i+1}: {phase_name}",
+            pki_type=pki_type
         )
 
         try:
@@ -482,16 +506,21 @@ async def simulate_iot_compromise(target_device: str):
         "attack_chain_id": correlation_id,
         "attack_type": "iot_compromise",
         "target": target_device,
+        "pki_type": pki_type,
         "phases_executed": len(results),
         "results": results
     }
 
 
 @app.post("/simulate/pki-attack")
-async def simulate_pki_attack(target_device: str):
+async def simulate_pki_attack(target_device: str, pki_type: Optional[str] = None):
     """
     Simulate a PKI/Certificate-focused attack chain.
     Demonstrates certificate-specific security events.
+
+    Args:
+        target_device: Target device hostname
+        pki_type: PKI type for certificate operations (rsa, ecc, pqc)
     """
     phases = [
         ("key_compromise", "critical", "Private Key Extraction"),
@@ -511,7 +540,8 @@ async def simulate_pki_attack(target_device: str):
             alert_type=alert_type,
             severity=severity,
             device_hostname=target_device,
-            description=f"PKI Attack Phase {i+1}: {phase_name}"
+            description=f"PKI Attack Phase {i+1}: {phase_name}",
+            pki_type=pki_type
         )
 
         try:
@@ -534,16 +564,22 @@ async def simulate_pki_attack(target_device: str):
         "attack_chain_id": correlation_id,
         "attack_type": "pki_attack",
         "target": target_device,
+        "pki_type": pki_type,
         "phases_executed": len(results),
         "results": results
     }
 
 
 @app.post("/simulate/identity-theft")
-async def simulate_identity_theft(target_user: str, target_device: str = "workstation01"):
+async def simulate_identity_theft(target_user: str, target_device: str = "workstation01", pki_type: Optional[str] = None):
     """
     Simulate an identity theft attack chain.
     Demonstrates identity and access security events.
+
+    Args:
+        target_user: Target username
+        target_device: Target device hostname
+        pki_type: PKI type for certificate operations (rsa, ecc, pqc)
     """
     phases = [
         ("brute_force_attack", "medium", "Credential Guessing"),
@@ -564,7 +600,8 @@ async def simulate_identity_theft(target_user: str, target_device: str = "workst
             severity=severity,
             device_hostname=target_device,
             username=target_user,
-            description=f"Identity Attack Phase {i+1}: {phase_name}"
+            description=f"Identity Attack Phase {i+1}: {phase_name}",
+            pki_type=pki_type
         )
 
         try:
@@ -588,6 +625,7 @@ async def simulate_identity_theft(target_user: str, target_device: str = "workst
         "attack_type": "identity_theft",
         "target_user": target_user,
         "target_device": target_device,
+        "pki_type": pki_type,
         "phases_executed": len(results),
         "results": results
     }

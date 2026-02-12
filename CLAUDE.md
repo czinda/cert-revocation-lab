@@ -387,3 +387,71 @@ Privileged ports (<1024) are remapped to higher ports for rootless compatibility
 - FreeIPA LDAP: 3390 (not 389)
 - FreeIPA LDAPS: 6360 (not 636)
 - AWX: 8084 (not 8080, avoids conflicts)
+
+## Dogtag PKI Integration
+
+The lab now supports direct certificate operations against the standalone Dogtag CAs. The EDA rulebook routes events to the appropriate PKI based on event type and optional `pki_type` field.
+
+### Ansible Playbooks for Dogtag
+
+**Certificate Revocation:**
+- `ansible/playbooks/dogtag-rsa-revoke-certificate.yml` - RSA-4096 PKI
+- `ansible/playbooks/dogtag-ecc-revoke-certificate.yml` - ECC P-384 PKI
+- `ansible/playbooks/dogtag-pqc-revoke-certificate.yml` - ML-DSA-87 PKI
+
+**Certificate Issuance:**
+- `ansible/playbooks/dogtag-rsa-issue-certificate.yml` - RSA-4096 PKI
+- `ansible/playbooks/dogtag-ecc-issue-certificate.yml` - ECC P-384 PKI
+- `ansible/playbooks/dogtag-pqc-issue-certificate.yml` - ML-DSA-87 PKI
+
+### EDA Rulebook Event Routing
+
+The `ansible/rulebooks/security-events.yml` routes events based on:
+1. **Event type** - IoT events go to IoT CA, identity events to Intermediate CA
+2. **PKI type** - If `pki_type` field is set in event (rsa, ecc, pqc)
+3. **Default** - RSA-4096 PKI for unspecified events
+
+### Supported Event Types (31 rules)
+
+| Category | Event Types |
+|----------|-------------|
+| Original | malware_detection, credential_theft, ransomware, c2_communication, lateral_movement, privilege_escalation, suspicious_script |
+| PKI/Cert | key_compromise, geo_anomaly, compliance_violation, mitm_detected, rogue_ca |
+| IoT | firmware_integrity, device_cloning, iot_anomaly, protocol_attack |
+| Identity | impossible_travel, service_account_abuse, mfa_bypass, kerberoasting |
+| Network | tls_downgrade, ct_log_mismatch, ocsp_bypass |
+| SIEM | data_exfiltration, unauthorized_access, certificate_misuse |
+
+### Testing with PKI Type
+
+```bash
+# Test with specific PKI type
+./test-revocation.sh -s "IoT Device Cloning Detected" --pki-type ecc
+./test-revocation.sh -a iot --pki-type pqc
+./test-revocation.sh --siem-scenario key_compromise --pki-type rsa
+
+# Interactive mode with PKI selection
+./test-revocation.sh -i
+
+# List all scenarios
+./test-revocation.sh -l
+```
+
+### Manual Dogtag Operations
+
+```bash
+# Issue certificate from RSA Intermediate CA
+ansible-playbook ansible/playbooks/dogtag-rsa-issue-certificate.yml \
+  -e host_fqdn=device01.cert-lab.local \
+  -e ca_level=intermediate
+
+# Revoke certificate from ECC IoT CA
+ansible-playbook ansible/playbooks/dogtag-ecc-revoke-certificate.yml \
+  -e '{"event":{"device_fqdn":"sensor01.cert-lab.local","severity":"critical","event_id":"manual"}}' \
+  -e ca_level=iot
+
+# Issue certificate from PQC CA
+ansible-playbook ansible/playbooks/dogtag-pqc-issue-certificate.yml \
+  -e host_fqdn=quantum-device.cert-lab.local \
+  -e ca_level=intermediate
+```

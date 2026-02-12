@@ -52,6 +52,7 @@ SCENARIO=""
 SEVERITY="critical"
 SOURCE="edr"
 ATTACK_CHAIN=""
+PKI_TYPE=""
 INTERACTIVE=false
 SKIP_CLEANUP=false
 
@@ -140,6 +141,7 @@ OPTIONS:
   -d, --device NAME        Device name (default: auto-generated)
   --severity LEVEL         Severity: low, medium, high, critical (default: critical)
   --source SOURCE          Event source: edr or siem (default: edr)
+  --pki-type TYPE          PKI type for Dogtag operations: rsa, ecc, pqc (default: none/auto)
   --siem-scenario NAME     Use SIEM scenario directly (e.g., brute_force, key_compromise)
   -i, --interactive        Interactive mode with menu
   -l, --list-scenarios     List all available scenarios
@@ -147,6 +149,11 @@ OPTIONS:
   --skip-cleanup           Don't remove test device after test
   --cleanup-only           Only remove test devices
   -h, --help               Show this help
+
+PKI TYPES:
+  rsa                      RSA-4096 PKI (traditional cryptography)
+  ecc                      ECC P-384 PKI (elliptic curve cryptography)
+  pqc                      ML-DSA-87 PKI (post-quantum cryptography)
 
 EXAMPLES:
   $0                                    # Run default scenario (Mimikatz)
@@ -156,6 +163,8 @@ EXAMPLES:
   $0 -a pki                             # PKI attack chain simulation
   $0 --siem-scenario key_compromise     # SIEM key compromise event
   $0 -s "Ransomware Encryption Detected" --severity critical
+  $0 -s "IoT Device Cloning Detected" --pki-type ecc   # Use ECC PKI for revocation
+  $0 -a iot --pki-type pqc              # IoT attack chain with PQC PKI
 
 EOF
 }
@@ -275,19 +284,29 @@ trigger_edr_event() {
     local scenario="$1"
     local device="$2"
     local severity="$3"
+    local pki_type="${4:-$PKI_TYPE}"
 
     log_info "Source: Mock EDR"
     log_info "Scenario: ${scenario}"
     log_info "Device: ${device}.${LAB_DOMAIN}"
     log_info "Severity: ${severity}"
+    [ -n "$pki_type" ] && log_info "PKI Type: ${pki_type}"
+
+    # Build JSON payload
+    local json_payload="{
+            \"device_id\": \"${device}\",
+            \"scenario\": \"${scenario}\",
+            \"severity\": \"${severity}\""
+    if [ -n "$pki_type" ]; then
+        json_payload="${json_payload},
+            \"pki_type\": \"${pki_type}\""
+    fi
+    json_payload="${json_payload}
+        }"
 
     RESULT=$(curl -sf -X POST "${EDR_URL}/trigger" \
         -H "Content-Type: application/json" \
-        -d "{
-            \"device_id\": \"${device}\",
-            \"scenario\": \"${scenario}\",
-            \"severity\": \"${severity}\"
-        }" 2>/dev/null || echo "{\"error\": \"connection failed\"}")
+        -d "$json_payload" 2>/dev/null || echo "{\"error\": \"connection failed\"}")
 
     if echo "$RESULT" | grep -q "triggered"; then
         EVENT_ID=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('event_id','unknown'))" 2>/dev/null || echo "unknown")
@@ -306,13 +325,21 @@ trigger_siem_event() {
     local scenario="$1"
     local device="$2"
     local severity="$3"
+    local pki_type="${4:-$PKI_TYPE}"
 
     log_info "Source: Mock SIEM"
     log_info "Scenario: ${scenario}"
     log_info "Device: ${device}.${LAB_DOMAIN}"
     log_info "Severity: ${severity}"
+    [ -n "$pki_type" ] && log_info "PKI Type: ${pki_type}"
 
-    RESULT=$(curl -sf -X POST "${SIEM_URL}/trigger?device_id=${device}&scenario=${scenario}&severity=${severity}" 2>/dev/null || echo "{\"error\": \"connection failed\"}")
+    # Build query string
+    local query="device_id=${device}&scenario=${scenario}&severity=${severity}"
+    if [ -n "$pki_type" ]; then
+        query="${query}&pki_type=${pki_type}"
+    fi
+
+    RESULT=$(curl -sf -X POST "${SIEM_URL}/trigger?${query}" 2>/dev/null || echo "{\"error\": \"connection failed\"}")
 
     if echo "$RESULT" | grep -q "triggered"; then
         EVENT_ID=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('event_id','unknown'))" 2>/dev/null || echo "unknown")
@@ -330,6 +357,7 @@ trigger_siem_event() {
 trigger_attack_chain() {
     local chain_type="$1"
     local device="$2"
+    local pki_type="${3:-$PKI_TYPE}"
 
     log_phase "Running Attack Chain Simulation: ${chain_type}"
 
@@ -359,8 +387,14 @@ trigger_attack_chain() {
             ;;
     esac
 
+    # Add PKI type if specified
+    if [ -n "$pki_type" ]; then
+        params="${params}&pki_type=${pki_type}"
+    fi
+
     log_info "Endpoint: ${SIEM_URL}${endpoint}"
     log_info "Target: ${device}"
+    [ -n "$pki_type" ] && log_info "PKI Type: ${pki_type}"
 
     RESULT=$(curl -sf -X POST "${SIEM_URL}${endpoint}?${params}" 2>/dev/null || echo "{\"error\": \"connection failed\"}")
 
@@ -476,6 +510,7 @@ show_results() {
     echo "  Scenario:         ${scenario}"
     echo "  Source:           ${SOURCE^^}"
     echo "  Severity:         ${SEVERITY}"
+    [ -n "$PKI_TYPE" ] && echo "  PKI Type:         ${PKI_TYPE^^}"
     echo "  Test Duration:    ${total_time} seconds"
     echo ""
     echo -e "${GREEN}============================================================${NC}"
@@ -503,6 +538,7 @@ interactive_menu() {
         echo -e "${CYAN}║  4) Run all scenarios in category                          ║${NC}"
         echo -e "${CYAN}║  5) List all scenarios                                     ║${NC}"
         echo -e "${CYAN}║  6) Check service status                                   ║${NC}"
+        echo -e "${CYAN}║  7) Set PKI type (current: ${PKI_TYPE:-auto})                          ║${NC}"
         echo -e "${CYAN}║  q) Quit                                                   ║${NC}"
         echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
         echo ""
@@ -527,10 +563,11 @@ interactive_menu() {
                     read -p "Enter scenario name: " scenario_name
                     read -p "Device name (default: test-$(date +%s)): " dev_name
                     dev_name="${dev_name:-test-$(date +%s)}"
+                    [ -z "$PKI_TYPE" ] && read -p "PKI type (rsa/ecc/pqc, or enter for auto): " PKI_TYPE
 
                     DEVICE_NAME="$dev_name"
                     enroll_device
-                    trigger_edr_event "$scenario_name" "$dev_name" "critical"
+                    trigger_edr_event "$scenario_name" "$dev_name" "critical" "$PKI_TYPE"
                 fi
                 ;;
             2)
@@ -540,10 +577,11 @@ interactive_menu() {
                 read -p "Scenario: " siem_scenario
                 read -p "Device name (default: test-$(date +%s)): " dev_name
                 dev_name="${dev_name:-test-$(date +%s)}"
+                [ -z "$PKI_TYPE" ] && read -p "PKI type (rsa/ecc/pqc, or enter for auto): " PKI_TYPE
 
                 DEVICE_NAME="$dev_name"
                 enroll_device
-                trigger_siem_event "$siem_scenario" "$dev_name" "critical"
+                trigger_siem_event "$siem_scenario" "$dev_name" "critical" "$PKI_TYPE"
                 ;;
             3)
                 echo ""
@@ -552,10 +590,11 @@ interactive_menu() {
                 read -p "Chain type (general/iot/pki/identity): " chain_type
                 read -p "Device name (default: test-$(date +%s)): " dev_name
                 dev_name="${dev_name:-test-$(date +%s)}"
+                [ -z "$PKI_TYPE" ] && read -p "PKI type (rsa/ecc/pqc, or enter for auto): " PKI_TYPE
 
                 DEVICE_NAME="$dev_name"
                 enroll_device
-                trigger_attack_chain "$chain_type" "$dev_name"
+                trigger_attack_chain "$chain_type" "$dev_name" "$PKI_TYPE"
                 ;;
             4)
                 echo ""
@@ -563,6 +602,7 @@ interactive_menu() {
                 read -p "Category: " cat_choice
                 read -p "Device name (default: test-$(date +%s)): " dev_name
                 dev_name="${dev_name:-test-$(date +%s)}"
+                [ -z "$PKI_TYPE" ] && read -p "PKI type (rsa/ecc/pqc, or enter for auto): " PKI_TYPE
 
                 DEVICE_NAME="$dev_name"
                 enroll_device
@@ -576,6 +616,27 @@ interactive_menu() {
                 ;;
             6)
                 check_services
+                ;;
+            7)
+                echo ""
+                echo "PKI Types:"
+                echo "  rsa - RSA-4096 PKI (traditional cryptography)"
+                echo "  ecc - ECC P-384 PKI (elliptic curve)"
+                echo "  pqc - ML-DSA-87 PKI (post-quantum)"
+                echo "  (empty) - Auto-detect / default to RSA"
+                echo ""
+                read -p "PKI type [current: ${PKI_TYPE:-auto}]: " new_pki_type
+                if [ -n "$new_pki_type" ]; then
+                    if [[ "$new_pki_type" =~ ^(rsa|ecc|pqc)$ ]]; then
+                        PKI_TYPE="$new_pki_type"
+                        log_success "PKI type set to: $PKI_TYPE"
+                    else
+                        log_error "Invalid PKI type. Use: rsa, ecc, or pqc"
+                    fi
+                else
+                    PKI_TYPE=""
+                    log_info "PKI type set to: auto"
+                fi
                 ;;
             q|Q)
                 echo "Goodbye!"
@@ -614,6 +675,14 @@ parse_args() {
                 ;;
             --source)
                 SOURCE="$2"
+                shift 2
+                ;;
+            --pki-type)
+                PKI_TYPE="$2"
+                if [[ ! "$PKI_TYPE" =~ ^(rsa|ecc|pqc)$ ]]; then
+                    log_error "Invalid PKI type: $PKI_TYPE (must be rsa, ecc, or pqc)"
+                    exit 1
+                fi
                 shift 2
                 ;;
             --siem-scenario)
