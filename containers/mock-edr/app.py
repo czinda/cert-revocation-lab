@@ -72,6 +72,7 @@ class HealthResponse(BaseModel):
 
 # Attack scenarios with realistic details
 SCENARIOS = {
+    # === Original Scenarios ===
     "Mimikatz Credential Dumping": {
         "event_type": "credential_theft",
         "process_name": "mimikatz.exe",
@@ -117,6 +118,123 @@ SCENARIOS = {
         "process_name": "malware.exe",
         "parent_process": "unknown",
         "description": "Generic malware signature detected on endpoint"
+    },
+
+    # === PKI/Certificate-Specific Events ===
+    "Certificate Private Key Compromise": {
+        "event_type": "key_compromise",
+        "process_name": "certutil.exe",
+        "parent_process": "cmd.exe",
+        "file_hash": "c5d9e4f3a2b1g8h7i6j5k4l3m2n1o0p9",
+        "description": "Private key exported or accessed by unauthorized process - immediate revocation required"
+    },
+    "Certificate Used from Unusual Location": {
+        "event_type": "geo_anomaly",
+        "process_name": "chrome.exe",
+        "parent_process": "explorer.exe",
+        "network_ioc": "185.143.223.47:443",
+        "description": "Certificate authentication from unexpected geographic location (possible credential theft)"
+    },
+    "Expired Certificate Still in Use": {
+        "event_type": "compliance_violation",
+        "process_name": "iis_worker.exe",
+        "parent_process": "w3wp.exe",
+        "description": "Expired certificate detected in active use - compliance violation requiring immediate remediation"
+    },
+    "Certificate Pinning Violation": {
+        "event_type": "mitm_detected",
+        "process_name": "network_monitor.exe",
+        "parent_process": "services.exe",
+        "network_ioc": "proxy.internal:8443",
+        "description": "TLS certificate pinning violation detected - potential man-in-the-middle attack"
+    },
+    "Rogue CA Certificate Detected": {
+        "event_type": "rogue_ca",
+        "process_name": "certmgr.exe",
+        "parent_process": "mmc.exe",
+        "file_hash": "d6e0f5g4h3i2j1k0l9m8n7o6p5q4r3s2",
+        "description": "Unauthorized CA certificate installed in system trust store - supply chain compromise"
+    },
+
+    # === IoT-Specific Events ===
+    "IoT Device Firmware Tampering": {
+        "event_type": "firmware_integrity",
+        "process_name": "firmware_update.bin",
+        "parent_process": "bootloader",
+        "file_hash": "e7f1g6h5i4j3k2l1m0n9o8p7q6r5s4t3",
+        "description": "IoT device firmware integrity check failed - bootloader or firmware tampering detected"
+    },
+    "IoT Device Cloning Detected": {
+        "event_type": "device_cloning",
+        "process_name": "iot_agent",
+        "parent_process": "init",
+        "network_ioc": "192.168.50.101:8883,192.168.50.205:8883",
+        "description": "Same device certificate used from multiple IP addresses simultaneously - device cloning attack"
+    },
+    "Anomalous IoT Behavior": {
+        "event_type": "iot_anomaly",
+        "process_name": "sensor_daemon",
+        "parent_process": "systemd",
+        "network_ioc": "unknown-server.com:1883",
+        "description": "IoT device exhibiting behavior outside normal operational parameters - possible compromise"
+    },
+    "IoT Protocol Exploitation": {
+        "event_type": "protocol_attack",
+        "process_name": "mosquitto",
+        "parent_process": "systemd",
+        "network_ioc": "attacker.com:1883",
+        "description": "MQTT/CoAP protocol exploitation attempt detected - malformed packets or injection attack"
+    },
+
+    # === Identity/Access Events ===
+    "Impossible Travel Detected": {
+        "event_type": "impossible_travel",
+        "process_name": "auth_service",
+        "parent_process": "sshd",
+        "network_ioc": "NYC:10.1.1.50,Tokyo:10.2.2.100",
+        "description": "User authenticated from geographically impossible locations within short timeframe"
+    },
+    "Service Account Abuse": {
+        "event_type": "service_account_abuse",
+        "process_name": "rdpclip.exe",
+        "parent_process": "svchost.exe",
+        "description": "Service account used for interactive login - policy violation and potential compromise"
+    },
+    "MFA Bypass Attempt": {
+        "event_type": "mfa_bypass",
+        "process_name": "evilginx2",
+        "parent_process": "bash",
+        "network_ioc": "phishing-proxy.evil.com:443",
+        "description": "Multi-factor authentication bypass attempt detected - session hijacking or token theft"
+    },
+    "Kerberoasting Detected": {
+        "event_type": "kerberoasting",
+        "process_name": "rubeus.exe",
+        "parent_process": "powershell.exe",
+        "file_hash": "f8g2h7i6j5k4l3m2n1o0p9q8r7s6t5u4",
+        "description": "Kerberos service ticket request anomaly - potential offline password cracking attempt"
+    },
+
+    # === Network Security Events ===
+    "SSL/TLS Downgrade Attack": {
+        "event_type": "tls_downgrade",
+        "process_name": "network_monitor",
+        "parent_process": "services.exe",
+        "network_ioc": "mitm-proxy:443",
+        "description": "TLS protocol version downgrade attempt detected - POODLE/BEAST style attack"
+    },
+    "Certificate Transparency Log Mismatch": {
+        "event_type": "ct_log_mismatch",
+        "process_name": "ct_monitor",
+        "parent_process": "systemd",
+        "description": "Certificate not found in Certificate Transparency logs - possible rogue certificate issuance"
+    },
+    "OCSP Stapling Failure": {
+        "event_type": "ocsp_bypass",
+        "process_name": "nginx",
+        "parent_process": "systemd",
+        "network_ioc": "ocsp.pki.local:80",
+        "description": "OCSP stapling failure with soft-fail bypass - revocation check circumvention attempt"
     }
 }
 

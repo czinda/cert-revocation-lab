@@ -68,6 +68,7 @@ class EventResponse(BaseModel):
 
 # SIEM correlation rules
 CORRELATION_RULES = {
+    # === Original Rules ===
     "brute_force_attack": {
         "rule_name": "Multiple Failed Logins",
         "event_type": "authentication_failure",
@@ -109,6 +110,110 @@ CORRELATION_RULES = {
         "event_type": "suspicious_activity",
         "description": "General suspicious network activity detected",
         "action_required": "investigate"
+    },
+
+    # === PKI/Certificate-Specific Rules ===
+    "key_compromise": {
+        "rule_name": "Private Key Compromise",
+        "event_type": "key_compromise",
+        "description": "Certificate private key exported or accessed by unauthorized process",
+        "action_required": "revoke_certificate"
+    },
+    "geo_anomaly": {
+        "rule_name": "Geographic Anomaly",
+        "event_type": "geo_anomaly",
+        "description": "Certificate authentication from unexpected geographic location",
+        "action_required": "revoke_certificate"
+    },
+    "expired_cert_usage": {
+        "rule_name": "Expired Certificate Usage",
+        "event_type": "compliance_violation",
+        "description": "Expired certificate detected in active use - compliance violation",
+        "action_required": "revoke_certificate"
+    },
+    "cert_pinning_violation": {
+        "rule_name": "Certificate Pinning Violation",
+        "event_type": "mitm_detected",
+        "description": "TLS certificate pinning violation - potential MITM attack",
+        "action_required": "revoke_certificate"
+    },
+    "rogue_ca": {
+        "rule_name": "Rogue CA Detected",
+        "event_type": "rogue_ca",
+        "description": "Unauthorized CA certificate in trust store - supply chain attack",
+        "action_required": "revoke_certificate"
+    },
+
+    # === IoT-Specific Rules ===
+    "firmware_tampering": {
+        "rule_name": "Firmware Integrity Failure",
+        "event_type": "firmware_integrity",
+        "description": "IoT device firmware integrity check failed - tampering detected",
+        "action_required": "revoke_certificate"
+    },
+    "device_cloning": {
+        "rule_name": "Device Cloning Attack",
+        "event_type": "device_cloning",
+        "description": "Same certificate used from multiple IPs - device cloning attack",
+        "action_required": "revoke_certificate"
+    },
+    "iot_anomaly": {
+        "rule_name": "Anomalous IoT Behavior",
+        "event_type": "iot_anomaly",
+        "description": "IoT device behavior outside normal parameters - possible compromise",
+        "action_required": "revoke_certificate"
+    },
+    "protocol_exploitation": {
+        "rule_name": "IoT Protocol Attack",
+        "event_type": "protocol_attack",
+        "description": "MQTT/CoAP protocol exploitation attempt detected",
+        "action_required": "revoke_certificate"
+    },
+
+    # === Identity/Access Rules ===
+    "impossible_travel": {
+        "rule_name": "Impossible Travel",
+        "event_type": "impossible_travel",
+        "description": "Authentication from geographically impossible locations",
+        "action_required": "revoke_certificate"
+    },
+    "service_account_abuse": {
+        "rule_name": "Service Account Misuse",
+        "event_type": "service_account_abuse",
+        "description": "Service account used interactively - policy violation",
+        "action_required": "revoke_certificate"
+    },
+    "mfa_bypass": {
+        "rule_name": "MFA Bypass Attempt",
+        "event_type": "mfa_bypass",
+        "description": "Multi-factor authentication bypass - session hijacking detected",
+        "action_required": "revoke_certificate"
+    },
+    "kerberoasting": {
+        "rule_name": "Kerberoasting Attack",
+        "event_type": "kerberoasting",
+        "description": "Kerberos service ticket anomaly - offline cracking attempt",
+        "action_required": "revoke_certificate"
+    },
+
+    # === Network Security Rules ===
+    "tls_downgrade": {
+        "rule_name": "TLS Downgrade Attack",
+        "event_type": "tls_downgrade",
+        "description": "TLS protocol downgrade attempt - POODLE/BEAST style attack",
+        "action_required": "revoke_certificate"
+    },
+    "ct_log_mismatch": {
+        "rule_name": "CT Log Violation",
+        "event_type": "ct_log_mismatch",
+        "description": "Certificate not in CT logs - possible rogue issuance",
+        "action_required": "revoke_certificate"
+    },
+    "ocsp_bypass": {
+        "rule_name": "OCSP Bypass Attempt",
+        "event_type": "ocsp_bypass",
+        "description": "OCSP stapling failure with soft-fail - revocation bypass",
+        "action_required": "revoke_certificate"
     }
 }
 
@@ -327,6 +432,201 @@ async def simulate_attack_chain(target_device: str, attack_phases: int = 4):
         "target": target_device,
         "phases_executed": len(results),
         "results": results
+    }
+
+
+@app.post("/simulate/iot-compromise")
+async def simulate_iot_compromise(target_device: str):
+    """
+    Simulate an IoT device compromise attack chain.
+    Demonstrates IoT-specific security events.
+    """
+    phases = [
+        ("protocol_exploitation", "medium", "Protocol Exploitation"),
+        ("firmware_tampering", "high", "Firmware Tampering"),
+        ("device_cloning", "critical", "Device Cloning"),
+        ("iot_anomaly", "critical", "Anomalous Behavior"),
+        ("data_exfiltration", "critical", "Data Exfiltration via IoT")
+    ]
+
+    correlation_id = str(uuid.uuid4())[:8]
+    results = []
+
+    for i, (alert_type, severity, phase_name) in enumerate(phases):
+        alert = SIEMAlert(
+            source_ip=f"192.168.50.{random.randint(1, 254)}",
+            destination_ip="10.0.0.1",
+            alert_type=alert_type,
+            severity=severity,
+            device_hostname=target_device,
+            description=f"IoT Attack Phase {i+1}: {phase_name}"
+        )
+
+        try:
+            result = await create_alert(alert)
+            results.append({
+                "phase": i + 1,
+                "name": phase_name,
+                "status": "success",
+                "event_id": result.event_id
+            })
+        except Exception as e:
+            results.append({
+                "phase": i + 1,
+                "name": phase_name,
+                "status": "failed",
+                "error": str(e)
+            })
+
+    return {
+        "attack_chain_id": correlation_id,
+        "attack_type": "iot_compromise",
+        "target": target_device,
+        "phases_executed": len(results),
+        "results": results
+    }
+
+
+@app.post("/simulate/pki-attack")
+async def simulate_pki_attack(target_device: str):
+    """
+    Simulate a PKI/Certificate-focused attack chain.
+    Demonstrates certificate-specific security events.
+    """
+    phases = [
+        ("key_compromise", "critical", "Private Key Extraction"),
+        ("rogue_ca", "critical", "Rogue CA Installation"),
+        ("cert_pinning_violation", "high", "Certificate Pinning Bypass"),
+        ("ct_log_mismatch", "high", "CT Log Evasion"),
+        ("tls_downgrade", "medium", "TLS Downgrade Attack")
+    ]
+
+    correlation_id = str(uuid.uuid4())[:8]
+    results = []
+
+    for i, (alert_type, severity, phase_name) in enumerate(phases):
+        alert = SIEMAlert(
+            source_ip=f"10.10.10.{random.randint(1, 254)}",
+            destination_ip="172.20.0.12",
+            alert_type=alert_type,
+            severity=severity,
+            device_hostname=target_device,
+            description=f"PKI Attack Phase {i+1}: {phase_name}"
+        )
+
+        try:
+            result = await create_alert(alert)
+            results.append({
+                "phase": i + 1,
+                "name": phase_name,
+                "status": "success",
+                "event_id": result.event_id
+            })
+        except Exception as e:
+            results.append({
+                "phase": i + 1,
+                "name": phase_name,
+                "status": "failed",
+                "error": str(e)
+            })
+
+    return {
+        "attack_chain_id": correlation_id,
+        "attack_type": "pki_attack",
+        "target": target_device,
+        "phases_executed": len(results),
+        "results": results
+    }
+
+
+@app.post("/simulate/identity-theft")
+async def simulate_identity_theft(target_user: str, target_device: str = "workstation01"):
+    """
+    Simulate an identity theft attack chain.
+    Demonstrates identity and access security events.
+    """
+    phases = [
+        ("brute_force_attack", "medium", "Credential Guessing"),
+        ("mfa_bypass", "high", "MFA Bypass via Phishing"),
+        ("impossible_travel", "high", "Impossible Travel Detection"),
+        ("service_account_abuse", "critical", "Service Account Hijack"),
+        ("kerberoasting", "critical", "Kerberos Ticket Theft")
+    ]
+
+    correlation_id = str(uuid.uuid4())[:8]
+    results = []
+
+    for i, (alert_type, severity, phase_name) in enumerate(phases):
+        alert = SIEMAlert(
+            source_ip=f"203.0.113.{random.randint(1, 254)}",
+            destination_ip="10.0.0.50",
+            alert_type=alert_type,
+            severity=severity,
+            device_hostname=target_device,
+            username=target_user,
+            description=f"Identity Attack Phase {i+1}: {phase_name}"
+        )
+
+        try:
+            result = await create_alert(alert)
+            results.append({
+                "phase": i + 1,
+                "name": phase_name,
+                "status": "success",
+                "event_id": result.event_id
+            })
+        except Exception as e:
+            results.append({
+                "phase": i + 1,
+                "name": phase_name,
+                "status": "failed",
+                "error": str(e)
+            })
+
+    return {
+        "attack_chain_id": correlation_id,
+        "attack_type": "identity_theft",
+        "target_user": target_user,
+        "target_device": target_device,
+        "phases_executed": len(results),
+        "results": results
+    }
+
+
+@app.get("/simulate/scenarios")
+async def list_simulation_scenarios():
+    """List all available attack simulation scenarios"""
+    return {
+        "attack_chains": [
+            {
+                "endpoint": "/simulate/attack-chain",
+                "name": "General Attack Chain",
+                "description": "Multi-phase attack: Initial Access → Privilege Escalation → Exfiltration → C2",
+                "parameters": {"target_device": "string", "attack_phases": "int (1-4)"}
+            },
+            {
+                "endpoint": "/simulate/iot-compromise",
+                "name": "IoT Device Compromise",
+                "description": "IoT attack: Protocol Exploit → Firmware Tamper → Clone → Anomaly → Exfil",
+                "parameters": {"target_device": "string"}
+            },
+            {
+                "endpoint": "/simulate/pki-attack",
+                "name": "PKI/Certificate Attack",
+                "description": "PKI attack: Key Compromise → Rogue CA → Pin Bypass → CT Evasion → Downgrade",
+                "parameters": {"target_device": "string"}
+            },
+            {
+                "endpoint": "/simulate/identity-theft",
+                "name": "Identity Theft Chain",
+                "description": "Identity attack: Brute Force → MFA Bypass → Travel Anomaly → Service Abuse → Kerberoast",
+                "parameters": {"target_user": "string", "target_device": "string (optional)"}
+            }
+        ],
+        "single_events": {
+            "endpoint": "/trigger",
+            "parameters": {"device_id": "string", "scenario": "string", "severity": "string"}
+        }
     }
 
 
