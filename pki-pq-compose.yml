@@ -210,11 +210,8 @@ services:
 
 networks:
   pki-pq-net:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.27.0.0/24
-          gateway: 172.27.0.1
+    external: true
+    name: pki-pq-net
 
 volumes:
   ds-pq-root-data:
