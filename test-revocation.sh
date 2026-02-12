@@ -14,10 +14,10 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Load environment variables
+# Load environment variables (grep filters out lines with special chars that break bash)
 if [ -f .env ]; then
     set -a
-    source .env
+    eval "$(grep -v '^\s*#' .env | grep -v '^\s*$' | grep -v '[(){}]' | sed 's/\r$//')"
     set +a
 fi
 
