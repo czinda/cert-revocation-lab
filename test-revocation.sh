@@ -384,47 +384,8 @@ issue_certificate() {
     log_info "Submitting CSR to Dogtag CA..."
     sudo podman cp "$csr_file" "${container}:/tmp/test-request.csr"
 
-    # Create a temp NSS database, import CA certs and admin cert for authentication
-    sudo podman exec "$container" bash -c "
-        rm -rf /tmp/test-nssdb
-        mkdir -p /tmp/test-nssdb
-        certutil -N -d /tmp/test-nssdb --empty-password
-
-        # Import CA certs for trust
-        if [ -f /certs/ca-chain.crt ]; then
-            certutil -A -d /tmp/test-nssdb -n 'CA Chain' -t 'CT,C,C' -a -i /certs/ca-chain.crt 2>/dev/null || true
-        fi
-        if [ -f /certs/iot-ca.crt ]; then
-            certutil -A -d /tmp/test-nssdb -n 'IoT CA' -t 'CT,C,C' -a -i /certs/iot-ca.crt 2>/dev/null || true
-        fi
-        if [ -f /certs/iot-ca-chain.crt ]; then
-            certutil -A -d /tmp/test-nssdb -n 'IoT CA Chain' -t 'CT,C,C' -a -i /certs/iot-ca-chain.crt 2>/dev/null || true
-        fi
-        if [ -f /certs/intermediate-ca.crt ]; then
-            certutil -A -d /tmp/test-nssdb -n 'Intermediate CA' -t 'CT,C,C' -a -i /certs/intermediate-ca.crt 2>/dev/null || true
-        fi
-        if [ -f /certs/root-ca.crt ]; then
-            certutil -A -d /tmp/test-nssdb -n 'Root CA' -t 'CT,C,C' -a -i /certs/root-ca.crt 2>/dev/null || true
-        fi
-
-        # Import admin certificate for authentication
-        ADMIN_P12=\"/root/.dogtag/${instance}/ca_admin_cert.p12\"
-        if [ -f \"\$ADMIN_P12\" ]; then
-            echo 'Importing admin cert...'
-            # Use password from environment variable to avoid shell escaping issues
-            echo \"\$PKI_CLIENT_PKCS12_PASSWORD\" > /tmp/p12pass.txt
-            pk12util -i \"\$ADMIN_P12\" -d /tmp/test-nssdb -k /dev/null -w /tmp/p12pass.txt && echo 'Import succeeded' || {
-                # Try with PKI_ADMIN_PASSWORD
-                echo \"\$PKI_ADMIN_PASSWORD\" > /tmp/p12pass.txt
-                pk12util -i \"\$ADMIN_P12\" -d /tmp/test-nssdb -k /dev/null -w /tmp/p12pass.txt || echo 'Failed to import admin cert'
-            }
-            rm -f /tmp/p12pass.txt
-            echo 'Certs in NSS DB:'
-            certutil -L -d /tmp/test-nssdb
-        else
-            echo 'Admin P12 not found at:' \"\$ADMIN_P12\"
-        fi
-    " 2>&1 | grep -v "^$" || true
+    # Use the CA's internal NSS database which already has the subsystem cert
+    local nss_db="/var/lib/pki/${instance}/alias"
 
     # Get hostname for internal CA URL
     local ca_hostname=""
@@ -434,20 +395,29 @@ issue_certificate() {
         iot) ca_hostname="iot-ca.cert-lab.local" ;;
     esac
 
-    # Find admin cert nickname
-    local admin_nick=$(sudo podman exec "$container" \
-        certutil -L -d /tmp/test-nssdb 2>/dev/null | grep -i "administrator" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
+    # List available certs for authentication
+    log_info "Available certificates for authentication:"
+    sudo podman exec "$container" certutil -L -d "$nss_db" 2>/dev/null | head -10
 
-    if [ -z "$admin_nick" ]; then
-        log_warn "Admin certificate not found, trying with default nickname"
-        admin_nick="PKI Administrator for ${instance}"
+    # Find a suitable cert for agent operations (subsystem cert can sign requests)
+    local agent_nick=$(sudo podman exec "$container" \
+        certutil -L -d "$nss_db" 2>/dev/null | grep -E "(subsystemCert|caSigningCert)" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
+
+    if [ -z "$agent_nick" ]; then
+        log_warn "No agent certificate found, trying subsystemCert"
+        agent_nick="subsystemCert cert-${instance}"
     fi
+    log_info "Using certificate: $agent_nick"
 
-    # Submit certificate request using certificate-based auth
+    # Get the internal token password
+    local token_pass=$(sudo podman exec "$container" cat /var/lib/pki/${instance}/conf/password.conf 2>/dev/null | grep "internal=" | cut -d= -f2)
+    [ -z "$token_pass" ] && token_pass="$PKI_TOKEN_PASSWORD"
+
+    # Submit certificate request using subsystem cert auth
     local request_output=$(sudo podman exec "$container" \
-        pki -d /tmp/test-nssdb -c '' \
+        pki -d "$nss_db" -c "$token_pass" \
             -U "https://${ca_hostname}:8443" \
-            -n "$admin_nick" \
+            -n "$agent_nick" \
             ca-cert-request-submit \
             --profile caServerCert \
             --csr-file /tmp/test-request.csr 2>&1)
@@ -463,15 +433,15 @@ issue_certificate() {
     # Approve the request using certificate-based auth
     log_info "Approving certificate request..."
     sudo podman exec "$container" \
-        pki -d /tmp/test-nssdb -c '' \
+        pki -d "$nss_db" -c "$token_pass" \
             -U "https://${ca_hostname}:8443" \
-            -n "$admin_nick" \
+            -n "$agent_nick" \
             ca-cert-request-approve "$request_id" --force 2>&1 || true
 
     # Get certificate serial
     sleep 2
     local cert_info=$(sudo podman exec "$container" \
-        pki -d /tmp/test-nssdb -c '' \
+        pki -d "$nss_db" -c "$token_pass" \
             -U "https://${ca_hostname}:8443" \
             ca-cert-request-show "$request_id" 2>&1)
 
@@ -482,9 +452,9 @@ issue_certificate() {
         return 1
     fi
 
-    # Export certificate (no auth needed for export)
+    # Export certificate
     sudo podman exec "$container" \
-        pki -d /tmp/test-nssdb -c '' \
+        pki -d "$nss_db" -c "$token_pass" \
             -U "https://${ca_hostname}:8443" \
             ca-cert-export "$CERT_SERIAL" --output-file /tmp/test-cert.pem 2>&1 || true
 
@@ -696,9 +666,14 @@ wait_for_automation() {
         # Early exit if certificate is already revoked
         if [ -n "$CERT_SERIAL" ]; then
             local container=$(get_ca_container)
+            local instance=$(get_ca_instance)
             local ca_hostname=$(get_ca_hostname)
+            local nss_db="/var/lib/pki/${instance}/alias"
+            local token_pass=$(sudo podman exec "$container" cat /var/lib/pki/${instance}/conf/password.conf 2>/dev/null | grep "internal=" | cut -d= -f2)
+            [ -z "$token_pass" ] && token_pass="$PKI_TOKEN_PASSWORD"
+
             local status=$(sudo podman exec "$container" \
-                pki -d /tmp/test-nssdb -c '' \
+                pki -d "$nss_db" -c "$token_pass" \
                     -U "https://${ca_hostname}:8443" \
                     ca-cert-show "$CERT_SERIAL" 2>&1 | grep -i "Status:")
             if echo "$status" | grep -qi "REVOKED"; then
@@ -726,7 +701,9 @@ get_ca_hostname() {
 verify_revocation() {
     local device_fqdn="${DEVICE_NAME}.${LAB_DOMAIN}"
     local container=$(get_ca_container)
+    local instance=$(get_ca_instance)
     local ca_hostname=$(get_ca_hostname)
+    local nss_db="/var/lib/pki/${instance}/alias"
 
     log_phase "Verifying Certificate Revocation in Dogtag"
 
@@ -739,9 +716,13 @@ verify_revocation() {
         return 1
     fi
 
-    # Get certificate status from Dogtag (no auth needed for cert-show)
+    # Get internal token password
+    local token_pass=$(sudo podman exec "$container" cat /var/lib/pki/${instance}/conf/password.conf 2>/dev/null | grep "internal=" | cut -d= -f2)
+    [ -z "$token_pass" ] && token_pass="$PKI_TOKEN_PASSWORD"
+
+    # Get certificate status from Dogtag
     local cert_status=$(sudo podman exec "$container" \
-        pki -d /tmp/test-nssdb -c '' \
+        pki -d "$nss_db" -c "$token_pass" \
             -U "https://${ca_hostname}:8443" \
             ca-cert-show "$CERT_SERIAL" 2>&1 | grep -i "Status:")
 
@@ -790,18 +771,24 @@ cleanup_device() {
     local container=$(get_ca_container)
     local instance=$(get_ca_instance)
     local ca_hostname=$(get_ca_hostname)
+    local nss_db="/var/lib/pki/${instance}/alias"
 
     if [ -n "$CERT_SERIAL" ]; then
         log_info "Revoking test certificate (if not already revoked)..."
-        # Find admin cert nickname
-        local admin_nick=$(sudo podman exec "$container" \
-            certutil -L -d /tmp/test-nssdb 2>/dev/null | grep -i "administrator" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
-        [ -z "$admin_nick" ] && admin_nick="PKI Administrator for ${instance}"
+
+        # Get internal token password
+        local token_pass=$(sudo podman exec "$container" cat /var/lib/pki/${instance}/conf/password.conf 2>/dev/null | grep "internal=" | cut -d= -f2)
+        [ -z "$token_pass" ] && token_pass="$PKI_TOKEN_PASSWORD"
+
+        # Find agent cert
+        local agent_nick=$(sudo podman exec "$container" \
+            certutil -L -d "$nss_db" 2>/dev/null | grep -E "(subsystemCert|caSigningCert)" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
+        [ -z "$agent_nick" ] && agent_nick="subsystemCert cert-${instance}"
 
         sudo podman exec "$container" \
-            pki -d /tmp/test-nssdb -c '' \
+            pki -d "$nss_db" -c "$token_pass" \
                 -U "https://${ca_hostname}:8443" \
-                -n "$admin_nick" \
+                -n "$agent_nick" \
                 ca-cert-revoke "$CERT_SERIAL" --reason 5 --force 2>/dev/null || true
     fi
 
