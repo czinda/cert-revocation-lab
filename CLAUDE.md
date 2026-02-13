@@ -349,6 +349,12 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 │   └── inventory/
 │       └── pki_hosts.yml            # PKI container inventory
 │
+├── .archive/                  # Superseded scripts (kept for reference)
+│   └── bash-scripts/
+│       ├── test-revocation.sh     # → ./lab test
+│       ├── validate-lab.sh        # → ./lab validate
+│       └── preflight-check.sh     # → ./lab validate
+│
 └── data/
     ├── certs/
     │   ├── rsa/               # RSA-4096 certificates
