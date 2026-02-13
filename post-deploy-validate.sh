@@ -1288,24 +1288,59 @@ tier_9_e2e() {
         echo "$resp" | grep -q "triggered\|event_id" && check_pass || { check_fail "Trigger failed"; ok=false; }
     fi
 
-    # Kafka verification
+    # Kafka verification - check topic has messages by inspecting offsets
+    # (kafka-console-consumer is unreliable due to consumer group state)
     check_start "T9" "Event in Kafka topic ..."
     sleep 3
-    local msgs
-    msgs=$(timeout 15 run_as_user podman exec kafka kafka-console-consumer \
-        --bootstrap-server localhost:9092 \
+    local offsets
+    offsets=$(run_as_user podman exec kafka kafka-run-class kafka.tools.GetOffsetShell \
+        --broker-list localhost:9092 \
         --topic security-events \
-        --from-beginning \
-        --max-messages 3 \
-        --timeout-ms 8000 2>/dev/null)
-    if [ -n "$msgs" ]; then
-        local cnt
-        cnt=$(echo "$msgs" | wc -l)
-        check_pass
-        echo -e "         ${DIM}$cnt message(s) in topic${NC}"
+        --time -1 2>/dev/null)
+
+    if [ -n "$offsets" ]; then
+        # Sum the end offsets across partitions (format: topic:partition:offset)
+        local total_msgs=0
+        while IFS=: read -r _topic _part off; do
+            [ -n "$off" ] && total_msgs=$((total_msgs + off))
+        done <<< "$offsets"
+
+        if [ $total_msgs -gt 0 ]; then
+            check_pass
+            echo -e "         ${DIM}${total_msgs} message(s) across partitions${NC}"
+        else
+            # Offsets are 0 but we just triggered events - try consumer as fallback
+            local msgs
+            msgs=$(timeout 15 run_as_user podman exec kafka kafka-console-consumer \
+                --bootstrap-server localhost:9092 \
+                --topic security-events \
+                --group "pdv-check-$(date +%s)" \
+                --from-beginning \
+                --max-messages 1 \
+                --timeout-ms 8000 2>/dev/null)
+            if [ -n "$msgs" ]; then
+                check_pass
+            else
+                check_fail "No messages found"
+                ok=false
+            fi
+        fi
     else
-        check_fail "No messages found"
-        ok=false
+        # GetOffsetShell not available - fall back to consumer with unique group
+        local msgs
+        msgs=$(timeout 15 run_as_user podman exec kafka kafka-console-consumer \
+            --bootstrap-server localhost:9092 \
+            --topic security-events \
+            --group "pdv-check-$(date +%s)" \
+            --from-beginning \
+            --max-messages 1 \
+            --timeout-ms 8000 2>/dev/null)
+        if [ -n "$msgs" ]; then
+            check_pass
+        else
+            check_fail "No messages found"
+            ok=false
+        fi
     fi
 
     # EDA processing
