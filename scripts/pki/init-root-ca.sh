@@ -47,6 +47,9 @@ init_ca() {
     export_ca_cert "$PKI_INSTANCE" "${CERTS_DIR}/root-ca.crt"
     verify_cert "${CERTS_DIR}/root-ca.crt"
 
+    # Export admin credentials for REST API authentication
+    export_admin_creds "$PKI_INSTANCE" "root"
+
     print_header "Root CA Initialization Complete"
     echo "Certificate: ${CERTS_DIR}/root-ca.crt"
     echo "Web UI:      https://root-ca.cert-lab.local:8443/ca"

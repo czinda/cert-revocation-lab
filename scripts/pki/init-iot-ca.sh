@@ -59,6 +59,9 @@ phase2_install_cert() {
     create_chain "${CERTS_DIR}/iot-ca-chain.crt" "$CA_CHAIN" "$CA_CERT"
     verify_cert "$CA_CERT" "$CA_CHAIN"
 
+    # Export admin credentials for REST API authentication (used by EDA)
+    export_admin_creds "$PKI_INSTANCE" "iot"
+
     print_header "IoT CA Initialization Complete"
     echo "Certificate: $CA_CERT"
     echo "CA Chain:    ${CERTS_DIR}/iot-ca-chain.crt"

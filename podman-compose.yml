@@ -391,12 +391,19 @@ services:
       ANSIBLE_HOST_KEY_CHECKING: "False"
       KAFKA_BOOTSTRAP_SERVERS: kafka.${LAB_DOMAIN:-cert-lab.local}:9092
       LAB_LOG_DIR: /opt/cert-lab/logs
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-}
+    extra_hosts:
+      # PKI CA hostnames for REST API access
+      - "root-ca.cert-lab.local:${IP_ROOT_CA:-172.20.0.12}"
+      - "intermediate-ca.cert-lab.local:${IP_INTERMEDIATE_CA:-172.20.0.11}"
+      - "iot-ca.cert-lab.local:${IP_IOT_CA:-172.20.0.13}"
     volumes:
       - ./ansible/rulebooks:/rulebooks:ro
       - ./ansible/playbooks:/playbooks:ro
       - ./ansible/inventory:/inventory:ro
       - ./ansible/collections:/collections:ro
       - ./data/logs:/opt/cert-lab/logs
+      - ./data/certs:/certs:ro
     networks:
       lab-network:
         ipv4_address: ${IP_EDA:-172.20.0.40}

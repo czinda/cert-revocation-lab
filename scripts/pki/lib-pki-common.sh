@@ -442,3 +442,85 @@ export_pki_env() {
     export pki_ds_password="${DS_PASSWORD}"
     export pki_admin_password="${PKI_ADMIN_PASSWORD}"
 }
+
+# Export admin credentials for REST API authentication
+# Creates PEM files that can be used by Ansible uri module for client cert auth
+# Usage: export_admin_creds <instance> <ca_type>
+# Where ca_type is: root, intermediate, or iot
+export_admin_creds() {
+    local instance="${1:?Instance required}"
+    local ca_type="${2:?CA type required}"
+    local password="${PKI_ADMIN_PASSWORD:-${ADMIN_PASSWORD}}"
+
+    local creds_dir="${CERTS_DIR}/admin"
+    local p12_file="${creds_dir}/${ca_type}-admin.p12"
+    local cert_file="${creds_dir}/${ca_type}-admin-cert.pem"
+    local key_file="${creds_dir}/${ca_type}-admin-key.pem"
+
+    log_info "Exporting admin credentials for REST API..."
+
+    mkdir -p "$creds_dir"
+    chmod 700 "$creds_dir"
+
+    # Find the admin p12 file from client database
+    local client_dir="/root/.dogtag/${instance}/ca"
+    local nss_db="${client_dir}/alias"
+
+    # Export from NSS database to PKCS#12
+    if [ -d "$nss_db" ]; then
+        # Find admin cert nickname
+        local admin_nick
+        admin_nick=$(certutil -L -d "$nss_db" 2>/dev/null | grep -iE "admin|pkiAdmin" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
+
+        if [ -n "$admin_nick" ]; then
+            log_info "Exporting admin cert: $admin_nick"
+
+            # Export to PKCS#12
+            pk12util -o "$p12_file" -n "$admin_nick" -d "$nss_db" \
+                -W "$password" -K "" 2>/dev/null || {
+                log_warn "pk12util failed, trying with password file..."
+                echo "$password" > /tmp/pw.txt
+                pk12util -o "$p12_file" -n "$admin_nick" -d "$nss_db" \
+                    -W "$password" -k /tmp/pw.txt 2>/dev/null || true
+                rm -f /tmp/pw.txt
+            }
+        fi
+    fi
+
+    # Try alternative: copy from pkispawn output location
+    if [ ! -f "$p12_file" ] || [ ! -s "$p12_file" ]; then
+        local spawn_p12="/root/.dogtag/${instance}/ca_admin_cert.p12"
+        if [ -f "$spawn_p12" ]; then
+            log_info "Copying admin p12 from pkispawn output..."
+            cp "$spawn_p12" "$p12_file"
+        fi
+    fi
+
+    # Convert PKCS#12 to PEM files
+    if [ -f "$p12_file" ] && [ -s "$p12_file" ]; then
+        log_info "Converting to PEM format..."
+
+        # Extract certificate
+        openssl pkcs12 -in "$p12_file" -clcerts -nokeys -passin "pass:${password}" \
+            -out "$cert_file" 2>/dev/null
+
+        # Extract private key
+        openssl pkcs12 -in "$p12_file" -nocerts -nodes -passin "pass:${password}" \
+            -out "$key_file" 2>/dev/null
+
+        # Set secure permissions
+        chmod 600 "$key_file" "$p12_file" 2>/dev/null || true
+        chmod 644 "$cert_file" 2>/dev/null || true
+
+        if [ -f "$cert_file" ] && [ -s "$cert_file" ]; then
+            log_info "Admin credentials exported:"
+            log_info "  Certificate: $cert_file"
+            log_info "  Private key: $key_file"
+            log_info "  PKCS#12:     $p12_file"
+            return 0
+        fi
+    fi
+
+    log_warn "Could not export admin credentials (non-fatal)"
+    return 0
+}

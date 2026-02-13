@@ -243,6 +243,33 @@ ansible-playbook -i ansible/inventory/pki_hosts.yml \
 - `dogtag_root_ca` - Initialize self-signed Root CA
 - `dogtag_subordinate_ca` - Initialize Intermediate/IoT CAs (two-phase)
 
+### EDA Authentication Setup (Required for Event-Driven Revocation)
+
+After initializing the PKI hierarchy, you must export admin credentials for the Event-Driven Ansible (EDA) server to authenticate with the Dogtag REST API:
+
+```bash
+# Export admin credentials and restart EDA
+./scripts/setup-eda-auth.sh
+```
+
+This script:
+1. Exports admin certificates (PEM format) from each CA container
+2. Stores them in `data/certs/admin/`
+3. Restarts the EDA server to pick up the new credentials
+
+The EDA revocation playbooks use client certificate authentication to call the Dogtag REST API directly, without requiring podman access.
+
+**Manual credential export (alternative):**
+```bash
+# Export from individual CA containers
+sudo podman exec dogtag-root-ca /scripts/export-admin-creds.sh root
+sudo podman exec dogtag-intermediate-ca /scripts/export-admin-creds.sh intermediate
+sudo podman exec dogtag-iot-ca /scripts/export-admin-creds.sh iot
+
+# Restart EDA to pick up new certs
+sudo podman restart eda-server
+```
+
 ## Architecture
 
 ### Event Flow
@@ -574,11 +601,19 @@ Privileged ports (<1024) are remapped to higher ports for rootless compatibility
 
 ## Dogtag PKI Integration
 
-The lab now supports direct certificate operations against the standalone Dogtag CAs. The EDA rulebook routes events to the appropriate PKI based on event type and optional `pki_type` field.
+The lab supports direct certificate operations against the standalone Dogtag CAs. The EDA rulebook routes events to the appropriate PKI based on event type and optional `pki_type` field.
+
+### EDA Playbook Architecture
+
+EDA playbooks use the **Dogtag REST API** with client certificate authentication (not `podman exec`). This allows the EDA container to revoke certificates directly without access to the host's podman socket.
+
+**Requirements:**
+1. Admin credentials exported to `data/certs/admin/` (run `./scripts/setup-eda-auth.sh`)
+2. EDA container has DNS entries for CA hostnames (via `extra_hosts` in compose)
 
 ### Ansible Playbooks for Dogtag
 
-**Certificate Revocation:**
+**Certificate Revocation (REST API):**
 - `ansible/playbooks/dogtag-rsa-revoke-certificate.yml` - RSA-4096 PKI
 - `ansible/playbooks/dogtag-ecc-revoke-certificate.yml` - ECC P-384 PKI
 - `ansible/playbooks/dogtag-pqc-revoke-certificate.yml` - ML-DSA-87 PKI
