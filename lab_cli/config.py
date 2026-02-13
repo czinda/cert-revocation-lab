@@ -21,6 +21,7 @@ class CALevel(str, Enum):
     ROOT = "root"
     INTERMEDIATE = "intermediate"
     IOT = "iot"
+    ACME = "acme"
 
 
 class EventSource(str, Enum):
@@ -63,6 +64,12 @@ CA_CONFIGS: dict[str, dict[str, CAConfig]] = {
             instance="pki-iot-ca",
             url="https://iot-ca.cert-lab.local:8443",
             nss_db="/var/lib/pki/pki-iot-ca/alias"
+        ),
+        "acme": CAConfig(
+            container="dogtag-acme-ca",
+            instance="pki-acme-ca",
+            url="https://acme-ca.cert-lab.local:8443",
+            nss_db="/var/lib/pki/pki-acme-ca/alias"
         ),
     },
     "ecc": {

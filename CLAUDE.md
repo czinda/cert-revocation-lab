@@ -674,3 +674,76 @@ ansible-playbook ansible/playbooks/dogtag-pqc-issue-certificate.yml \
   -e host_fqdn=quantum-device.cert-lab.local \
   -e ca_level=intermediate
 ```
+
+## ACME and EST Subsystems
+
+The lab includes ACME (Automated Certificate Management Environment) and EST (Enrollment over Secure Transport) subsystems for automated certificate enrollment.
+
+### Architecture
+
+```
+Intermediate CA (172.26.0.11:8444)
+    │
+    ├── IoT Sub-CA (172.26.0.13:8445)
+    │       └── EST Subsystem (RFC 7030)
+    │
+    └── ACME Sub-CA (172.26.0.18:8446)
+            └── ACME Responder (RFC 8555)
+```
+
+### ACME CA Initialization
+
+The ACME CA is a Tier 3 CA subordinate to the Intermediate CA, providing ACME protocol support.
+
+```bash
+# Start ACME containers (included in pki-compose.yml)
+sudo podman-compose -f pki-compose.yml up -d ds-acme dogtag-acme-ca
+
+# Initialize ACME CA (Phase 1: generate CSR)
+sudo podman exec -it dogtag-acme-ca /scripts/init-acme-ca.sh
+
+# Sign ACME CA CSR with Intermediate CA
+sudo podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \
+  /certs/acme-ca.csr /certs/acme-ca-signed.crt \
+  https://intermediate-ca.cert-lab.local:8443 caCACert
+
+# Complete ACME CA (Phase 2: install cert + ACME responder)
+sudo podman exec -it dogtag-acme-ca /scripts/init-acme-ca.sh
+```
+
+**ACME Endpoints:**
+- `https://acme-ca.cert-lab.local:8446/acme/directory` - ACME directory
+- `https://acme-ca.cert-lab.local:8446/ca` - Dogtag CA web UI
+
+### EST Subsystem
+
+EST provides RFC 7030 certificate enrollment, running as a subsystem within the IoT CA.
+
+```bash
+# Enable EST on IoT CA (after IoT CA is initialized)
+sudo podman exec -it dogtag-iot-ca /scripts/enable-est.sh
+```
+
+**EST Endpoints:**
+- `https://iot-ca.cert-lab.local:8445/.well-known/est/cacerts` - Get CA certificates
+- `https://iot-ca.cert-lab.local:8445/.well-known/est/simpleenroll` - Enroll for certificate
+- `https://iot-ca.cert-lab.local:8445/.well-known/est/simplereenroll` - Re-enroll certificate
+
+**EST Client Example:**
+```bash
+# Get CA certificates
+curl -sk https://iot-ca.cert-lab.local:8445/.well-known/est/cacerts
+
+# Enroll with client certificate authentication
+curl --cacert ca-chain.crt --cert client.crt --key client.key \
+     -X POST -H 'Content-Type: application/pkcs10' \
+     --data-binary @request.p10 \
+     https://iot-ca.cert-lab.local:8445/.well-known/est/simpleenroll
+```
+
+### Network Configuration
+
+| IP | Service | Ports | Purpose |
+|----|---------|-------|---------|
+| 172.26.0.17 | ds-acme | 3389 | 389DS for ACME CA |
+| 172.26.0.18 | dogtag-acme-ca | 8446:8443 | ACME Sub-CA + Responder |
