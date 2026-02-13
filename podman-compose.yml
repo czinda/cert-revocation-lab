@@ -407,7 +407,7 @@ services:
       --inventory /inventory/hosts.yml
       --verbose
     healthcheck:
-      test: ["CMD", "pgrep", "-f", "ansible-rulebook"]
+      test: ["CMD-SHELL", "ps aux | grep -v grep | grep -q ansible-rulebook"]
       interval: 30s
       timeout: 10s
       retries: 5
