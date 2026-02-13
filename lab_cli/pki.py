@@ -2,6 +2,7 @@
 PKI operations: certificate issuance, revocation, and verification.
 """
 
+import json
 import re
 import subprocess
 import tempfile
@@ -9,7 +10,24 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from .config import LabConfig, PKIType, CALevel, CAConfig
+from .config import LabConfig, PKIType, CALevel, CAConfig, CA_CONFIGS
+
+
+# Port mappings for CA levels (host port -> container port 8443)
+CA_PORT_MAPPINGS = {
+    "rsa": {"root": 8443, "intermediate": 8444, "iot": 8445, "acme": 8446},
+    "ecc": {"root": 8463, "intermediate": 8464, "iot": 8465},
+    "pqc": {"root": 8453, "intermediate": 8454, "iot": 8455},
+}
+
+
+@dataclass
+class CAHealthResult:
+    """Result of a CA health check."""
+    healthy: bool
+    status: str
+    message: str
+    details: Optional[dict] = None
 
 
 @dataclass
@@ -29,6 +47,112 @@ class RevocationResult:
     serial: Optional[str] = None
     message: str = ""
     status: Optional[str] = None
+
+
+def check_ca_health(
+    pki_type: PKIType,
+    ca_level: CALevel,
+    timeout: float = 5.0,
+) -> CAHealthResult:
+    """
+    Check if a CA is healthy by calling its status API.
+
+    Uses the Dogtag REST API endpoint /ca/admin/ca/getStatus to verify
+    the CA is running and responding.
+
+    Args:
+        pki_type: PKI type (rsa, ecc, pqc)
+        ca_level: CA level (root, intermediate, iot, acme)
+        timeout: Connection timeout in seconds
+
+    Returns:
+        CAHealthResult with health status
+    """
+    pki_key = pki_type.value
+    level_key = ca_level.value
+
+    # Get port mapping
+    if pki_key not in CA_PORT_MAPPINGS:
+        return CAHealthResult(
+            healthy=False,
+            status="unknown",
+            message=f"Unknown PKI type: {pki_key}"
+        )
+
+    level_ports = CA_PORT_MAPPINGS[pki_key]
+    if level_key not in level_ports:
+        return CAHealthResult(
+            healthy=False,
+            status="unknown",
+            message=f"Unknown CA level {level_key} for {pki_key} PKI"
+        )
+
+    port = level_ports[level_key]
+    url = f"https://localhost:{port}/ca/admin/ca/getStatus"
+
+    cmd = [
+        "curl", "-sk", "--connect-timeout", str(int(timeout)),
+        url
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
+    except subprocess.TimeoutExpired:
+        return CAHealthResult(
+            healthy=False,
+            status="timeout",
+            message=f"Connection timeout to {pki_key.upper()} {level_key} CA"
+        )
+
+    if result.returncode != 0:
+        return CAHealthResult(
+            healthy=False,
+            status="unreachable",
+            message=f"{pki_key.upper()} {level_key} CA not responding (port {port})"
+        )
+
+    response = result.stdout.strip()
+
+    if not response:
+        return CAHealthResult(
+            healthy=False,
+            status="no_response",
+            message=f"{pki_key.upper()} {level_key} CA returned empty response"
+        )
+
+    # Parse XML response: <Status>running</Status>
+    if "<Status>" in response:
+        import re
+        match = re.search(r"<Status>(\w+)</Status>", response)
+        if match:
+            status = match.group(1).lower()
+            if status == "running":
+                return CAHealthResult(
+                    healthy=True,
+                    status="running",
+                    message=f"{pki_key.upper()} {level_key} CA is running",
+                    details={"port": port, "url": url}
+                )
+            else:
+                return CAHealthResult(
+                    healthy=False,
+                    status=status,
+                    message=f"{pki_key.upper()} {level_key} CA status: {status}"
+                )
+
+    # Check for HTML error page or other issues
+    if "<html" in response.lower() or "404" in response:
+        return CAHealthResult(
+            healthy=False,
+            status="not_initialized",
+            message=f"{pki_key.upper()} {level_key} CA not initialized"
+        )
+
+    return CAHealthResult(
+        healthy=False,
+        status="unknown",
+        message=f"Unexpected response from CA: {response[:100]}"
+    )
 
 
 def run_podman_exec(

@@ -33,7 +33,7 @@ from .config import (
     get_all_scenarios,
 )
 from .events import trigger_event, EventResult
-from .pki import issue_certificate, verify_certificate_status, CertificateResult
+from .pki import issue_certificate, verify_certificate_status, check_ca_health, CertificateResult
 from .protocols import (
     acme_issue_certificate,
     est_enroll_certificate,
@@ -644,14 +644,24 @@ def test(
 
     # Step 1: Check services
     console.print("[bold]Step 1: Checking Services[/bold]")
-    edr_status = check_http_service("mock_edr", config.edr_url)
-    eda_status = check_container("eda-server")
 
+    # Check CA is responding
+    ca_health = check_ca_health(pki_type, ca_level)
+    if not ca_health.healthy:
+        console.print(f"  [red]✗ {ca_health.message}[/red]")
+        console.print(f"    [dim]Hint: Start PKI with: sudo podman-compose -f pki-compose.yml up -d[/dim]")
+        raise typer.Exit(1)
+    console.print(f"  [green]✓ {ca_health.message}[/green]")
+
+    # Check EDR
+    edr_status = check_http_service("mock_edr", config.edr_url)
     if not edr_status.healthy:
         console.print(f"  [red]✗ Mock EDR not responding[/red]")
         raise typer.Exit(1)
     console.print(f"  [green]✓ Mock EDR responding[/green]")
 
+    # Check EDA
+    eda_status = check_container("eda-server")
     if not eda_status.healthy:
         console.print(f"  [yellow]⚠ EDA server not running - automation may not work[/yellow]")
     else:
