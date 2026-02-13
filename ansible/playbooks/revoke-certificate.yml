@@ -27,7 +27,7 @@
     # Revocation settings
     revocation_reason: 1  # 1 = keyCompromise (IETF RFC 5280)
     disable_host: true
-    log_file: "/var/log/cert-revocation.log"
+    log_file: "{{ lookup('env', 'LAB_LOG_DIR') | default('/opt/cert-lab/logs', true) }}/cert-revocation.log"
 
   tasks:
     - name: Display event information

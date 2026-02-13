@@ -390,11 +390,13 @@ services:
     environment:
       ANSIBLE_HOST_KEY_CHECKING: "False"
       KAFKA_BOOTSTRAP_SERVERS: kafka.${LAB_DOMAIN:-cert-lab.local}:9092
+      LAB_LOG_DIR: /opt/cert-lab/logs
     volumes:
       - ./ansible/rulebooks:/rulebooks:ro
       - ./ansible/playbooks:/playbooks:ro
       - ./ansible/inventory:/inventory:ro
       - ./ansible/collections:/collections:ro
+      - ./data/logs:/opt/cert-lab/logs
     networks:
       lab-network:
         ipv4_address: ${IP_EDA:-172.20.0.40}
@@ -506,7 +508,7 @@ services:
       start_period: 30s
 
   # ===========================================================================
-  # Jupyter Lab (Documentation and Demos)
+  # Jupyter Lab (Documentation, Demos, and Dashboard)
   # ===========================================================================
 
   jupyter:
@@ -516,14 +518,21 @@ services:
     environment:
       JUPYTER_TOKEN: ${JUPYTER_TOKEN:?JUPYTER_TOKEN required}
       JUPYTER_ENABLE_LAB: "yes"
+      KAFKA_BOOTSTRAP_SERVERS: kafka.${LAB_DOMAIN:-cert-lab.local}:9092
+      KAFKA_TOPIC: security-events
     volumes:
       - ./notebooks:/home/jovyan/work
       - ./data/certs:/home/jovyan/certs:ro
+      - ./data/logs:/home/jovyan/logs:ro
     networks:
       lab-network:
         ipv4_address: ${IP_JUPYTER:-172.20.0.60}
     ports:
       - "8888:8888"
+    # Install kafka-python on startup
+    command: >
+      bash -c "pip install --quiet kafka-python pandas ipywidgets &&
+               start-notebook.sh --NotebookApp.token='${JUPYTER_TOKEN}'"
 
 # ===========================================================================
 # Networks

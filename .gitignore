@@ -3,8 +3,11 @@
 .env.local
 *.secret
 
-# Data directories
+# Data directories (keep notebooks and logs structure)
 data/
+!data/logs/
+data/logs/*
+!data/logs/.gitkeep
 logs/
 
 # Generated certificates

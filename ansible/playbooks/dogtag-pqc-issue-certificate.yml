@@ -35,7 +35,7 @@
     cert_file: "{{ output_dir }}/{{ target_host }}.crt"
 
     # Logging
-    log_file: "/var/log/dogtag-issuance.log"
+    log_file: "{{ lookup('env', 'LAB_LOG_DIR') | default('/opt/cert-lab/logs', true) }}/dogtag-issuance.log"
 
     # PQC PKI configuration
     ca_configs:

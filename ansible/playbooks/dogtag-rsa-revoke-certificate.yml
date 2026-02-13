@@ -30,7 +30,7 @@
 
     # Revocation settings
     revocation_reason: "{{ reason | default(1) }}"  # 1 = keyCompromise
-    log_file: "/var/log/dogtag-revocation.log"
+    log_file: "{{ lookup('env', 'LAB_LOG_DIR') | default('/opt/cert-lab/logs', true) }}/dogtag-revocation.log"
 
     # RSA PKI configuration
     ca_configs:
