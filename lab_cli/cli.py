@@ -6,8 +6,11 @@ Usage:
     lab status                   Check service status
     lab scenarios                List available scenarios
     lab trigger [OPTIONS]        Trigger a security event
-    lab issue [OPTIONS]          Issue a certificate
+    lab issue [OPTIONS]          Issue a certificate (Dogtag REST API)
     lab verify [OPTIONS]         Verify certificate status
+    lab acme-issue DOMAIN        Issue certificate via ACME protocol
+    lab est-enroll [OPTIONS]     Enroll for certificate via EST protocol
+    lab est-cacerts [OPTIONS]    Get CA certificates from EST endpoint
 """
 
 import random
@@ -31,6 +34,15 @@ from .config import (
 )
 from .events import trigger_event, EventResult
 from .pki import issue_certificate, verify_certificate_status, CertificateResult
+from .protocols import (
+    acme_issue_certificate,
+    est_enroll_certificate,
+    est_get_cacerts,
+    est_reenroll_certificate,
+    ProtocolResult,
+    ACME_ENDPOINTS,
+    EST_ENDPOINTS,
+)
 from .services import check_all_services, check_http_service, check_container, detect_deployed_pkis, is_freeipa_deployed
 from .validate import run_validation, ValidationReport, TestResult
 
@@ -93,7 +105,7 @@ def status(
 
     # Only add PKI categories for deployed (or requested) PKI types
     pki_category_map = {
-        "rsa": ("RSA PKI", ["rsa_root_ca", "rsa_intermediate_ca", "rsa_iot_ca"]),
+        "rsa": ("RSA PKI", ["rsa_root_ca", "rsa_intermediate_ca", "rsa_iot_ca", "rsa_acme_ca"]),
         "ecc": ("ECC PKI", ["ecc_root_ca", "ecc_intermediate_ca", "ecc_iot_ca"]),
         "pqc": ("PQC PKI", ["pqc_root_ca", "pqc_intermediate_ca", "pqc_iot_ca"]),
     }
@@ -369,6 +381,190 @@ def verify(
         console.print(f"[{status_color}]Certificate Status: {result.status}[/{status_color}]")
     else:
         console.print(f"[red]✗ Failed to verify certificate[/red]")
+        console.print(f"  Error: {result.message}")
+        raise typer.Exit(1)
+
+
+@app.command("acme-issue")
+def acme_issue(
+    domain: str = typer.Argument(..., help="Domain name for the certificate"),
+    pki_type: PKIType = typer.Option(
+        PKIType.RSA,
+        "--pki-type", "-p",
+        help="PKI type (only rsa has ACME support)"
+    ),
+):
+    """Issue a certificate using ACME protocol (RFC 8555).
+
+    Uses the Dogtag ACME responder to issue certificates via the ACME protocol.
+    The ACME CA is subordinate to the Intermediate CA.
+
+    Example:
+        lab acme-issue myserver.cert-lab.local
+    """
+    config = LabConfig.load()
+
+    if pki_type not in ACME_ENDPOINTS:
+        console.print(f"[red]✗ ACME not available for {pki_type.value} PKI[/red]")
+        console.print("  ACME is only available for RSA PKI")
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold cyan]ACME Certificate Issuance[/bold cyan]\n")
+    console.print(f"  Domain:   {domain}")
+    console.print(f"  PKI:      {pki_type.value.upper()}")
+    console.print(f"  Endpoint: {ACME_ENDPOINTS[pki_type]}/directory")
+    console.print()
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Requesting certificate via ACME...", total=None)
+
+        result = acme_issue_certificate(
+            config=config,
+            domain=domain,
+            pki_type=pki_type,
+        )
+
+        progress.update(task, completed=1)
+
+    if result.success:
+        console.print(f"\n[green]✓ {result.message}[/green]")
+        if result.details:
+            for key, value in result.details.items():
+                if key != "certificate":
+                    console.print(f"  {key}: {value}")
+    else:
+        console.print(f"\n[red]✗ ACME issuance failed[/red]")
+        console.print(f"  Error: {result.message}")
+        if result.details:
+            console.print(f"  Details: {result.details}")
+        raise typer.Exit(1)
+
+
+@app.command("est-enroll")
+def est_enroll(
+    device: str = typer.Option(
+        None, "--device", "-d",
+        help="Device ID (auto-generated if not specified)"
+    ),
+    pki_type: PKIType = typer.Option(
+        PKIType.RSA,
+        "--pki-type", "-p",
+        help="PKI type (rsa, ecc, pqc)"
+    ),
+    client_cert: Optional[str] = typer.Option(
+        None, "--cert", "-c",
+        help="Client certificate for authentication"
+    ),
+    client_key: Optional[str] = typer.Option(
+        None, "--key", "-k",
+        help="Client key for authentication"
+    ),
+):
+    """Enroll for a certificate using EST protocol (RFC 7030).
+
+    Uses the Dogtag EST subsystem on the IoT CA for certificate enrollment.
+    EST is designed for IoT device certificate provisioning.
+
+    Example:
+        lab est-enroll --device sensor01 --pki-type rsa
+    """
+    config = LabConfig.load()
+
+    if pki_type not in EST_ENDPOINTS:
+        console.print(f"[red]✗ EST not available for {pki_type.value} PKI[/red]")
+        raise typer.Exit(1)
+
+    # Generate device name if not provided
+    if not device:
+        device = f"iot-device-{random.randint(1000000000, 9999999999)}"
+
+    device_fqdn = f"{device}.{config.lab_domain}"
+
+    console.print(f"\n[bold cyan]EST Certificate Enrollment[/bold cyan]\n")
+    console.print(f"  Device:   {device_fqdn}")
+    console.print(f"  PKI:      {pki_type.value.upper()}")
+    console.print(f"  Endpoint: {EST_ENDPOINTS[pki_type]}")
+    console.print()
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Enrolling via EST...", total=None)
+
+        result = est_enroll_certificate(
+            config=config,
+            device_fqdn=device_fqdn,
+            pki_type=pki_type,
+            client_cert=client_cert,
+            client_key=client_key,
+        )
+
+        progress.update(task, completed=1)
+
+    if result.success:
+        console.print(f"\n[green]✓ {result.message}[/green]")
+        if result.details:
+            for key, value in result.details.items():
+                if key != "certificate":
+                    console.print(f"  {key}: {value}")
+    else:
+        console.print(f"\n[red]✗ EST enrollment failed[/red]")
+        console.print(f"  Error: {result.message}")
+        if result.details and "note" in result.details:
+            console.print(f"  Note: {result.details['note']}")
+        raise typer.Exit(1)
+
+
+@app.command("est-cacerts")
+def est_cacerts(
+    pki_type: PKIType = typer.Option(
+        PKIType.RSA,
+        "--pki-type", "-p",
+        help="PKI type (rsa, ecc, pqc)"
+    ),
+):
+    """Get CA certificates from EST endpoint.
+
+    Retrieves the CA certificate chain from the EST /cacerts endpoint.
+    This is typically the first step in EST enrollment.
+
+    Example:
+        lab est-cacerts --pki-type rsa
+    """
+    if pki_type not in EST_ENDPOINTS:
+        console.print(f"[red]✗ EST not available for {pki_type.value} PKI[/red]")
+        raise typer.Exit(1)
+
+    est_url = EST_ENDPOINTS[pki_type]
+
+    console.print(f"\n[bold cyan]EST CA Certificates[/bold cyan]\n")
+    console.print(f"  PKI:      {pki_type.value.upper()}")
+    console.print(f"  Endpoint: {est_url}/cacerts")
+    console.print()
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        progress.add_task("Fetching CA certificates...", total=None)
+        result = est_get_cacerts(est_url)
+
+    if result.success:
+        console.print(f"[green]✓ {result.message}[/green]\n")
+        if result.certificate:
+            # Show first part of certificate
+            cert_preview = result.certificate[:500]
+            console.print(f"[dim]{cert_preview}...[/dim]")
+    else:
+        console.print(f"[red]✗ Failed to get CA certificates[/red]")
         console.print(f"  Error: {result.message}")
         raise typer.Exit(1)
 

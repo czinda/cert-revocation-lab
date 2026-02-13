@@ -118,10 +118,13 @@ pip install -e .
 - `lab status` - Check all service health
 - `lab scenarios` - List available security scenarios
 - `lab test` - Complete end-to-end revocation test
-- `lab issue` - Issue a certificate from Dogtag PKI
+- `lab issue` - Issue a certificate from Dogtag PKI (REST API)
 - `lab trigger` - Trigger a security event via EDR/SIEM
 - `lab verify` - Check certificate revocation status
 - `lab validate` - Run comprehensive lab validation checks
+- `lab acme-issue` - Issue certificate via ACME protocol (RFC 8555)
+- `lab est-enroll` - Enroll for certificate via EST protocol (RFC 7030)
+- `lab est-cacerts` - Get CA certificates from EST endpoint
 
 ### Lab Validate Command
 
@@ -739,6 +742,22 @@ curl --cacert ca-chain.crt --cert client.crt --key client.key \
      -X POST -H 'Content-Type: application/pkcs10' \
      --data-binary @request.p10 \
      https://iot-ca.cert-lab.local:8445/.well-known/est/simpleenroll
+```
+
+### CLI Commands for ACME/EST
+
+```bash
+# Issue certificate via ACME protocol
+./lab acme-issue myserver.cert-lab.local
+
+# Enroll IoT device via EST protocol
+./lab est-enroll --device sensor01 --pki-type rsa
+
+# Get CA certificates from EST endpoint
+./lab est-cacerts --pki-type rsa
+
+# EST enrollment with client certificate authentication
+./lab est-enroll --device sensor02 --cert client.crt --key client.key
 ```
 
 ### Network Configuration
