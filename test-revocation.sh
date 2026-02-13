@@ -589,14 +589,17 @@ trigger_edr_event() {
     local device="$2"
     local severity="$3"
     local pki_type="${4:-$PKI_TYPE}"
+    local cert_serial="${CERT_SERIAL:-}"
+    local ca_level="${CA_LEVEL:-iot}"
 
     log_info "Source: Mock EDR"
     log_info "Scenario: ${scenario}"
     log_info "Device: ${device}.${LAB_DOMAIN}"
     log_info "Severity: ${severity}"
     [ -n "$pki_type" ] && log_info "PKI Type: ${pki_type}"
+    [ -n "$cert_serial" ] && log_info "Certificate Serial: ${cert_serial}"
 
-    # Build JSON payload
+    # Build JSON payload with certificate serial for revocation
     local json_payload="{
             \"device_id\": \"${device}\",
             \"scenario\": \"${scenario}\",
@@ -604,6 +607,11 @@ trigger_edr_event() {
     if [ -n "$pki_type" ]; then
         json_payload="${json_payload},
             \"pki_type\": \"${pki_type}\""
+    fi
+    if [ -n "$cert_serial" ]; then
+        json_payload="${json_payload},
+            \"certificate_serial\": \"${cert_serial}\",
+            \"ca_level\": \"${ca_level}\""
     fi
     json_payload="${json_payload}
         }"

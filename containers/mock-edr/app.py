@@ -33,6 +33,8 @@ class TriggerRequest(BaseModel):
     scenario: str = Field(default="Generic Malware Detection", description="Attack scenario name")
     severity: str = Field(default="high", pattern="^(low|medium|high|critical)$")
     certificate_cn: Optional[str] = Field(None, description="Certificate CN to revoke")
+    certificate_serial: Optional[str] = Field(None, description="Certificate serial number (hex format)")
+    ca_level: Optional[str] = Field(None, pattern="^(root|intermediate|iot)$", description="CA level that issued the certificate")
     pki_type: Optional[str] = Field(None, pattern="^(rsa|ecc|pqc)$", description="PKI type for certificate operations (rsa, ecc, pqc)")
 
 
@@ -51,6 +53,8 @@ class SecurityEvent(BaseModel):
     file_hash: Optional[str] = None
     network_ioc: Optional[str] = None
     certificate_cn: Optional[str] = None
+    certificate_serial: Optional[str] = None
+    ca_level: Optional[str] = None
     pki_type: Optional[str] = None
     action_required: str
     raw_alert: dict
@@ -374,13 +378,17 @@ async def trigger_event(request: TriggerRequest, background_tasks: BackgroundTas
         file_hash=scenario.get("file_hash"),
         network_ioc=scenario.get("network_ioc"),
         certificate_cn=cert_cn,
+        certificate_serial=request.certificate_serial,
+        ca_level=request.ca_level,
         pki_type=request.pki_type,
         action_required="revoke_certificate",
         raw_alert={
             "scenario": request.scenario,
             "triggered_at": datetime.utcnow().isoformat(),
             "edr_version": "1.0.0",
-            "pki_type": request.pki_type
+            "pki_type": request.pki_type,
+            "certificate_serial": request.certificate_serial,
+            "ca_level": request.ca_level
         }
     )
 
@@ -416,7 +424,7 @@ async def trigger_bulk_events(bulk_request: BulkTriggerRequest):
             results.append({"device": device_id, "status": "failed", "error": str(e)})
 
     return {
-        "total": len(devices),
+        "total": len(bulk_request.devices),
         "successful": sum(1 for r in results if r["status"] == "success"),
         "failed": sum(1 for r in results if r["status"] == "failed"),
         "results": results

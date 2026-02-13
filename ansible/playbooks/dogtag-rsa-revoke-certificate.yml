@@ -17,8 +17,8 @@
     pki_type: "rsa"
     pki_name: "RSA-4096"
 
-    # CA selection (root, intermediate, iot)
-    target_ca: "{{ ca_level | default('intermediate') }}"
+    # CA selection (root, intermediate, iot) - prefer event.ca_level over ca_level param
+    target_ca: "{{ event.ca_level | default(ca_level) | default('iot') }}"
 
     # Event data (passed from EDA)
     device_fqdn: "{{ event.device_fqdn | default('unknown.cert-lab.local') }}"
