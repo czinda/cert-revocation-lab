@@ -31,7 +31,7 @@ from .config import (
 )
 from .events import trigger_event, EventResult
 from .pki import issue_certificate, verify_certificate_status, CertificateResult
-from .services import check_all_services, check_http_service, check_container, detect_deployed_pkis
+from .services import check_all_services, check_http_service, check_container, detect_deployed_pkis, is_freeipa_deployed
 from .validate import run_validation, ValidationReport, TestResult
 
 app = typer.Typer(
@@ -71,8 +71,9 @@ def status(
 
     console.print("\n[bold cyan]Certificate Revocation Lab - Service Status[/bold cyan]\n")
 
-    # Detect deployed PKI types
+    # Detect deployed PKI types and FreeIPA
     deployed_pkis = detect_deployed_pkis() if not all_pki else ["rsa", "ecc", "pqc"]
+    freeipa_deployed = is_freeipa_deployed()
 
     with Progress(
         SpinnerColumn(),
@@ -102,6 +103,10 @@ def status(
             name, services = pki_category_map[pki_type]
             categories[name] = services
 
+    # Add FreeIPA if deployed
+    if freeipa_deployed:
+        categories["Identity Management"] = ["freeipa"]
+
     for category, services in categories.items():
         table = Table(title=category, show_header=True, header_style="bold")
         table.add_column("Service", style="cyan")
@@ -124,12 +129,18 @@ def status(
     total = len(results)
     healthy = sum(1 for s in results.values() if s.healthy)
 
-    # Show which PKI types are deployed
+    # Show deployment summary
+    deployment_parts = []
     if deployed_pkis:
         pki_list = ", ".join(p.upper() for p in deployed_pkis)
-        console.print(f"[bold]Deployed PKI:[/bold] {pki_list}")
+        deployment_parts.append(f"PKI: {pki_list}")
+    if freeipa_deployed:
+        deployment_parts.append("FreeIPA")
+
+    if deployment_parts:
+        console.print(f"[bold]Deployed:[/bold] {' | '.join(deployment_parts)}")
     else:
-        console.print("[yellow]No PKI containers deployed[/yellow]")
+        console.print("[yellow]No PKI or identity services deployed[/yellow]")
 
     console.print(f"[bold]Summary:[/bold] {healthy}/{total} services healthy\n")
 

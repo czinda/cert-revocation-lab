@@ -98,6 +98,20 @@ def detect_deployed_pkis() -> list[str]:
     return deployed
 
 
+def is_freeipa_deployed() -> bool:
+    """Check if FreeIPA container is deployed."""
+    return container_exists("freeipa") or container_exists("freeipa", use_sudo=True)
+
+
+def check_freeipa() -> ServiceStatus:
+    """Check FreeIPA server status."""
+    # FreeIPA runs in rootful podman, check with sudo first
+    status = check_container("freeipa", use_sudo=True)
+    if not status.healthy:
+        status = check_container("freeipa")
+    return status
+
+
 def check_kafka(config: LabConfig) -> ServiceStatus:
     """Check Kafka connectivity."""
     try:
@@ -130,6 +144,7 @@ def check_eda(config: LabConfig) -> ServiceStatus:
 def check_all_services(
     config: LabConfig,
     pki_types: Optional[list[str]] = None,
+    check_freeipa_flag: Optional[bool] = None,
 ) -> dict[str, ServiceStatus]:
     """
     Check all lab services and return their status.
@@ -137,6 +152,7 @@ def check_all_services(
     Args:
         config: Lab configuration
         pki_types: List of PKI types to check. If None, auto-detects deployed PKIs.
+        check_freeipa_flag: Whether to check FreeIPA. If None, auto-detects.
 
     Returns:
         Dictionary mapping service names to their status
@@ -170,6 +186,13 @@ def check_all_services(
             if not status.healthy:
                 status = check_container(ca_config.container, use_sudo=True)
             results[key] = status
+
+    # Check FreeIPA if deployed (or explicitly requested)
+    if check_freeipa_flag is None:
+        check_freeipa_flag = is_freeipa_deployed()
+
+    if check_freeipa_flag:
+        results["freeipa"] = check_freeipa()
 
     return results
 
