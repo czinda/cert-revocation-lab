@@ -121,6 +121,33 @@ pip install -e .
 - `lab issue` - Issue a certificate from Dogtag PKI
 - `lab trigger` - Trigger a security event via EDR/SIEM
 - `lab verify` - Check certificate revocation status
+- `lab validate` - Run comprehensive lab validation checks
+
+### Lab Validate Command
+
+Run comprehensive health checks on the entire lab infrastructure:
+
+```bash
+# Full validation
+./lab validate
+
+# Skip specific checks
+./lab validate --skip-pki --skip-kafka
+
+# Verbose output with details
+./lab validate --verbose
+
+# JSON output for automation
+./lab validate --json
+```
+
+**Validation categories:**
+- Pre-flight checks (required commands, .env configuration)
+- Container status (all lab containers running)
+- Service health (HTTP/HTTPS endpoints)
+- Kafka connectivity (topics, producer/consumer)
+- PKI hierarchy (certificate chain verification)
+- EDA server status
 
 ## PKI Initialization (Manual Steps)
 
@@ -174,6 +201,31 @@ sudo podman exec <container> sed -i '1s|.*|#!/usr/bin/bash|' /usr/bin/systemctl
 - `caCACert`: Use for signing subordinate CA certificates
 - `caServerCert`: Use for signing server TLS certificates
 - `caUserCert`: Use for signing user certificates
+
+### Ansible-Based PKI Initialization (Alternative)
+
+Instead of shell scripts, you can use Ansible roles to initialize the PKI hierarchy:
+
+```bash
+# Install ansible-collections for podman connection
+ansible-galaxy collection install containers.podman
+
+# Initialize full PKI hierarchy via Ansible
+ansible-playbook -i ansible/inventory/pki_hosts.yml \
+  ansible/playbooks/init-pki-hierarchy.yml
+
+# Sign a CSR with parent CA (replaces sign-csr.sh)
+ansible-playbook -i ansible/inventory/pki_hosts.yml \
+  ansible/playbooks/sign-csr.yml \
+  -e "csr_file=/certs/intermediate-ca.csr" \
+  -e "output_file=/certs/intermediate-ca-signed.crt" \
+  -e "ca_container=dogtag-root-ca"
+```
+
+**Ansible Roles:**
+- `pki_common` - Shared tasks (mock systemctl, wait for DS/CA)
+- `dogtag_root_ca` - Initialize self-signed Root CA
+- `dogtag_subordinate_ca` - Initialize Intermediate/IoT CAs (two-phase)
 
 ## Architecture
 
@@ -287,8 +339,15 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 │
 ├── ansible/
 │   ├── playbooks/
+│   │   ├── init-pki-hierarchy.yml   # Ansible-based PKI init
+│   │   └── sign-csr.yml             # Sign CSRs via Ansible
+│   ├── roles/
+│   │   ├── pki_common/              # Shared PKI tasks
+│   │   ├── dogtag_root_ca/          # Root CA initialization
+│   │   └── dogtag_subordinate_ca/   # Intermediate/IoT CA init
 │   ├── rulebooks/
 │   └── inventory/
+│       └── pki_hosts.yml            # PKI container inventory
 │
 └── data/
     ├── certs/

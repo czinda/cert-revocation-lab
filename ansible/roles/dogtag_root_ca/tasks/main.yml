@@ -1,0 +1,87 @@
+---
+# Dogtag Root CA Initialization Tasks
+
+- name: Include PKI common role
+  ansible.builtin.include_role:
+    name: pki_common
+
+- name: Check if Root CA already initialized
+  ansible.builtin.stat:
+    path: "{{ root_ca_cert }}"
+  register: root_ca_cert_stat
+
+- name: Check if Root CA instance is running
+  ansible.builtin.command: pki-server status {{ root_ca_instance }}
+  register: root_ca_status
+  changed_when: false
+  failed_when: false
+  when: root_ca_cert_stat.stat.exists
+
+- name: Root CA already initialized
+  ansible.builtin.debug:
+    msg: "Root CA already initialized. Certificate: {{ root_ca_cert }}"
+  when: root_ca_cert_stat.stat.exists and root_ca_status.rc == 0
+
+- name: Initialize Root CA
+  when: not root_ca_cert_stat.stat.exists
+  block:
+    - name: Wait for Directory Server
+      ansible.builtin.include_tasks: "{{ role_path }}/../pki_common/tasks/wait_for_ds.yml"
+      vars:
+        ds_host: "{{ ds_host }}"
+        ds_port: "{{ ds_port }}"
+        ds_password: "{{ ds_password }}"
+
+    - name: Check pkispawn config exists
+      ansible.builtin.stat:
+        path: "{{ root_ca_config }}"
+      register: config_stat
+
+    - name: Fail if config not found
+      ansible.builtin.fail:
+        msg: "PKI config not found: {{ root_ca_config }}"
+      when: not config_stat.stat.exists
+
+    - name: Prepare pkispawn config
+      ansible.builtin.template:
+        src: root-ca.cfg.j2
+        dest: /tmp/root-ca.cfg
+        mode: "0600"
+      when: config_stat.stat.exists
+
+    - name: Run pkispawn for Root CA
+      ansible.builtin.command: >
+        pkispawn -s CA -f /tmp/root-ca.cfg -v
+      register: pkispawn_result
+      changed_when: pkispawn_result.rc == 0
+
+    - name: Clean up temporary config
+      ansible.builtin.file:
+        path: /tmp/root-ca.cfg
+        state: absent
+
+    - name: Export Root CA certificate
+      ansible.builtin.command: >
+        pki-server cert-export ca_signing
+        --cert-file {{ root_ca_cert }}
+        -i {{ root_ca_instance }}
+      register: export_result
+      changed_when: export_result.rc == 0
+      failed_when: false
+
+    - name: Verify Root CA certificate
+      ansible.builtin.command: >
+        openssl x509 -in {{ root_ca_cert }} -noout -subject -issuer -dates
+      register: verify_result
+      changed_when: false
+
+    - name: Display certificate info
+      ansible.builtin.debug:
+        msg: "{{ verify_result.stdout_lines }}"
+
+    - name: Root CA initialization complete
+      ansible.builtin.debug:
+        msg: |
+          Root CA initialized successfully!
+          Certificate: {{ root_ca_cert }}
+          Web UI: {{ root_ca_url }}/ca

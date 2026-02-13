@@ -1,0 +1,45 @@
+---
+# PKI Container Inventory
+#
+# This inventory targets Dogtag PKI containers via podman connection.
+# Use with: ansible-playbook -i inventory/pki_hosts.yml playbooks/init-pki-hierarchy.yml
+
+all:
+  vars:
+    ansible_connection: containers.podman.podman
+    ansible_python_interpreter: /usr/bin/python3
+    # Set to "sudo" if using rootful podman
+    ansible_podman_extra_args: ""
+
+  children:
+    pki_servers:
+      children:
+        root_ca:
+          hosts:
+            dogtag-root-ca:
+              ansible_host: dogtag-root-ca
+              pki_instance: pki-root-ca
+              ds_hostname: ds-root.cert-lab.local
+
+        intermediate_ca:
+          hosts:
+            dogtag-intermediate-ca:
+              ansible_host: dogtag-intermediate-ca
+              pki_instance: pki-intermediate-ca
+              ds_hostname: ds-intermediate.cert-lab.local
+
+        iot_ca:
+          hosts:
+            dogtag-iot-ca:
+              ansible_host: dogtag-iot-ca
+              pki_instance: pki-iot-ca
+              ds_hostname: ds-iot.cert-lab.local
+
+    directory_servers:
+      hosts:
+        ds-root:
+          ansible_host: ds-root
+        ds-intermediate:
+          ansible_host: ds-intermediate
+        ds-iot:
+          ansible_host: ds-iot

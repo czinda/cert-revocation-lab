@@ -1,0 +1,20 @@
+---
+# Wait for Directory Server to be ready
+# Required variables: ds_host, ds_port, ds_password
+
+- name: "Wait for Directory Server at {{ ds_host }}:{{ ds_port }}"
+  ansible.builtin.command: >
+    ldapsearch -x -H "ldap://{{ ds_host }}:{{ ds_port }}"
+    -D "cn=Directory Manager" -w "{{ ds_password }}"
+    -b "" -s base "(objectclass=*)"
+  register: ds_check
+  until: ds_check.rc == 0
+  retries: "{{ ds_wait_retries | default(60) }}"
+  delay: "{{ ds_wait_delay | default(5) }}"
+  changed_when: false
+  failed_when: false
+
+- name: Fail if Directory Server not ready
+  ansible.builtin.fail:
+    msg: "Directory Server at {{ ds_host }}:{{ ds_port }} is not ready after {{ ds_wait_retries }} attempts"
+  when: ds_check.rc != 0

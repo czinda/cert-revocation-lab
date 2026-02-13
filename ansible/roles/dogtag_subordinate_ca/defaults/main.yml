@@ -1,0 +1,36 @@
+---
+# Dogtag Subordinate CA Role Defaults
+
+# CA identity (must be overridden)
+ca_name: "Subordinate CA"
+ca_instance: "pki-subordinate-ca"
+ca_hostname: "subordinate-ca.cert-lab.local"
+ca_subject: "CN=Subordinate CA,O=Cert-Lab,C=US"
+
+# Directory Server
+ds_host: "ds-subordinate.cert-lab.local"
+ds_port: 3389
+
+# Parent CA settings
+parent_ca_name: "Root CA"
+parent_ca_url: "https://root-ca.cert-lab.local:8443"
+parent_ca_cert: "{{ pki_certs_dir }}/root-ca.crt"
+parent_ca_container: "dogtag-root-ca"
+
+# Certificate paths
+ca_cert: "{{ pki_certs_dir }}/{{ ca_instance | replace('pki-', '') }}.crt"
+ca_csr: "{{ pki_certs_dir }}/{{ ca_instance | replace('pki-', '') }}.csr"
+ca_signed_cert: "{{ pki_certs_dir }}/{{ ca_instance | replace('pki-', '') }}-signed.crt"
+
+# PKI configuration files
+ca_config_step1: "{{ pki_config_dir }}/{{ ca_instance | replace('pki-', '') }}-step1.cfg"
+ca_config_step2: "{{ pki_config_dir }}/{{ ca_instance | replace('pki-', '') }}-step2.cfg"
+
+# Signing profile
+sign_profile: "caCACert"
+
+# CA chain file
+ca_chain_file: "{{ pki_certs_dir }}/ca-chain.crt"
+
+# Web UI URL
+ca_url: "https://{{ ca_hostname }}:8443"

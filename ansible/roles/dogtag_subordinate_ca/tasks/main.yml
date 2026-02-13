@@ -1,0 +1,195 @@
+---
+# Dogtag Subordinate CA Initialization Tasks
+# Supports two-phase initialization: CSR generation and certificate installation
+
+- name: Include PKI common role
+  ansible.builtin.include_role:
+    name: pki_common
+
+- name: Check if CA already initialized
+  ansible.builtin.stat:
+    path: "{{ ca_cert }}"
+  register: ca_cert_stat
+
+- name: Check if CA instance is running
+  ansible.builtin.command: pki-server status {{ ca_instance }}
+  register: ca_status
+  changed_when: false
+  failed_when: false
+  when: ca_cert_stat.stat.exists
+
+- name: CA already initialized
+  ansible.builtin.debug:
+    msg: "{{ ca_name }} already initialized. Certificate: {{ ca_cert }}"
+  when: ca_cert_stat.stat.exists and ca_status.rc == 0
+
+- name: Initialize Subordinate CA
+  when: not ca_cert_stat.stat.exists
+  block:
+    - name: Wait for Directory Server
+      ansible.builtin.include_tasks: "{{ role_path }}/../pki_common/tasks/wait_for_ds.yml"
+      vars:
+        ds_host: "{{ ds_host }}"
+        ds_port: "{{ ds_port }}"
+        ds_password: "{{ ds_password }}"
+
+    - name: Wait for Parent CA
+      ansible.builtin.include_tasks: "{{ role_path }}/../pki_common/tasks/wait_for_ca.yml"
+      vars:
+        ca_name: "{{ parent_ca_name }}"
+        ca_url: "{{ parent_ca_url }}"
+        ca_cert_file: "{{ parent_ca_cert }}"
+
+    - name: Check CSR status
+      ansible.builtin.stat:
+        path: "{{ ca_csr }}"
+      register: csr_stat
+
+    - name: Check signed cert status
+      ansible.builtin.stat:
+        path: "{{ ca_signed_cert }}"
+      register: signed_cert_stat
+
+    # Phase 1: Generate CSR
+    - name: "Phase 1: Generate CSR"
+      when: not csr_stat.stat.exists
+      block:
+        - name: Check step1 config exists
+          ansible.builtin.stat:
+            path: "{{ ca_config_step1 }}"
+          register: config_step1_stat
+
+        - name: Fail if step1 config not found
+          ansible.builtin.fail:
+            msg: "PKI config not found: {{ ca_config_step1 }}"
+          when: not config_step1_stat.stat.exists
+
+        - name: Run pkispawn phase 1 (generate CSR)
+          ansible.builtin.command: >
+            pkispawn -s CA -f {{ ca_config_step1 }} --skip-configuration -v
+          register: pkispawn_step1
+          changed_when: pkispawn_step1.rc == 0
+
+        - name: Verify CSR was generated
+          ansible.builtin.stat:
+            path: "{{ ca_csr }}"
+          register: csr_check
+
+        - name: CSR generation complete
+          ansible.builtin.debug:
+            msg: |
+              CSR generated: {{ ca_csr }}
+
+              ACTION REQUIRED: Sign the CSR with the parent CA
+
+              Run this command on the host:
+                podman exec {{ parent_ca_container }} /scripts/sign-csr.sh \
+                  {{ ca_csr }} \
+                  {{ ca_signed_cert }} \
+                  {{ parent_ca_url }} \
+                  {{ sign_profile }}
+
+              Then re-run this playbook to complete installation.
+          when: csr_check.stat.exists
+
+        - name: End play after CSR generation
+          ansible.builtin.meta: end_play
+          when: csr_check.stat.exists
+
+    # CSR exists but not signed
+    - name: CSR exists but not signed
+      ansible.builtin.fail:
+        msg: |
+          CSR exists but not signed yet: {{ ca_csr }}
+
+          Sign the CSR with parent CA:
+            podman exec {{ parent_ca_container }} /scripts/sign-csr.sh \
+              {{ ca_csr }} \
+              {{ ca_signed_cert }} \
+              {{ parent_ca_url }} \
+              {{ sign_profile }}
+      when: csr_stat.stat.exists and not signed_cert_stat.stat.exists
+
+    # Phase 2: Install signed certificate
+    - name: "Phase 2: Install signed certificate"
+      when: signed_cert_stat.stat.exists
+      block:
+        - name: Check parent CA cert exists
+          ansible.builtin.stat:
+            path: "{{ parent_ca_cert }}"
+          register: parent_cert_stat
+
+        - name: Fail if parent CA cert not found
+          ansible.builtin.fail:
+            msg: "Parent CA certificate not found: {{ parent_ca_cert }}"
+          when: not parent_cert_stat.stat.exists
+
+        - name: Check step2 config exists
+          ansible.builtin.stat:
+            path: "{{ ca_config_step2 }}"
+          register: config_step2_stat
+
+        - name: Fail if step2 config not found
+          ansible.builtin.fail:
+            msg: "PKI config not found: {{ ca_config_step2 }}"
+          when: not config_step2_stat.stat.exists
+
+        - name: Run pkispawn phase 2 (install certificate)
+          ansible.builtin.command: >
+            pkispawn -s CA -f {{ ca_config_step2 }} --skip-installation -v
+          register: pkispawn_step2
+          changed_when: pkispawn_step2.rc == 0
+
+        - name: Export CA certificate
+          ansible.builtin.command: >
+            pki-server cert-export ca_signing
+            --cert-file {{ ca_cert }}
+            -i {{ ca_instance }}
+          register: export_result
+          changed_when: export_result.rc == 0
+          failed_when: false
+
+        - name: Copy signed cert as CA cert if export failed
+          ansible.builtin.copy:
+            src: "{{ ca_signed_cert }}"
+            dest: "{{ ca_cert }}"
+            remote_src: true
+            mode: "0644"
+          when: export_result.rc != 0
+
+        - name: Create CA chain file
+          ansible.builtin.assemble:
+            src: "{{ pki_certs_dir }}"
+            dest: "{{ ca_chain_file }}"
+            regexp: "^(root-ca|intermediate-ca|iot-ca)\\.crt$"
+            mode: "0644"
+          when: ca_chain_file is defined
+
+        - name: Verify certificate chain
+          ansible.builtin.command: >
+            openssl verify -CAfile {{ parent_ca_cert }} {{ ca_cert }}
+          register: verify_result
+          changed_when: false
+          failed_when: false
+
+        - name: Display verification result
+          ansible.builtin.debug:
+            msg: "Chain verification: {{ 'PASSED' if verify_result.rc == 0 else 'FAILED' }}"
+
+        - name: Display certificate info
+          ansible.builtin.command: >
+            openssl x509 -in {{ ca_cert }} -noout -subject -issuer -dates
+          register: cert_info
+          changed_when: false
+
+        - name: Show certificate details
+          ansible.builtin.debug:
+            msg: "{{ cert_info.stdout_lines }}"
+
+        - name: CA initialization complete
+          ansible.builtin.debug:
+            msg: |
+              {{ ca_name }} initialized successfully!
+              Certificate: {{ ca_cert }}
+              CA Chain: {{ ca_chain_file }}
+              Web UI: {{ ca_url }}/ca

@@ -1,0 +1,163 @@
+---
+# Sign a CSR with a parent CA
+#
+# Usage:
+#   ansible-playbook -i inventory/pki_hosts.yml playbooks/sign-csr.yml \
+#     -e "csr_file=/certs/intermediate-ca.csr" \
+#     -e "output_file=/certs/intermediate-ca-signed.crt" \
+#     -e "ca_container=dogtag-root-ca" \
+#     -e "profile=caCACert"
+#
+# Required variables:
+#   csr_file: Path to CSR file (inside container)
+#   output_file: Path to output signed certificate
+#   ca_container: Name of the signing CA container
+#
+# Optional variables:
+#   profile: Certificate profile (default: caCACert)
+#   ca_url: CA URL (default: https://localhost:8443)
+
+- name: Sign CSR with CA
+  hosts: "{{ ca_container }}"
+  become: true
+  gather_facts: false
+  vars:
+    profile: "caCACert"
+    ca_url: "https://localhost:8443"
+    pki_admin_password: "{{ lookup('env', 'PKI_ADMIN_PASSWORD') | default('RedHat123', true) }}"
+
+  tasks:
+    - name: Verify CSR file exists
+      ansible.builtin.stat:
+        path: "{{ csr_file }}"
+      register: csr_stat
+
+    - name: Fail if CSR not found
+      ansible.builtin.fail:
+        msg: "CSR file not found: {{ csr_file }}"
+      when: not csr_stat.stat.exists
+
+    - name: Setup client NSS database
+      ansible.builtin.shell: |
+        set -e
+        CLIENT_DB=/root/.dogtag/nssdb
+        mkdir -p $CLIENT_DB
+
+        # Create NSS database if needed
+        if [ ! -f $CLIENT_DB/cert9.db ]; then
+            certutil -N -d $CLIENT_DB --empty-password
+        fi
+
+        # Import CA certificates for trust
+        for cert in /certs/root-ca.crt /certs/intermediate-ca.crt /certs/ca-chain.crt; do
+            if [ -f "$cert" ]; then
+                certutil -A -d $CLIENT_DB -n "$(basename $cert .crt)" \
+                    -t 'CT,C,C' -a -i "$cert" 2>/dev/null || true
+            fi
+        done
+
+        # Find and import CA signing cert from instance
+        for inst_dir in /var/lib/pki/pki-*/alias; do
+            if [ -d "$inst_dir" ]; then
+                INST=$(basename $(dirname $inst_dir))
+                certutil -L -d "$inst_dir" -n "caSigningCert cert-$INST CA" -a \
+                    > /tmp/ca-signing.crt 2>/dev/null || true
+                if [ -s /tmp/ca-signing.crt ]; then
+                    certutil -A -d $CLIENT_DB -n 'CA Signing Cert' \
+                        -t 'CT,C,C' -a -i /tmp/ca-signing.crt 2>/dev/null || true
+                fi
+            fi
+        done
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Find admin certificate nickname
+      ansible.builtin.shell: |
+        certutil -L -d /root/.dogtag/nssdb 2>/dev/null | \
+            grep -iE "admin|caadmin" | head -1 | \
+            sed 's/[[:space:]]*[uCTcPp,]*$//'
+      register: admin_nick
+      changed_when: false
+
+    - name: Fail if admin cert not found
+      ansible.builtin.fail:
+        msg: "Admin certificate not found in NSS database"
+      when: admin_nick.stdout | trim == ""
+
+    - name: Submit certificate request
+      ansible.builtin.shell: |
+        set -e
+        CLIENT_DB=/root/.dogtag/nssdb
+
+        pki -d $CLIENT_DB -U "{{ ca_url }}" \
+            ca-cert-request-submit \
+            --profile {{ profile }} \
+            --csr-file "{{ csr_file }}"
+      args:
+        executable: /bin/bash
+      register: submit_result
+      changed_when: true
+
+    - name: Extract request ID
+      ansible.builtin.set_fact:
+        request_id: "{{ submit_result.stdout | regex_search('Request ID:\\s*(\\S+)', '\\1') | first }}"
+
+    - name: Display request ID
+      ansible.builtin.debug:
+        msg: "Request ID: {{ request_id }}"
+
+    - name: Approve certificate request
+      ansible.builtin.shell: |
+        set -e
+        CLIENT_DB=/root/.dogtag/nssdb
+        ADMIN_NICK="{{ admin_nick.stdout | trim }}"
+
+        pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" \
+            -U "{{ ca_url }}" \
+            ca-cert-request-approve --force {{ request_id }}
+      args:
+        executable: /bin/bash
+      register: approve_result
+      changed_when: true
+
+    - name: Extract certificate ID
+      ansible.builtin.set_fact:
+        cert_id: "{{ approve_result.stdout | regex_search('Certificate ID:\\s*(\\S+)', '\\1') | first | default(approve_result.stdout | regex_search('Serial Number:\\s*(\\S+)', '\\1') | first) }}"
+
+    - name: Display certificate ID
+      ansible.builtin.debug:
+        msg: "Certificate ID: {{ cert_id }}"
+
+    - name: Retrieve signed certificate
+      ansible.builtin.shell: |
+        set -e
+        CLIENT_DB=/root/.dogtag/nssdb
+
+        pki -d $CLIENT_DB -U "{{ ca_url }}" \
+            ca-cert-show {{ cert_id }} \
+            --output "{{ output_file }}"
+      args:
+        executable: /bin/bash
+      register: retrieve_result
+      changed_when: true
+
+    - name: Verify output certificate
+      ansible.builtin.stat:
+        path: "{{ output_file }}"
+      register: output_stat
+
+    - name: Display certificate info
+      ansible.builtin.command: >
+        openssl x509 -in {{ output_file }} -noout -subject -issuer -dates
+      register: cert_info
+      changed_when: false
+      when: output_stat.stat.exists
+
+    - name: Show signed certificate details
+      ansible.builtin.debug:
+        msg: |
+          Certificate signed successfully!
+          Output: {{ output_file }}
+          {{ cert_info.stdout }}
+      when: output_stat.stat.exists

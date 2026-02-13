@@ -1,0 +1,23 @@
+---
+# PKI Common Tasks
+
+- name: Create certificates directory
+  ansible.builtin.file:
+    path: "{{ pki_certs_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Install mock systemctl for container environment
+  ansible.builtin.copy:
+    src: mock-systemctl.sh
+    dest: /usr/bin/systemctl
+    mode: "0755"
+    backup: true
+  when: ansible_virtualization_type == "container" or ansible_virtualization_type == "podman"
+
+- name: Create mock systemctl marker
+  ansible.builtin.file:
+    path: /run/.mock_systemctl_installed
+    state: touch
+    mode: "0644"
+  when: ansible_virtualization_type == "container" or ansible_virtualization_type == "podman"

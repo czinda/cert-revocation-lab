@@ -1,0 +1,21 @@
+---
+# Dogtag Root CA Role Defaults
+
+# CA identity
+root_ca_name: "Root CA"
+root_ca_instance: "pki-root-ca"
+root_ca_hostname: "root-ca.cert-lab.local"
+root_ca_subject: "CN=Root CA,O=Cert-Lab,C=US"
+
+# Directory Server
+ds_host: "ds-root.cert-lab.local"
+ds_port: 3389
+
+# Certificate paths
+root_ca_cert: "{{ pki_certs_dir }}/root-ca.crt"
+
+# PKI configuration file
+root_ca_config: "{{ pki_config_dir }}/root-ca.cfg"
+
+# Web UI URL
+root_ca_url: "https://{{ root_ca_hostname }}:8443"

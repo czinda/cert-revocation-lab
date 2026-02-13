@@ -1,0 +1,84 @@
+---
+# Initialize complete Dogtag PKI Hierarchy
+#
+# This playbook initializes the three-tier PKI:
+#   Root CA -> Intermediate CA -> IoT Sub-CA
+#
+# Usage:
+#   ansible-playbook -i inventory/hosts.yml playbooks/init-pki-hierarchy.yml
+#
+# The playbook handles two-phase subordinate CA initialization:
+#   1. Generate CSR
+#   2. Sign CSR with parent CA
+#   3. Install signed certificate
+#
+# Run the playbook multiple times - it's idempotent and will continue
+# from where it left off.
+
+- name: Initialize PKI Hierarchy - Root CA
+  hosts: root_ca
+  become: true
+  gather_facts: true
+  vars:
+    pki_certs_dir: /certs
+    pki_config_dir: /etc/pki-configs
+  roles:
+    - role: dogtag_root_ca
+      vars:
+        root_ca_instance: "{{ pki_instance | default('pki-root-ca') }}"
+        ds_host: "{{ ds_hostname | default('ds-root.cert-lab.local') }}"
+        ds_password: "{{ lookup('env', 'DS_PASSWORD') | default('RedHat123', true) }}"
+        pki_admin_password: "{{ lookup('env', 'PKI_ADMIN_PASSWORD') | default('RedHat123', true) }}"
+
+- name: Initialize PKI Hierarchy - Intermediate CA
+  hosts: intermediate_ca
+  become: true
+  gather_facts: true
+  vars:
+    pki_certs_dir: /certs
+    pki_config_dir: /etc/pki-configs
+  roles:
+    - role: dogtag_subordinate_ca
+      vars:
+        ca_name: "Intermediate CA"
+        ca_instance: "{{ pki_instance | default('pki-intermediate-ca') }}"
+        ca_hostname: "intermediate-ca.cert-lab.local"
+        ds_host: "{{ ds_hostname | default('ds-intermediate.cert-lab.local') }}"
+        ds_password: "{{ lookup('env', 'DS_PASSWORD') | default('RedHat123', true) }}"
+        pki_admin_password: "{{ lookup('env', 'PKI_ADMIN_PASSWORD') | default('RedHat123', true) }}"
+        parent_ca_name: "Root CA"
+        parent_ca_url: "https://root-ca.cert-lab.local:8443"
+        parent_ca_cert: "{{ pki_certs_dir }}/root-ca.crt"
+        parent_ca_container: "dogtag-root-ca"
+        ca_config_step1: "{{ pki_config_dir }}/intermediate-ca-step1.cfg"
+        ca_config_step2: "{{ pki_config_dir }}/intermediate-ca-step2.cfg"
+        ca_cert: "{{ pki_certs_dir }}/intermediate-ca.crt"
+        ca_csr: "{{ pki_certs_dir }}/intermediate-ca.csr"
+        ca_signed_cert: "{{ pki_certs_dir }}/intermediate-ca-signed.crt"
+
+- name: Initialize PKI Hierarchy - IoT Sub-CA
+  hosts: iot_ca
+  become: true
+  gather_facts: true
+  vars:
+    pki_certs_dir: /certs
+    pki_config_dir: /etc/pki-configs
+  roles:
+    - role: dogtag_subordinate_ca
+      vars:
+        ca_name: "IoT Sub-CA"
+        ca_instance: "{{ pki_instance | default('pki-iot-ca') }}"
+        ca_hostname: "iot-ca.cert-lab.local"
+        ds_host: "{{ ds_hostname | default('ds-iot.cert-lab.local') }}"
+        ds_password: "{{ lookup('env', 'DS_PASSWORD') | default('RedHat123', true) }}"
+        pki_admin_password: "{{ lookup('env', 'PKI_ADMIN_PASSWORD') | default('RedHat123', true) }}"
+        parent_ca_name: "Intermediate CA"
+        parent_ca_url: "https://intermediate-ca.cert-lab.local:8443"
+        parent_ca_cert: "{{ pki_certs_dir }}/intermediate-ca.crt"
+        parent_ca_container: "dogtag-intermediate-ca"
+        ca_config_step1: "{{ pki_config_dir }}/iot-ca-step1.cfg"
+        ca_config_step2: "{{ pki_config_dir }}/iot-ca-step2.cfg"
+        ca_cert: "{{ pki_certs_dir }}/iot-ca.crt"
+        ca_csr: "{{ pki_certs_dir }}/iot-ca.csr"
+        ca_signed_cert: "{{ pki_certs_dir }}/iot-ca-signed.crt"
+        ca_chain_file: "{{ pki_certs_dir }}/ca-chain.crt"

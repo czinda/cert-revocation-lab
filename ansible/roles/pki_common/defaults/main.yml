@@ -1,0 +1,22 @@
+---
+# PKI Common Role Defaults
+
+# Directory paths
+pki_certs_dir: /certs
+pki_config_dir: /etc/pki-configs
+
+# Directory Server settings
+ds_port: 3389
+ds_password: "{{ lookup('env', 'DS_PASSWORD') | default('RedHat123', true) }}"
+
+# PKI Admin settings
+pki_admin_password: "{{ lookup('env', 'PKI_ADMIN_PASSWORD') | default(lookup('env', 'ADMIN_PASSWORD')) | default('RedHat123', true) }}"
+pki_backup_password: "{{ pki_admin_password }}"
+pki_client_pkcs12_password: "{{ pki_admin_password }}"
+pki_token_password: "{{ pki_admin_password }}"
+
+# Timeouts
+ds_wait_retries: 60
+ds_wait_delay: 5
+ca_wait_retries: 60
+ca_wait_delay: 5

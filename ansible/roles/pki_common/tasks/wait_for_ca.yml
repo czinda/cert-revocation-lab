@@ -1,0 +1,28 @@
+---
+# Wait for CA to be ready
+# Required variables: ca_name, ca_url (optional), ca_cert_file (optional)
+
+- name: "Wait for {{ ca_name }} API"
+  ansible.builtin.uri:
+    url: "{{ ca_url }}/ca/admin/ca/getStatus"
+    method: GET
+    validate_certs: false
+    return_content: true
+  register: ca_status
+  until: ca_status.status == 200 and 'running' in ca_status.content
+  retries: "{{ ca_wait_retries | default(60) }}"
+  delay: "{{ ca_wait_delay | default(5) }}"
+  failed_when: false
+  when: ca_url is defined
+
+- name: "Wait for {{ ca_name }} certificate file"
+  ansible.builtin.wait_for:
+    path: "{{ ca_cert_file }}"
+    state: present
+    timeout: "{{ ca_wait_retries * ca_wait_delay }}"
+  when: ca_cert_file is defined and ca_url is not defined
+
+- name: "Check {{ ca_name }} readiness"
+  ansible.builtin.debug:
+    msg: "{{ ca_name }} is ready"
+  when: (ca_url is defined and ca_status.status == 200) or (ca_cert_file is defined)

@@ -32,6 +32,7 @@ from .config import (
 from .events import trigger_event, EventResult
 from .pki import issue_certificate, verify_certificate_status, CertificateResult
 from .services import check_all_services, check_http_service, check_container
+from .validate import run_validation, ValidationReport, TestResult
 
 app = typer.Typer(
     name="lab",
@@ -519,6 +520,119 @@ def test(
         raise typer.Exit(1)
 
     console.print("=" * 70 + "\n")
+
+
+@app.command()
+def validate(
+    skip_pki: bool = typer.Option(False, "--skip-pki", help="Skip PKI validation"),
+    skip_kafka: bool = typer.Option(False, "--skip-kafka", help="Skip Kafka validation"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed output"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """
+    Run comprehensive lab validation and health checks.
+
+    Validates:
+    - Pre-flight system requirements (podman, openssl, etc.)
+    - Container status (all lab containers)
+    - Service health endpoints
+    - Kafka connectivity and topics
+    - PKI hierarchy and certificates
+    - EDA server status
+    """
+    config = LabConfig.load()
+
+    console.print("\n[bold cyan]Certificate Revocation Lab - Validation[/bold cyan]\n")
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        progress.add_task("Running validation checks...", total=None)
+        report = run_validation(
+            config=config,
+            skip_pki=skip_pki,
+            skip_kafka=skip_kafka,
+            verbose=verbose,
+        )
+
+    if json_output:
+        import json
+        output = {
+            "success": report.success,
+            "duration": round(report.duration, 2),
+            "summary": {
+                "total": report.total_tests,
+                "passed": report.total_passed,
+                "failed": report.total_failed,
+                "warned": report.total_warned,
+                "skipped": report.total_skipped,
+            },
+            "categories": [
+                {
+                    "name": cat.name,
+                    "tests": [
+                        {
+                            "name": t.name,
+                            "result": t.result.value,
+                            "message": t.message,
+                            "details": t.details,
+                        }
+                        for t in cat.tests
+                    ]
+                }
+                for cat in report.categories
+            ]
+        }
+        console.print(json.dumps(output, indent=2))
+        raise typer.Exit(0 if report.success else 1)
+
+    # Display results by category
+    for category in report.categories:
+        table = Table(title=category.name, show_header=True, header_style="bold")
+        table.add_column("Check", style="cyan")
+        table.add_column("Result")
+        table.add_column("Message")
+
+        for test in category.tests:
+            if test.result == TestResult.PASS:
+                result_str = "[green]✓ PASS[/green]"
+            elif test.result == TestResult.FAIL:
+                result_str = "[red]✗ FAIL[/red]"
+            elif test.result == TestResult.WARN:
+                result_str = "[yellow]⚠ WARN[/yellow]"
+            else:
+                result_str = "[dim]○ SKIP[/dim]"
+
+            message = test.message
+            if verbose and test.details:
+                message += f"\n  [dim]{test.details}[/dim]"
+
+            table.add_row(test.name, result_str, message)
+
+        console.print(table)
+        console.print()
+
+    # Summary
+    console.print("=" * 60)
+    if report.success:
+        console.print(f"[bold green]VALIDATION PASSED[/bold green]")
+    else:
+        console.print(f"[bold red]VALIDATION FAILED[/bold red]")
+
+    console.print(
+        f"\n  Total: {report.total_tests}  "
+        f"[green]Passed: {report.total_passed}[/green]  "
+        f"[red]Failed: {report.total_failed}[/red]  "
+        f"[yellow]Warned: {report.total_warned}[/yellow]  "
+        f"[dim]Skipped: {report.total_skipped}[/dim]"
+    )
+    console.print(f"  Duration: {report.duration:.1f}s")
+    console.print("=" * 60 + "\n")
+
+    raise typer.Exit(0 if report.success else 1)
 
 
 def cli():
