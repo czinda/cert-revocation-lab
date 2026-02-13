@@ -524,74 +524,90 @@ def test(
 
 @app.command()
 def validate(
+    fix: bool = typer.Option(False, "--fix", help="Auto-fix issues (restart containers, create topics)"),
     skip_pki: bool = typer.Option(False, "--skip-pki", help="Skip PKI validation"),
     skip_kafka: bool = typer.Option(False, "--skip-kafka", help="Skip Kafka validation"),
+    skip_e2e: bool = typer.Option(False, "--skip-e2e", help="Skip end-to-end test"),
+    tier: int = typer.Option(0, "--tier", "-t", help="Start from tier N (0-9)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed output"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """
     Run comprehensive lab validation and health checks.
 
-    Validates:
-    - Pre-flight system requirements (podman, openssl, etc.)
-    - Container status (all lab containers)
-    - Service health endpoints
-    - Kafka connectivity and topics
-    - PKI hierarchy and certificates
-    - EDA server status
+    Validates all tiers in dependency order:
+      0: System prerequisites (podman, tools, .env)
+      1: Networks & volumes
+      2: Base infrastructure (postgres, redis, zookeeper)
+      3: Kafka event bus
+      4: PKI infrastructure (389DS, Dogtag CAs, certificates)
+      5: FreeIPA identity management
+      6: AWX / Ansible runner
+      7: Event-Driven Ansible (EDA)
+      8: Security tools (Mock EDR, SIEM, IoT Client, Jupyter)
+      9: End-to-end integration test
+
+    Use --fix to enable auto-remediation (restart containers, create topics).
     """
     config = LabConfig.load()
 
+    fix_str = "[green]enabled[/green]" if fix else "[yellow]disabled[/yellow]"
     console.print("\n[bold cyan]Certificate Revocation Lab - Validation[/bold cyan]\n")
+    console.print(f"  Auto-fix: {fix_str}")
+    if tier > 0:
+        console.print(f"  Starting from tier: {tier}")
+    console.print()
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-        transient=True,
-    ) as progress:
-        progress.add_task("Running validation checks...", total=None)
-        report = run_validation(
-            config=config,
-            skip_pki=skip_pki,
-            skip_kafka=skip_kafka,
-            verbose=verbose,
-        )
+    report = run_validation(
+        config=config,
+        skip_pki=skip_pki,
+        skip_kafka=skip_kafka,
+        skip_e2e=skip_e2e,
+        auto_fix=fix,
+        verbose=verbose,
+        start_tier=tier,
+    )
 
     if json_output:
         import json
         output = {
             "success": report.success,
+            "auto_fix": report.auto_fix,
             "duration": round(report.duration, 2),
+            "pki_types_deployed": report.pki_types_deployed,
             "summary": {
                 "total": report.total_tests,
                 "passed": report.total_passed,
                 "failed": report.total_failed,
+                "fixed": report.total_fixed,
                 "warned": report.total_warned,
                 "skipped": report.total_skipped,
             },
             "categories": [
                 {
                     "name": cat.name,
+                    "tier": cat.tier,
                     "tests": [
                         {
                             "name": t.name,
                             "result": t.result.value,
                             "message": t.message,
                             "details": t.details,
+                            "remediation": t.remediation,
                         }
                         for t in cat.tests
                     ]
                 }
                 for cat in report.categories
-            ]
+            ],
+            "remediation_hints": report.get_remediation_hints(),
         }
         console.print(json.dumps(output, indent=2))
         raise typer.Exit(0 if report.success else 1)
 
     # Display results by category
     for category in report.categories:
-        table = Table(title=category.name, show_header=True, header_style="bold")
+        table = Table(title=f"Tier {category.tier}: {category.name}", show_header=True, header_style="bold")
         table.add_column("Check", style="cyan")
         table.add_column("Result")
         table.add_column("Message")
@@ -603,12 +619,16 @@ def validate(
                 result_str = "[red]✗ FAIL[/red]"
             elif test.result == TestResult.WARN:
                 result_str = "[yellow]⚠ WARN[/yellow]"
+            elif test.result == TestResult.FIXED:
+                result_str = "[cyan]✓ FIXED[/cyan]"
             else:
                 result_str = "[dim]○ SKIP[/dim]"
 
             message = test.message
             if verbose and test.details:
                 message += f"\n  [dim]{test.details}[/dim]"
+            if verbose and test.remediation and test.result == TestResult.FAIL:
+                message += f"\n  [yellow]Fix: {test.remediation}[/yellow]"
 
             table.add_row(test.name, result_str, message)
 
@@ -625,11 +645,23 @@ def validate(
     console.print(
         f"\n  Total: {report.total_tests}  "
         f"[green]Passed: {report.total_passed}[/green]  "
+        f"[cyan]Fixed: {report.total_fixed}[/cyan]  "
         f"[red]Failed: {report.total_failed}[/red]  "
         f"[yellow]Warned: {report.total_warned}[/yellow]  "
         f"[dim]Skipped: {report.total_skipped}[/dim]"
     )
     console.print(f"  Duration: {report.duration:.1f}s")
+
+    # Show remediation hints for failed tests
+    hints = report.get_remediation_hints()
+    if hints and not fix:
+        console.print("\n[bold yellow]Remediation Steps:[/bold yellow]")
+        for category, steps in hints.items():
+            console.print(f"\n  [bold]{category}:[/bold]")
+            for step in steps:
+                console.print(f"    • {step}")
+        console.print("\n[dim]Tip: Run with --fix to auto-remediate issues[/dim]")
+
     console.print("=" * 60 + "\n")
 
     raise typer.Exit(0 if report.success else 1)

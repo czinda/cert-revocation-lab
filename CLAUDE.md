@@ -125,29 +125,45 @@ pip install -e .
 
 ### Lab Validate Command
 
-Run comprehensive health checks on the entire lab infrastructure:
+Run comprehensive health checks with auto-remediation:
 
 ```bash
 # Full validation
 ./lab validate
 
-# Skip specific checks
-./lab validate --skip-pki --skip-kafka
+# Auto-fix issues (restart containers, create topics)
+./lab validate --fix
 
-# Verbose output with details
+# Skip specific checks
+./lab validate --skip-pki --skip-kafka --skip-e2e
+
+# Start from specific tier (0-9)
+./lab validate --tier 4      # Start from PKI tier
+
+# Verbose output with details and remediation hints
 ./lab validate --verbose
 
 # JSON output for automation
 ./lab validate --json
 ```
 
-**Validation categories:**
-- Pre-flight checks (required commands, .env configuration)
-- Container status (all lab containers running)
-- Service health (HTTP/HTTPS endpoints)
-- Kafka connectivity (topics, producer/consumer)
-- PKI hierarchy (certificate chain verification)
-- EDA server status
+**Validation tiers (run in dependency order):**
+- **Tier 0**: System prerequisites (podman, tools, .env)
+- **Tier 1**: Networks & volumes
+- **Tier 2**: Base infrastructure (postgres, redis, zookeeper)
+- **Tier 3**: Kafka event bus
+- **Tier 4**: PKI infrastructure (389DS, Dogtag CAs, certificates)
+- **Tier 5**: FreeIPA identity management
+- **Tier 6**: AWX / Ansible runner
+- **Tier 7**: Event-Driven Ansible (EDA)
+- **Tier 8**: Security tools (Mock EDR, SIEM, IoT Client, Jupyter)
+- **Tier 9**: End-to-end integration test
+
+**Auto-remediation (`--fix`):**
+- Restart stopped containers
+- Create missing Kafka topics
+- Restart services with Kafka connection issues
+- Create missing networks
 
 ## PKI Initialization (Manual Steps)
 

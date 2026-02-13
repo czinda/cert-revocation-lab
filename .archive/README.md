@@ -10,6 +10,7 @@ They are kept for reference but should not be used.
 | `test-revocation.sh` | `./lab test` | Python CLI with better error handling |
 | `validate-lab.sh` | `./lab validate` | Python CLI with JSON output support |
 | `preflight-check.sh` | `./lab validate` | Integrated into validate pre-flight checks |
+| `post-deploy-validate.sh` | `./lab validate --fix` | Full tier-based validation with auto-remediation |
 
 ## Migration Date
 
