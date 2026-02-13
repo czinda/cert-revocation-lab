@@ -31,7 +31,7 @@ from .config import (
 )
 from .events import trigger_event, EventResult
 from .pki import issue_certificate, verify_certificate_status, CertificateResult
-from .services import check_all_services, check_http_service, check_container
+from .services import check_all_services, check_http_service, check_container, detect_deployed_pkis
 from .validate import run_validation, ValidationReport, TestResult
 
 app = typer.Typer(
@@ -64,11 +64,15 @@ def main(
 @app.command()
 def status(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed status"),
+    all_pki: bool = typer.Option(False, "--all", "-a", help="Show all PKI types, not just deployed"),
 ):
     """Check the status of all lab services."""
     config = LabConfig.load()
 
     console.print("\n[bold cyan]Certificate Revocation Lab - Service Status[/bold cyan]\n")
+
+    # Detect deployed PKI types
+    deployed_pkis = detect_deployed_pkis() if not all_pki else ["rsa", "ecc", "pqc"]
 
     with Progress(
         SpinnerColumn(),
@@ -77,15 +81,26 @@ def status(
         transient=True,
     ) as progress:
         progress.add_task("Checking services...", total=None)
-        results = check_all_services(config)
+        # Pass deployed PKIs to only check those
+        pki_types = None if all_pki else deployed_pkis
+        results = check_all_services(config, pki_types=pki_types)
 
-    # Group results by category
+    # Build categories based on deployed PKIs
     categories = {
         "Core Services": ["mock_edr", "mock_siem", "kafka", "eda", "zookeeper"],
-        "RSA PKI": ["rsa_root_ca", "rsa_intermediate_ca", "rsa_iot_ca"],
-        "ECC PKI": ["ecc_root_ca", "ecc_intermediate_ca", "ecc_iot_ca"],
-        "PQC PKI": ["pqc_root_ca", "pqc_intermediate_ca", "pqc_iot_ca"],
     }
+
+    # Only add PKI categories for deployed (or requested) PKI types
+    pki_category_map = {
+        "rsa": ("RSA PKI", ["rsa_root_ca", "rsa_intermediate_ca", "rsa_iot_ca"]),
+        "ecc": ("ECC PKI", ["ecc_root_ca", "ecc_intermediate_ca", "ecc_iot_ca"]),
+        "pqc": ("PQC PKI", ["pqc_root_ca", "pqc_intermediate_ca", "pqc_iot_ca"]),
+    }
+
+    for pki_type in (deployed_pkis if not all_pki else ["rsa", "ecc", "pqc"]):
+        if pki_type in pki_category_map:
+            name, services = pki_category_map[pki_type]
+            categories[name] = services
 
     for category, services in categories.items():
         table = Table(title=category, show_header=True, header_style="bold")
@@ -97,9 +112,9 @@ def status(
         for service in services:
             if service in results:
                 has_services = True
-                status = results[service]
-                status_str = "[green]✓ OK[/green]" if status.healthy else "[red]✗ FAIL[/red]"
-                table.add_row(status.name, status_str, status.message)
+                svc_status = results[service]
+                status_str = "[green]✓ OK[/green]" if svc_status.healthy else "[red]✗ FAIL[/red]"
+                table.add_row(svc_status.name, status_str, svc_status.message)
 
         if has_services:
             console.print(table)
@@ -108,6 +123,14 @@ def status(
     # Summary
     total = len(results)
     healthy = sum(1 for s in results.values() if s.healthy)
+
+    # Show which PKI types are deployed
+    if deployed_pkis:
+        pki_list = ", ".join(p.upper() for p in deployed_pkis)
+        console.print(f"[bold]Deployed PKI:[/bold] {pki_list}")
+    else:
+        console.print("[yellow]No PKI containers deployed[/yellow]")
+
     console.print(f"[bold]Summary:[/bold] {healthy}/{total} services healthy\n")
 
 

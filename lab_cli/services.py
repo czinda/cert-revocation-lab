@@ -65,6 +65,39 @@ def check_container(name: str, use_sudo: bool = False) -> ServiceStatus:
         return ServiceStatus(name=name, healthy=False, message=str(e))
 
 
+def container_exists(name: str, use_sudo: bool = False) -> bool:
+    """Check if a container exists (running or not)."""
+    cmd = ["podman", "container", "exists", name]
+    if use_sudo:
+        cmd = ["sudo"] + cmd
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def detect_deployed_pkis() -> list[str]:
+    """
+    Detect which PKI types are deployed by checking for their containers.
+
+    Returns a list of PKI types that have at least one container present.
+    """
+    deployed = []
+
+    for pki_type, levels in CA_CONFIGS.items():
+        # Check if any CA container for this PKI type exists
+        for level, ca_config in levels.items():
+            container = ca_config.container
+            # Try without sudo first (for rootless), then with sudo (for rootful PKI)
+            if container_exists(container) or container_exists(container, use_sudo=True):
+                deployed.append(pki_type)
+                break  # Found one container, PKI is deployed
+
+    return deployed
+
+
 def check_kafka(config: LabConfig) -> ServiceStatus:
     """Check Kafka connectivity."""
     try:
@@ -94,8 +127,20 @@ def check_eda(config: LabConfig) -> ServiceStatus:
     return check_container("eda-server")
 
 
-def check_all_services(config: LabConfig) -> dict[str, ServiceStatus]:
-    """Check all lab services and return their status."""
+def check_all_services(
+    config: LabConfig,
+    pki_types: Optional[list[str]] = None,
+) -> dict[str, ServiceStatus]:
+    """
+    Check all lab services and return their status.
+
+    Args:
+        config: Lab configuration
+        pki_types: List of PKI types to check. If None, auto-detects deployed PKIs.
+
+    Returns:
+        Dictionary mapping service names to their status
+    """
     results = {}
 
     # HTTP services
@@ -109,8 +154,15 @@ def check_all_services(config: LabConfig) -> dict[str, ServiceStatus]:
     results["eda"] = check_container("eda-server")
     results["zookeeper"] = check_container("zookeeper")
 
-    # Check PKI containers (need sudo)
-    for pki_type, levels in CA_CONFIGS.items():
+    # Auto-detect deployed PKI types if not specified
+    if pki_types is None:
+        pki_types = detect_deployed_pkis()
+
+    # Check PKI containers only for deployed PKI types
+    for pki_type in pki_types:
+        if pki_type not in CA_CONFIGS:
+            continue
+        levels = CA_CONFIGS[pki_type]
         for level, ca_config in levels.items():
             key = f"{pki_type}_{level}_ca"
             # Try without sudo first, then with sudo
@@ -120,6 +172,21 @@ def check_all_services(config: LabConfig) -> dict[str, ServiceStatus]:
             results[key] = status
 
     return results
+
+
+def get_deployed_pki_summary() -> dict[str, bool]:
+    """
+    Get a summary of which PKI types are deployed.
+
+    Returns:
+        Dictionary mapping PKI type to whether it's deployed
+    """
+    deployed = detect_deployed_pkis()
+    return {
+        "rsa": "rsa" in deployed,
+        "ecc": "ecc" in deployed,
+        "pqc": "pqc" in deployed,
+    }
 
 
 def print_service_status(status: ServiceStatus, verbose: bool = False) -> None:
