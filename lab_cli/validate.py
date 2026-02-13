@@ -169,12 +169,19 @@ def run_command(
     capture: bool = True,
 ) -> tuple[int, str, str]:
     """Run a command and return (returncode, stdout, stderr)."""
+    # Ensure XDG_RUNTIME_DIR is set for podman
+    env = os.environ.copy()
+    if "XDG_RUNTIME_DIR" not in env:
+        uid = os.getuid()
+        env["XDG_RUNTIME_DIR"] = f"/run/user/{uid}"
+
     try:
         result = subprocess.run(
             cmd,
             capture_output=capture,
             text=True,
             timeout=timeout,
+            env=env,
         )
         return result.returncode, result.stdout, result.stderr
     except subprocess.TimeoutExpired:
