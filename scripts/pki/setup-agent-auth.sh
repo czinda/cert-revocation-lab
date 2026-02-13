@@ -146,21 +146,80 @@ setup_agent_auth() {
     fi
 }
 
-# Export admin cert for external use
+# Export admin cert and key as PEM for external use (e.g., EDA playbooks)
 export_admin_cert() {
-    log_info "Exporting admin certificate for external use..."
+    log_info "Exporting admin certificate and key as PEM..."
 
-    local export_dir="${CERTS_DIR:-/certs}/admin"
+    # Derive the short CA name the playbook expects:
+    #   dogtag-root-ca       -> root
+    #   dogtag-intermediate-ca -> intermediate
+    #   dogtag-iot-ca        -> iot
+    #   dogtag-ecc-root-ca   -> ecc-root   (etc.)
+    #   dogtag-pq-root-ca    -> pq-root    (etc.)
+    local short_name
+    short_name=$(echo "$CONTAINER" | sed 's/^dogtag-//; s/-ca$//')
 
     $PODMAN exec "$CONTAINER" bash -c "
-        mkdir -p /certs/admin
-
+        set -e
         ADMIN_P12=/root/.dogtag/${INSTANCE}/ca_admin_cert.p12
-        if [ -f \$ADMIN_P12 ]; then
-            cp \$ADMIN_P12 /certs/admin/${INSTANCE}-admin.p12
-            echo 'Admin P12 exported to /certs/admin/${INSTANCE}-admin.p12'
+        EXPORT_DIR=/certs/admin
+
+        mkdir -p \$EXPORT_DIR
+
+        if [ ! -f \$ADMIN_P12 ]; then
+            echo 'ERROR: Admin P12 not found at '\$ADMIN_P12
+            exit 1
         fi
+
+        # Copy the P12 as well (backwards compat)
+        cp \$ADMIN_P12 \$EXPORT_DIR/${INSTANCE}-admin.p12
+
+        # Extract certificate (PEM) from the P12
+        # Try known passwords in order
+        EXPORTED=false
+        for pw in '${PKI_PASSWORD}' 'RedHat123' ''; do
+            if openssl pkcs12 -in \$ADMIN_P12 -clcerts -nokeys -passin pass:\"\$pw\" \
+                    -out \$EXPORT_DIR/${short_name}-admin-cert.pem 2>/dev/null; then
+                # Extract private key (PEM) - no encryption on output for lab use
+                openssl pkcs12 -in \$ADMIN_P12 -nocerts -nodes -passin pass:\"\$pw\" \
+                    -out \$EXPORT_DIR/${short_name}-admin-key.pem 2>/dev/null
+                EXPORTED=true
+                echo \"Exported PEM files with password attempt\"
+                break
+            fi
+        done
+
+        if [ \"\$EXPORTED\" != true ]; then
+            echo 'ERROR: Could not extract PEM from P12 (bad password?)'
+            exit 1
+        fi
+
+        # Make readable by all users (lab environment - EDA runs as non-root)
+        chmod 644 \$EXPORT_DIR/${short_name}-admin-cert.pem
+        chmod 644 \$EXPORT_DIR/${short_name}-admin-key.pem
+        chmod 644 \$EXPORT_DIR/${INSTANCE}-admin.p12
+
+        echo 'Exported:'
+        echo \"  \$EXPORT_DIR/${short_name}-admin-cert.pem\"
+        echo \"  \$EXPORT_DIR/${short_name}-admin-key.pem\"
+        echo \"  \$EXPORT_DIR/${INSTANCE}-admin.p12\"
     "
+
+    if [ $? -eq 0 ]; then
+        log_success "Admin PEM files exported for $short_name"
+    else
+        log_error "Failed to export admin PEM files for $short_name"
+        return 1
+    fi
+
+    # Fix permissions on the host-side directory too (data/certs/admin/)
+    # The certs volume is bind-mounted from the host, so files are
+    # created as root. Make them readable by everyone.
+    local host_admin_dir
+    host_admin_dir="$(dirname "$(readlink -f "$0")")/../../data/certs/admin"
+    if [ -d "$host_admin_dir" ]; then
+        chmod -R a+rX "$host_admin_dir" 2>/dev/null || true
+    fi
 }
 
 main() {

@@ -409,6 +409,14 @@ main() {
         fi
     done
 
+    # Ensure certs directory and admin PEM files are world-readable
+    # (EDA container runs as non-root and needs to read these)
+    local certs_dir="$SCRIPT_DIR/../../data/certs"
+    if [ -d "$certs_dir" ]; then
+        chmod -R a+rX "$certs_dir" 2>/dev/null || true
+        log_success "Set permissions on data/certs/ for EDA access"
+    fi
+
     # Configure TLS for Directory Servers using certificates from Intermediate CA
     log_phase "Configuring TLS for Directory Servers"
     if [ -x "$SCRIPT_DIR/configure-ds-tls.sh" ]; then
