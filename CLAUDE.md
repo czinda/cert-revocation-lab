@@ -297,6 +297,30 @@ pki_ca_signing_signing_algorithm=ML-DSA-87
 
 ## Environment Configuration
 
+### Option 1: SOPS Encrypted Secrets (Recommended)
+
+Use SOPS + age for encrypted secrets that can be safely committed to git:
+
+```bash
+# First time setup - generates age key and encrypts secrets
+./scripts/setup-sops.sh
+
+# Decrypt secrets to .env (called automatically by start-lab.sh)
+./scripts/decrypt-secrets.sh
+
+# Edit encrypted secrets
+sops secrets.enc.yaml
+```
+
+**Files:**
+- `secrets.enc.yaml` - Encrypted secrets (safe to commit)
+- `secrets.yaml` - Unencrypted secrets (gitignored, temporary)
+- `~/.config/sops/age/keys.txt` - Your age private key (back this up!)
+
+**Sharing with team:** Share the age key file securely (not via git).
+
+### Option 2: Manual .env Configuration
+
 Copy `.env.example` to `.env` and configure before starting:
 
 ```bash

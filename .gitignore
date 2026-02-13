@@ -2,6 +2,8 @@
 .env
 .env.local
 *.secret
+secrets.yaml
+# Note: secrets.enc.yaml IS tracked (encrypted)
 
 # Data directories (keep notebooks and logs structure)
 data/

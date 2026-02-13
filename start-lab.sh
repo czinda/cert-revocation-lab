@@ -59,6 +59,56 @@ check_prerequisites() {
     fi
 }
 
+# Check and decrypt secrets
+setup_secrets() {
+    log_info "Checking secrets configuration..."
+
+    # If .env exists and doesn't have CHANGEME, we're good
+    if [[ -f .env ]] && ! grep -q "CHANGEME" .env 2>/dev/null; then
+        log_success ".env file is configured"
+        return 0
+    fi
+
+    # Check for encrypted secrets
+    if [[ -f secrets.enc.yaml ]]; then
+        if command -v sops &>/dev/null; then
+            log_info "Found encrypted secrets, decrypting..."
+            if ./scripts/decrypt-secrets.sh; then
+                log_success "Secrets decrypted to .env"
+                return 0
+            else
+                log_error "Failed to decrypt secrets. Check your age key."
+                exit 1
+            fi
+        else
+            log_warn "sops not installed. Run: ./scripts/setup-sops.sh"
+            log_info "Or manually create .env from .env.example"
+        fi
+    fi
+
+    # Check if .env exists but needs configuration
+    if [[ -f .env ]] && grep -q "CHANGEME" .env 2>/dev/null; then
+        log_warn ".env contains CHANGEME values - please configure secrets"
+        log_info "Option 1: Edit .env directly"
+        log_info "Option 2: Run ./scripts/setup-sops.sh for encrypted secrets"
+        exit 1
+    fi
+
+    # No .env file at all
+    if [[ ! -f .env ]]; then
+        if [[ -f .env.example ]]; then
+            log_warn ".env not found. Creating from .env.example..."
+            cp .env.example .env
+            log_error "Please edit .env and replace CHANGEME values"
+            log_info "Or run: ./scripts/setup-sops.sh for encrypted secrets"
+            exit 1
+        else
+            log_error ".env and .env.example not found"
+            exit 1
+        fi
+    fi
+}
+
 # Create directory structure
 setup_directories() {
     log_info "Creating directory structure..."
@@ -1296,6 +1346,7 @@ main() {
 
     # Run startup sequence
     check_prerequisites
+    setup_secrets
     setup_directories
     setup_networks
     setup_volumes
