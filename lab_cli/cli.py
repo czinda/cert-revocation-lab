@@ -511,13 +511,16 @@ def est_enroll(
         console.print(f"\n[green]✓ {result.message}[/green]")
         if result.details:
             for key, value in result.details.items():
-                if key != "certificate":
+                if key not in ("certificate", "hint"):
                     console.print(f"  {key}: {value}")
     else:
         console.print(f"\n[red]✗ EST enrollment failed[/red]")
         console.print(f"  Error: {result.message}")
-        if result.details and "note" in result.details:
-            console.print(f"  Note: {result.details['note']}")
+        if result.details:
+            if "hint" in result.details:
+                console.print(f"  [yellow]Hint: {result.details['hint']}[/yellow]")
+            if "note" in result.details:
+                console.print(f"  Note: {result.details['note']}")
         raise typer.Exit(1)
 
 
@@ -566,6 +569,8 @@ def est_cacerts(
     else:
         console.print(f"[red]✗ Failed to get CA certificates[/red]")
         console.print(f"  Error: {result.message}")
+        if result.details and "hint" in result.details:
+            console.print(f"  [yellow]Hint: {result.details['hint']}[/yellow]")
         raise typer.Exit(1)
 
 

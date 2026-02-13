@@ -24,16 +24,29 @@ class ProtocolResult:
 
 
 # ACME CA endpoint configuration
+# Use localhost with mapped ports for host access
 ACME_ENDPOINTS = {
-    PKIType.RSA: "https://acme-ca.cert-lab.local:8446/acme",
+    PKIType.RSA: "https://localhost:8446/acme",
 }
 
+# Internal container hostnames (for container-to-container communication)
+ACME_INTERNAL_ENDPOINTS = {
+    PKIType.RSA: "https://acme-ca.cert-lab.local:8443/acme",
+}
 
 # EST endpoint configuration (EST runs on IoT CAs)
+# Use localhost with mapped ports for host access
 EST_ENDPOINTS = {
-    PKIType.RSA: "https://iot-ca.cert-lab.local:8445/.well-known/est",
-    PKIType.ECC: "https://ecc-iot-ca.cert-lab.local:8465/.well-known/est",
-    PKIType.PQC: "https://pq-iot-ca.cert-lab.local:8455/.well-known/est",
+    PKIType.RSA: "https://localhost:8445/.well-known/est",
+    PKIType.ECC: "https://localhost:8465/.well-known/est",
+    PKIType.PQC: "https://localhost:8455/.well-known/est",
+}
+
+# Internal container hostnames (for container-to-container communication)
+EST_INTERNAL_ENDPOINTS = {
+    PKIType.RSA: "https://iot-ca.cert-lab.local:8443/.well-known/est",
+    PKIType.ECC: "https://ecc-iot-ca.cert-lab.local:8443/.well-known/est",
+    PKIType.PQC: "https://pq-iot-ca.cert-lab.local:8443/.well-known/est",
 }
 
 
@@ -299,27 +312,59 @@ def est_get_cacerts(est_url: str) -> ProtocolResult:
     This is the /cacerts endpoint that returns the CA chain.
     """
     cmd = [
-        "curl", "-sk",
+        "curl", "-sk", "--connect-timeout", "5",
         f"{est_url}/cacerts"
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-
-    if result.returncode != 0:
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
         return ProtocolResult(
             success=False,
-            message=f"Failed to get CA certs from EST: {result.stderr}"
+            message="Connection timeout - EST endpoint not responding"
+        )
+
+    if result.returncode != 0:
+        error_msg = result.stderr.strip() if result.stderr else "Connection refused"
+        return ProtocolResult(
+            success=False,
+            message=f"Failed to connect to EST endpoint: {error_msg}",
+            details={
+                "url": est_url,
+                "hint": "Ensure IoT CA is running and EST is enabled: sudo podman exec -it dogtag-iot-ca /scripts/enable-est.sh"
+            }
         )
 
     response = result.stdout.strip()
 
+    if not response:
+        return ProtocolResult(
+            success=False,
+            message="EST endpoint returned empty response - EST may not be enabled",
+            details={
+                "url": est_url,
+                "hint": "Enable EST on IoT CA: sudo podman exec -it dogtag-iot-ca /scripts/enable-est.sh"
+            }
+        )
+
     # EST cacerts returns PKCS7 or base64 encoded certs
-    if response and (response.startswith("MII") or "BEGIN" in response):
+    if response.startswith("MII") or "BEGIN" in response:
         return ProtocolResult(
             success=True,
             message="CA certificates retrieved",
             certificate=response,
             details={"est_url": est_url}
+        )
+
+    # Check for HTML error pages
+    if "<html" in response.lower() or "404" in response or "not found" in response.lower():
+        return ProtocolResult(
+            success=False,
+            message="EST endpoint not deployed - received HTTP error page",
+            details={
+                "url": est_url,
+                "hint": "Enable EST on IoT CA: sudo podman exec -it dogtag-iot-ca /scripts/enable-est.sh"
+            }
         )
 
     return ProtocolResult(
