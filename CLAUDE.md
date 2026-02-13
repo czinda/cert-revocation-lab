@@ -68,8 +68,11 @@ FreeIPA (172.25.0.10:4443) - Identity Management with internal CA
 # Stop and remove all volumes
 ./stop-lab.sh --clean
 
-# Run end-to-end revocation test
+# Run end-to-end revocation test (legacy bash)
 ./test-revocation.sh
+
+# Run end-to-end revocation test (Python CLI - recommended)
+./lab test --pki-type rsa --scenario "Certificate Private Key Compromise"
 
 # View logs
 podman-compose logs -f <service-name>
@@ -80,6 +83,44 @@ sudo podman-compose -f pki-pq-compose.yml logs -f <service-name>   # PQ PKI
 # Build mock security containers
 podman-compose build mock-edr mock-siem
 ```
+
+## Python CLI (lab)
+
+The `lab` CLI provides a cleaner interface for testing certificate revocation.
+
+```bash
+# Install dependencies (one-time)
+pip install typer rich httpx
+
+# Or install the package
+pip install -e .
+
+# Check service status
+./lab status
+
+# List available scenarios
+./lab scenarios
+
+# Run complete revocation test
+./lab test --pki-type rsa --scenario "Certificate Private Key Compromise"
+
+# Issue a certificate only
+./lab issue --device mydevice --pki-type rsa --ca-level iot
+
+# Trigger a security event
+./lab trigger --device mydevice --scenario "Ransomware Encryption Detected"
+
+# Verify certificate status
+./lab verify 0x1234ABCD --pki-type rsa --ca-level iot
+```
+
+**Commands:**
+- `lab status` - Check all service health
+- `lab scenarios` - List available security scenarios
+- `lab test` - Complete end-to-end revocation test
+- `lab issue` - Issue a certificate from Dogtag PKI
+- `lab trigger` - Trigger a security event via EDR/SIEM
+- `lab verify` - Check certificate revocation status
 
 ## PKI Initialization (Manual Steps)
 

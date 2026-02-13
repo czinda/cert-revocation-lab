@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+"""
+Certificate Revocation Lab CLI - Wrapper script.
+
+This allows running the CLI without installing the package:
+    ./lab test
+    ./lab status
+    ./lab trigger --scenario "Ransomware Encryption Detected"
+"""
+
+import sys
+from pathlib import Path
+
+# Add project root to path for local development
+project_root = Path(__file__).parent
+sys.path.insert(0, str(project_root))
+
+from lab_cli.cli import cli
+
+if __name__ == "__main__":
+    cli()
