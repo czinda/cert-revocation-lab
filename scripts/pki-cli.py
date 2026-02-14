@@ -304,17 +304,56 @@ class PKIClient:
                 print(f"Error copying CSR to container: {result.stderr}")
                 return None
 
+        # The admin P12 is at /root/.dogtag/{instance}/ca_admin_cert.p12
+        # We need to set up a client NSS database with this cert
+        admin_p12 = f"/root/.dogtag/{instance}/ca_admin_cert.p12"
+        client_nssdb = "/tmp/pki-client-nssdb"
+
+        # Create client NSS database and import admin cert
+        print(f"  Setting up client authentication...")
+        setup_cmd = f"""
+            rm -rf {client_nssdb}
+            mkdir -p {client_nssdb}
+            certutil -N -d {client_nssdb} --empty-password
+            pk12util -i {admin_p12} -d {client_nssdb} -W '{pki_password}' -K ''
+        """
+        result = subprocess.run(
+            ["sudo", "podman", "exec", container, "bash", "-c", setup_cmd],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            print(f"Error setting up client auth: {result.stderr}")
+            # Continue anyway, might already be set up
+
+        # Find the admin cert nickname
+        result = subprocess.run(
+            ["sudo", "podman", "exec", container, "certutil", "-L", "-d", client_nssdb],
+            capture_output=True, text=True
+        )
+        admin_nickname = None
+        for line in result.stdout.split("\n"):
+            if "PKI Administrator" in line or "caadmin" in line.lower():
+                admin_nickname = line.split("  ")[0].strip()
+                break
+
+        if not admin_nickname:
+            # Default nickname pattern
+            admin_nickname = f"PKI Administrator for {instance}"
+
+        print(f"  Using admin cert: {admin_nickname}")
+
         # Submit certificate request
         print(f"  Submitting request to {container}...")
         result = subprocess.run(
             ["sudo", "podman", "exec", container,
-             "pki", "-d", nss_db, "-c", pki_password, "-n", admin_nickname,
+             "pki", "-d", client_nssdb, "-c", "", "-n", admin_nickname,
              "ca-cert-request-submit", "--profile", profile, "--csr-file", "/tmp/request.csr"],
             capture_output=True, text=True
         )
 
         if result.returncode != 0:
             print(f"Error submitting request: {result.stderr}")
+            print(f"stdout: {result.stdout}")
             return None
 
         # Parse request ID from output
@@ -334,7 +373,7 @@ class PKIClient:
         print(f"  Approving request...")
         result = subprocess.run(
             ["sudo", "podman", "exec", container,
-             "pki", "-d", nss_db, "-c", pki_password, "-n", admin_nickname,
+             "pki", "-d", client_nssdb, "-c", "", "-n", admin_nickname,
              "ca-cert-request-approve", request_id, "--force"],
             capture_output=True, text=True
         )
@@ -346,7 +385,7 @@ class PKIClient:
         # Get certificate ID from request
         result = subprocess.run(
             ["sudo", "podman", "exec", container,
-             "pki", "-d", nss_db, "-c", pki_password, "-n", admin_nickname,
+             "pki", "-d", client_nssdb, "-c", "", "-n", admin_nickname,
              "ca-cert-request-show", request_id],
             capture_output=True, text=True
         )
