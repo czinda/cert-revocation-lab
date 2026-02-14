@@ -66,7 +66,7 @@ ENV PKI_INSTANCE_NAME=pki-pq-ca
 ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=300s --retries=5 \
+HEALTHCHECK --interval=10s --timeout=10s --start-period=300s --retries=5 \
     CMD curl -sk https://localhost:8443/ca/admin/ca/getStatus || exit 1
 
 # Default command - wait for initialization
