@@ -180,13 +180,21 @@ class PKIClient:
                 })
         return certs
 
+    def _normalize_serial(self, serial: str, with_prefix: bool = True) -> str:
+        """Normalize serial number. Dogtag REST API requires 0x prefix for GET requests."""
+        # Remove any existing prefix
+        clean = serial.lower().lstrip("0x")
+        if with_prefix:
+            return f"0x{clean}"
+        return clean
+
     def get_cert(self, serial: str) -> Optional[dict]:
         """Get certificate details by serial."""
         if not self._check_creds():
             return None
 
-        # Strip 0x prefix
-        serial = serial.lstrip("0x")
+        # Dogtag REST API requires 0x prefix for GET requests
+        serial = self._normalize_serial(serial, with_prefix=True)
 
         status_code, data = self._request("GET", f"/ca/rest/certs/{serial}")
         if status_code == 404:
@@ -201,8 +209,8 @@ class PKIClient:
         if not self._check_creds():
             return False
 
-        # Strip 0x prefix
-        serial = serial.lstrip("0x")
+        # Normalize serial (revoke endpoint also needs 0x prefix)
+        serial = self._normalize_serial(serial, with_prefix=True)
 
         # Map reason string
         reason_value = REVOCATION_REASONS.get(reason.lower(), reason.upper())
@@ -572,7 +580,7 @@ def cmd_test(args):
 
     # Step 1: Find or use provided certificate serial
     if args.serial:
-        serial = args.serial.lstrip("0x")
+        serial = args.serial
         print(f"[1/4] Using provided serial: {serial}")
         cert = client.get_cert(serial)
         if not cert:

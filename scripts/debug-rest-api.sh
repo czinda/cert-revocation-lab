@@ -42,21 +42,23 @@ curl -sk --cert "$ADMIN_CERT" --key "$ADMIN_KEY" \
   "https://localhost:${PORT}/ca/rest/certs/0x${SERIAL}"
 echo ""
 
-echo "=== Test 4: Revoke cert ==="
+echo "=== Test 4: Revoke cert (with 0x) ==="
 curl -sk --cert "$ADMIN_CERT" --key "$ADMIN_KEY" \
   -X POST \
   -H "Accept: application/json" \
   -H "Content-Type: application/json" \
   -d '{"reason": "KEY_COMPROMISE"}' \
-  "https://localhost:${PORT}/ca/rest/agent/certs/${SERIAL}/revoke"
+  "https://localhost:${PORT}/ca/rest/agent/certs/0x${SERIAL}/revoke"
 echo ""
 
 echo "=== Test 5: Verify status after revoke ==="
 curl -sk --cert "$ADMIN_CERT" --key "$ADMIN_KEY" \
   -H "Accept: application/json" \
-  "https://localhost:${PORT}/ca/rest/certs/${SERIAL}" | python3 -c "
+  "https://localhost:${PORT}/ca/rest/certs/0x${SERIAL}" | python3 -c "
 import sys, json
 try:
     data = json.load(sys.stdin)
-    print(f\"Status: {data.get('Status', 'UNKNOWN')}\")"
+    print(f\"Status: {data.get('Status', 'UNKNOWN')}\")
+except Exception as e:
+    print(f\"Error: {e}\")"
 echo ""
