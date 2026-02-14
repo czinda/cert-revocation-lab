@@ -97,29 +97,24 @@ class PKIClient:
         return True
 
     def _get_pki_password(self) -> str:
-        """Get PKI admin password from environment or .env file."""
-        # Check environment first
-        password = os.environ.get("PKI_ADMIN_PASSWORD") or os.environ.get("ADMIN_PASSWORD")
+        """Get PKI NSS database password.
+
+        Note: The pki CLI uses the NSS database password, which is set during
+        pkispawn initialization. The config files (configs/pki/*.cfg) hardcode
+        this as 'RedHat123' via pki_client_database_password.
+
+        The .env PKI_ADMIN_PASSWORD may be different - it's used for REST API
+        but the NSS database has its own password set at init time.
+        """
+        # For pki CLI, we need the NSS database password from pkispawn config
+        # This is hardcoded in configs/pki/*.cfg as pki_client_database_password
+        # Check environment override first
+        password = os.environ.get("PKI_NSS_PASSWORD")
         if password:
             return password
 
-        # Try to read from .env file
-        env_file = PROJECT_DIR / ".env"
-        if env_file.exists():
-            with open(env_file) as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("#") or "=" not in line:
-                        continue
-                    key, _, value = line.partition("=")
-                    key = key.strip()
-                    value = value.strip().strip('"').strip("'")
-                    if key == "PKI_ADMIN_PASSWORD":
-                        return value
-                    if key == "ADMIN_PASSWORD" and not password:
-                        password = value
-
-        return password or "RedHat123"
+        # Default to what's in the config files
+        return "RedHat123"
 
     def _get_ssl_context(self) -> ssl.SSLContext:
         """Create SSL context with client certificate."""
