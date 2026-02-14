@@ -62,6 +62,9 @@ phase2_install_cert() {
     create_chain "${CERTS_DIR}/ca-chain.crt" "${CERTS_DIR}/root-ca.crt" "$CA_CERT"
     verify_cert "$CA_CERT" "${CERTS_DIR}/root-ca.crt"
 
+    # Export admin credentials for REST API authentication
+    export_admin_creds "$PKI_INSTANCE" "ecc-intermediate"
+
     print_header "ECC Intermediate CA Initialization Complete"
     echo "Algorithm:   ECDSA P-384 with SHA-384"
     echo "Certificate: $CA_CERT"

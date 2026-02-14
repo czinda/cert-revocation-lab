@@ -51,6 +51,9 @@ init_ca() {
     export_ca_cert "$PKI_INSTANCE" "${CERTS_DIR}/root-ca.crt"
     verify_cert "${CERTS_DIR}/root-ca.crt"
 
+    # Export admin credentials for REST API authentication
+    export_admin_creds "$PKI_INSTANCE" "pq-root"
+
     print_header "PQ Root CA Initialization Complete"
     echo "Algorithm:   ML-DSA-87 (NIST FIPS 204 Level 5)"
     echo "Certificate: ${CERTS_DIR}/root-ca.crt"

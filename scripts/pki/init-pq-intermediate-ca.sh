@@ -62,6 +62,9 @@ phase2_install_cert() {
     create_chain "${CERTS_DIR}/ca-chain.crt" "${CERTS_DIR}/root-ca.crt" "$CA_CERT"
     verify_cert "$CA_CERT" "${CERTS_DIR}/root-ca.crt"
 
+    # Export admin credentials for REST API authentication
+    export_admin_creds "$PKI_INSTANCE" "pq-intermediate"
+
     print_header "PQ Intermediate CA Initialization Complete"
     echo "Algorithm:   ML-DSA-87 (NIST FIPS 204 Level 5)"
     echo "Certificate: $CA_CERT"

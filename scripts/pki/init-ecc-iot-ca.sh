@@ -63,6 +63,9 @@ phase2_install_cert() {
     create_chain "${CERTS_DIR}/iot-ca-chain.crt" "$CA_CHAIN" "$CA_CERT"
     verify_cert "$CA_CERT" "$CA_CHAIN"
 
+    # Export admin credentials for REST API authentication
+    export_admin_creds "$PKI_INSTANCE" "ecc-iot"
+
     print_header "ECC IoT CA Initialization Complete"
     echo "Algorithm:   ECDSA P-384 with SHA-384"
     echo "Certificate: $CA_CERT"

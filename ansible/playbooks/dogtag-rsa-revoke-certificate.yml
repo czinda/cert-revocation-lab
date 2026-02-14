@@ -30,10 +30,27 @@
     event_description: "{{ event.description | default('Security incident') }}"
 
     # Revocation settings
-    # CRL reasons: 0=unspecified, 1=keyCompromise, 2=cACompromise,
-    #              3=affiliationChanged, 4=superseded, 5=cessationOfOperation,
-    #              6=certificateHold, 9=privilegeWithdrawn
-    revocation_reason: "{{ reason | default(1) }}"
+    # CRL reason codes and their string values for Dogtag REST API:
+    #   0 = UNSPECIFIED
+    #   1 = KEY_COMPROMISE
+    #   2 = CA_COMPROMISE
+    #   3 = AFFILIATION_CHANGED
+    #   4 = SUPERSEDED
+    #   5 = CESSATION_OF_OPERATION
+    #   6 = CERTIFICATE_HOLD
+    #   9 = PRIVILEGE_WITHDRAWN
+    revocation_reason_code: "{{ reason | default(1) }}"
+    # Map reason codes to Dogtag REST API string values
+    reason_map:
+      0: "UNSPECIFIED"
+      1: "KEY_COMPROMISE"
+      2: "CA_COMPROMISE"
+      3: "AFFILIATION_CHANGED"
+      4: "SUPERSEDED"
+      5: "CESSATION_OF_OPERATION"
+      6: "CERTIFICATE_HOLD"
+      9: "PRIVILEGE_WITHDRAWN"
+    revocation_reason: "{{ reason_map[revocation_reason_code | int] | default('KEY_COMPROMISE') }}"
     log_file: "{{ lookup('env', 'LAB_LOG_DIR') | default('/opt/cert-lab/logs', true) }}/dogtag-revocation.log"
 
     # Certificate paths (mounted from host via compose)
@@ -195,7 +212,7 @@
               Content-Type: "application/json"
             body_format: json
             body:
-              Reason: "{{ revocation_reason | int }}"
+              reason: "{{ revocation_reason }}"
             client_cert: "{{ ca_config.admin_cert }}"
             client_key: "{{ ca_config.admin_key }}"
             validate_certs: false

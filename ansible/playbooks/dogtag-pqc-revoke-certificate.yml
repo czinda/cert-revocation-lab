@@ -1,15 +1,16 @@
 ---
 # Dogtag ML-DSA-87 PKI - Certificate Revocation Playbook
-# Revokes certificates using the Post-Quantum ML-DSA-87 PKI hierarchy
+# Revokes certificates using the Dogtag REST API (no podman access required)
 #
 # Expected variables from EDA:
 #   event.device_fqdn - Device FQDN whose certificate should be revoked
 #   event.certificate_cn - Certificate Common Name (optional)
+#   event.certificate_serial - Certificate serial number (hex, e.g. 0x1a2b)
 #   event.severity - Event severity (low, medium, high, critical)
 #   event.event_id - Unique event identifier
 #   event.description - Event description
 
-- name: Revoke Certificate - ML-DSA-87 PKI (Post-Quantum)
+- name: Revoke Certificate - ML-DSA-87 PKI (REST API)
   hosts: localhost
   gather_facts: false
   vars:
@@ -18,7 +19,7 @@
     pki_name: "ML-DSA-87"
 
     # CA selection (root, intermediate, iot)
-    target_ca: "{{ ca_level | default('intermediate') }}"
+    target_ca: "{{ event.ca_level | default(ca_level) | default('iot') }}"
 
     # Event data (passed from EDA)
     device_fqdn: "{{ event.device_fqdn | default('unknown.cert-lab.local') }}"
@@ -29,27 +30,57 @@
     event_description: "{{ event.description | default('Security incident') }}"
 
     # Revocation settings
-    revocation_reason: "{{ reason | default(1) }}"  # 1 = keyCompromise
+    # CRL reason codes and their string values for Dogtag REST API:
+    #   0 = UNSPECIFIED
+    #   1 = KEY_COMPROMISE
+    #   2 = CA_COMPROMISE
+    #   3 = AFFILIATION_CHANGED
+    #   4 = SUPERSEDED
+    #   5 = CESSATION_OF_OPERATION
+    #   6 = CERTIFICATE_HOLD
+    #   9 = PRIVILEGE_WITHDRAWN
+    revocation_reason_code: "{{ reason | default(1) }}"
+    # Map reason codes to Dogtag REST API string values
+    reason_map:
+      0: "UNSPECIFIED"
+      1: "KEY_COMPROMISE"
+      2: "CA_COMPROMISE"
+      3: "AFFILIATION_CHANGED"
+      4: "SUPERSEDED"
+      5: "CESSATION_OF_OPERATION"
+      6: "CERTIFICATE_HOLD"
+      9: "PRIVILEGE_WITHDRAWN"
+    revocation_reason: "{{ reason_map[revocation_reason_code | int] | default('KEY_COMPROMISE') }}"
     log_file: "{{ lookup('env', 'LAB_LOG_DIR') | default('/opt/cert-lab/logs', true) }}/dogtag-revocation.log"
 
-    # PQC PKI configuration
-    # Note: Use external host ports (8453-8455) since EDA runs on separate network
+    # Certificate paths (mounted from host via compose)
+    # PQC certs are in /certs/pq/ since PQC containers mount ./data/certs/pq:/certs
+    # but EDA mounts ./data/certs:/certs - so PQC admin creds are at /certs/pq/admin/
+    certs_dir: "/certs"
+    admin_creds_dir: "{{ certs_dir }}/pq/admin"
+
+    # PQC PKI configuration - REST API URLs
+    # Note: Use external host ports since EDA runs on separate network
+    #   PQ Root CA: 8453, Intermediate CA: 8454, IoT CA: 8455
     ca_configs:
       root:
-        container: "dogtag-pq-root-ca"
+        name: "PQ Root CA"
         url: "https://pq-root-ca.cert-lab.local:8453"
-        instance: "pki-pq-root-ca"
-        nss_db: "/var/lib/pki/pki-pq-root-ca/alias"
+        admin_cert: "{{ admin_creds_dir }}/pq-root-admin-cert.pem"
+        admin_key: "{{ admin_creds_dir }}/pq-root-admin-key.pem"
+        ca_cert: "{{ certs_dir }}/pq/root-ca.crt"
       intermediate:
-        container: "dogtag-pq-intermediate-ca"
+        name: "PQ Intermediate CA"
         url: "https://pq-intermediate-ca.cert-lab.local:8454"
-        instance: "pki-pq-intermediate-ca"
-        nss_db: "/var/lib/pki/pki-pq-intermediate-ca/alias"
+        admin_cert: "{{ admin_creds_dir }}/pq-intermediate-admin-cert.pem"
+        admin_key: "{{ admin_creds_dir }}/pq-intermediate-admin-key.pem"
+        ca_cert: "{{ certs_dir }}/pq/ca-chain.crt"
       iot:
-        container: "dogtag-pq-iot-ca"
+        name: "PQ IoT CA"
         url: "https://pq-iot-ca.cert-lab.local:8455"
-        instance: "pki-pq-iot-ca"
-        nss_db: "/var/lib/pki/pki-pq-iot-ca/alias"
+        admin_cert: "{{ admin_creds_dir }}/pq-iot-admin-cert.pem"
+        admin_key: "{{ admin_creds_dir }}/pq-iot-admin-key.pem"
+        ca_cert: "{{ certs_dir }}/pq/iot-ca-chain.crt"
 
   tasks:
     - name: Set CA configuration
@@ -60,14 +91,15 @@
       ansible.builtin.debug:
         msg: |
           ============================================================
-          DOGTAG {{ pki_name }} - CERTIFICATE REVOCATION
+          DOGTAG {{ pki_name }} - CERTIFICATE REVOCATION (REST API)
           ============================================================
           Event ID:      {{ event_id }}
           Device:        {{ device_fqdn }}
           Certificate:   {{ certificate_cn }}
           Serial:        {{ certificate_serial | default('auto-detect') }}
           Severity:      {{ event_severity }}
-          Target CA:     {{ target_ca | upper }} ({{ ca_config.container }})
+          Target CA:     {{ target_ca | upper }} ({{ ca_config.name }})
+          CA URL:        {{ ca_config.url }}
           Reason:        {{ revocation_reason }}
           Description:   {{ event_description }}
           ============================================================
@@ -81,35 +113,61 @@
       when: not (force_revoke | default(false) | bool)
       tags: [validation]
 
-    - name: Block for Dogtag operations
+    - name: Check admin credentials exist
+      ansible.builtin.stat:
+        path: "{{ ca_config.admin_cert }}"
+      register: admin_cert_stat
+      tags: [validation]
+
+    - name: Fail if admin credentials missing
+      ansible.builtin.fail:
+        msg: |
+          Admin credentials not found: {{ ca_config.admin_cert }}
+          Run the PKI init script to export admin credentials:
+            sudo podman exec dogtag-pq-{{ target_ca }}-ca /scripts/export-admin-creds.sh {{ target_ca }}
+      when: not admin_cert_stat.stat.exists
+      tags: [validation]
+
+    - name: Block for Dogtag REST API operations
       block:
-        - name: Find certificate by subject (if serial not provided)
-          ansible.builtin.shell: |
-            podman exec {{ ca_config.container }} \
-              pki -d {{ ca_config.nss_db }} \
-                  -c "{{ lookup('env', 'PKI_ADMIN_PASSWORD') | default(lookup('env', 'ADMIN_PASSWORD')) }}" \
-                  -n "PKI Administrator for {{ ca_config.instance }}" \
-                  -U {{ ca_config.url }} \
-                  ca-cert-find --name "{{ certificate_cn }}" --status VALID \
-              | grep "Serial Number:" | head -1 | awk '{print $3}'
+        - name: Search for certificate by subject (if serial not provided)
+          ansible.builtin.uri:
+            url: "{{ ca_config.url }}/ca/rest/certs"
+            method: GET
+            headers:
+              Accept: "application/json"
+            url_username: ""
+            url_password: ""
+            client_cert: "{{ ca_config.admin_cert }}"
+            client_key: "{{ ca_config.admin_key }}"
+            validate_certs: false
+            return_content: true
+            status_code: [200]
           register: cert_search
-          changed_when: false
           when: certificate_serial == ''
           tags: [lookup]
 
-        - name: Set certificate serial from search
+        - name: Find matching certificate from search results
           ansible.builtin.set_fact:
-            cert_serial: "{{ cert_search.stdout | trim }}"
-          when: certificate_serial == '' and cert_search.stdout | trim != ''
+            cert_serial: >-
+              {{
+                cert_search.json.entries
+                | selectattr('SubjectDN', 'search', certificate_cn, ignorecase=True)
+                | selectattr('Status', 'equalto', 'VALID')
+                | map(attribute='id')
+                | first
+                | default('')
+              }}
+          when: certificate_serial == '' and cert_search is defined and cert_search.json is defined
           tags: [lookup]
 
         - name: Use provided certificate serial
           ansible.builtin.set_fact:
-            cert_serial: "{{ certificate_serial }}"
+            cert_serial: "{{ certificate_serial | regex_replace('^0x', '') }}"
           when: certificate_serial != ''
           tags: [lookup]
 
-        - name: Verify certificate exists
+        - name: Verify certificate serial found
           ansible.builtin.fail:
             msg: "No valid certificate found for {{ certificate_cn }}"
           when: cert_serial is not defined or cert_serial == ''
@@ -121,58 +179,80 @@
           tags: [lookup]
 
         - name: Get certificate details before revocation
-          ansible.builtin.shell: |
-            podman exec {{ ca_config.container }} \
-              pki -d {{ ca_config.nss_db }} \
-                  -c "{{ lookup('env', 'PKI_ADMIN_PASSWORD') | default(lookup('env', 'ADMIN_PASSWORD')) }}" \
-                  -n "PKI Administrator for {{ ca_config.instance }}" \
-                  -U {{ ca_config.url }} \
-                  ca-cert-show {{ cert_serial }}
+          ansible.builtin.uri:
+            url: "{{ ca_config.url }}/ca/rest/certs/{{ cert_serial }}"
+            method: GET
+            headers:
+              Accept: "application/json"
+            client_cert: "{{ ca_config.admin_cert }}"
+            client_key: "{{ ca_config.admin_key }}"
+            validate_certs: false
+            return_content: true
+            status_code: [200]
           register: cert_details
-          changed_when: false
           tags: [lookup]
 
         - name: Display certificate details
           ansible.builtin.debug:
-            msg: "{{ cert_details.stdout_lines }}"
+            msg: |
+              Certificate Details:
+                Serial:    {{ cert_details.json.id | default('N/A') }}
+                Subject:   {{ cert_details.json.SubjectDN | default('N/A') }}
+                Issuer:    {{ cert_details.json.IssuerDN | default('N/A') }}
+                Status:    {{ cert_details.json.Status | default('N/A') }}
+                NotBefore: {{ cert_details.json.NotValidBefore | default('N/A') }}
+                NotAfter:  {{ cert_details.json.NotValidAfter | default('N/A') }}
+          when: cert_details.json is defined
           tags: [lookup]
 
-        - name: Revoke certificate
-          ansible.builtin.shell: |
-            podman exec {{ ca_config.container }} \
-              pki -d {{ ca_config.nss_db }} \
-                  -c "{{ lookup('env', 'PKI_ADMIN_PASSWORD') | default(lookup('env', 'ADMIN_PASSWORD')) }}" \
-                  -n "PKI Administrator for {{ ca_config.instance }}" \
-                  -U {{ ca_config.url }} \
-                  ca-cert-revoke {{ cert_serial }} \
-                  --reason {{ revocation_reason }} \
-                  --force
+        - name: Revoke certificate via REST API
+          ansible.builtin.uri:
+            url: "{{ ca_config.url }}/ca/rest/agent/certs/{{ cert_serial }}/revoke"
+            method: POST
+            headers:
+              Accept: "application/json"
+              Content-Type: "application/json"
+            body_format: json
+            body:
+              reason: "{{ revocation_reason }}"
+            client_cert: "{{ ca_config.admin_cert }}"
+            client_key: "{{ ca_config.admin_key }}"
+            validate_certs: false
+            return_content: true
+            status_code: [200, 204]
           register: revoke_result
           tags: [revoke]
 
         - name: Display revocation result
           ansible.builtin.debug:
-            msg: "{{ revoke_result.stdout_lines }}"
+            msg: "Revocation request submitted successfully"
           tags: [revoke]
 
+        - name: Wait for revocation to process
+          ansible.builtin.pause:
+            seconds: 2
+          tags: [verify]
+
         - name: Verify revocation status
-          ansible.builtin.shell: |
-            podman exec {{ ca_config.container }} \
-              pki -d {{ ca_config.nss_db }} \
-                  -c "{{ lookup('env', 'PKI_ADMIN_PASSWORD') | default(lookup('env', 'ADMIN_PASSWORD')) }}" \
-                  -n "PKI Administrator for {{ ca_config.instance }}" \
-                  -U {{ ca_config.url }} \
-                  ca-cert-show {{ cert_serial }} | grep -i status
+          ansible.builtin.uri:
+            url: "{{ ca_config.url }}/ca/rest/certs/{{ cert_serial }}"
+            method: GET
+            headers:
+              Accept: "application/json"
+            client_cert: "{{ ca_config.admin_cert }}"
+            client_key: "{{ ca_config.admin_key }}"
+            validate_certs: false
+            return_content: true
+            status_code: [200]
           register: verify_status
-          changed_when: false
           tags: [verify]
 
         - name: Confirm revocation
           ansible.builtin.assert:
             that:
-              - "'REVOKED' in verify_status.stdout"
+              - verify_status.json.Status == 'REVOKED'
             success_msg: "Certificate {{ cert_serial }} successfully revoked"
-            fail_msg: "Certificate revocation verification failed"
+            fail_msg: "Certificate revocation verification failed - Status: {{ verify_status.json.Status | default('unknown') }}"
           tags: [verify]
 
         - name: Log revocation to file
@@ -181,23 +261,31 @@
             line: "{{ lookup('pipe', 'date -Iseconds') }} | PKI={{ pki_name }} | CA={{ target_ca }} | EVENT={{ event_id }} | SERIAL={{ cert_serial }} | CN={{ certificate_cn }} | REASON={{ revocation_reason }} | STATUS=REVOKED"
             create: true
             mode: '0644'
-          delegate_to: localhost
           tags: [logging]
 
       rescue:
-        - name: Log failure
+        - name: Log failure details
           ansible.builtin.debug:
-            msg: "Certificate revocation failed: {{ ansible_failed_result.msg | default('Unknown error') }}"
+            msg: |
+              Certificate revocation failed!
+              Error: {{ ansible_failed_result.msg | default('Unknown error') }}
+              {% if ansible_failed_result.json is defined %}
+              API Response: {{ ansible_failed_result.json | to_nice_json }}
+              {% endif %}
           tags: [error]
 
         - name: Log error to file
           ansible.builtin.lineinfile:
             path: "{{ log_file }}"
-            line: "{{ lookup('pipe', 'date -Iseconds') }} | PKI={{ pki_name }} | CA={{ target_ca }} | EVENT={{ event_id }} | CN={{ certificate_cn }} | STATUS=FAILED | ERROR={{ ansible_failed_result.msg | default('Unknown') }}"
+            line: "{{ lookup('pipe', 'date -Iseconds') }} | PKI={{ pki_name }} | CA={{ target_ca }} | EVENT={{ event_id }} | CN={{ certificate_cn }} | STATUS=FAILED | ERROR={{ ansible_failed_result.msg | default('Unknown') | regex_replace('[\\n\\r]', ' ') }}"
             create: true
             mode: '0644'
-          delegate_to: localhost
           tags: [error, logging]
+
+        - name: Re-raise failure
+          ansible.builtin.fail:
+            msg: "Certificate revocation failed: {{ ansible_failed_result.msg | default('Unknown error') }}"
+          tags: [error]
 
     - name: Summary
       ansible.builtin.debug:
