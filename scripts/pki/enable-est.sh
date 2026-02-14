@@ -103,14 +103,23 @@ EOF
 fi
 
 # Restart PKI server to apply changes
+# Note: pki-server restart / systemctl restart hang in containers because
+# the mock systemctl stop is a no-op. Instead, kill Tomcat directly and
+# restart via pki-server run.
 log_info "Restarting PKI server..."
-pki-server restart "$PKI_INSTANCE" 2>/dev/null || {
-    # If pki-server restart fails, try systemctl
-    systemctl restart "pki-tomcatd@${PKI_INSTANCE}" 2>/dev/null || {
-        log_warn "Could not restart PKI server automatically"
-        log_warn "Please restart the container to apply EST configuration"
-    }
-}
+pkill -f "catalina.*${PKI_INSTANCE}" 2>/dev/null || true
+sleep 3
+
+# Wait for process to fully exit
+for i in {1..10}; do
+    pgrep -f "catalina.*${PKI_INSTANCE}" >/dev/null 2>&1 || break
+    sleep 1
+done
+
+# Start the PKI server again
+log_info "Starting PKI server..."
+mkdir -p /var/log/pki/"$PKI_INSTANCE"
+nohup pki-server run "$PKI_INSTANCE" > /var/log/pki/"$PKI_INSTANCE"/startup.log 2>&1 &
 
 # Wait for CA to come back up
 log_info "Waiting for CA to restart..."
