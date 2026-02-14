@@ -198,11 +198,56 @@ class PKIClient:
         return False
 
     def issue_cert(self, cn: str, profile: str = "caServerCert") -> Optional[str]:
-        """Issue a certificate via REST API. Returns serial number on success."""
-        if not self._check_creds():
+        """Issue a certificate using pki CLI via podman exec. Returns serial number."""
+        # Determine container name based on PKI type and CA level
+        container_map = {
+            "rsa": {
+                "root": "dogtag-root-ca",
+                "intermediate": "dogtag-intermediate-ca",
+                "iot": "dogtag-iot-ca",
+            },
+            "ecc": {
+                "root": "dogtag-ecc-root-ca",
+                "intermediate": "dogtag-ecc-intermediate-ca",
+                "iot": "dogtag-ecc-iot-ca",
+            },
+            "pqc": {
+                "root": "dogtag-pq-root-ca",
+                "intermediate": "dogtag-pq-intermediate-ca",
+                "iot": "dogtag-pq-iot-ca",
+            },
+        }
+
+        instance_map = {
+            "rsa": {
+                "root": "pki-root-ca",
+                "intermediate": "pki-intermediate-ca",
+                "iot": "pki-iot-ca",
+            },
+            "ecc": {
+                "root": "pki-ecc-root-ca",
+                "intermediate": "pki-ecc-intermediate-ca",
+                "iot": "pki-ecc-iot-ca",
+            },
+            "pqc": {
+                "root": "pki-pq-root-ca",
+                "intermediate": "pki-pq-intermediate-ca",
+                "iot": "pki-pq-iot-ca",
+            },
+        }
+
+        container = container_map.get(self.pki_type, {}).get(self.ca_level)
+        instance = instance_map.get(self.pki_type, {}).get(self.ca_level)
+
+        if not container or not instance:
+            print(f"Unknown PKI type/CA level: {self.pki_type}/{self.ca_level}")
             return None
 
-        # Generate a key and CSR using openssl
+        nss_db = f"/var/lib/pki/{instance}/alias"
+        pki_password = os.environ.get("PKI_ADMIN_PASSWORD", os.environ.get("ADMIN_PASSWORD", "RedHat123"))
+        admin_nickname = f"PKI Administrator for {instance}"
+
+        # Generate key and CSR
         with tempfile.TemporaryDirectory() as tmpdir:
             key_file = Path(tmpdir) / "key.pem"
             csr_file = Path(tmpdir) / "csr.pem"
@@ -226,94 +271,74 @@ class PKIClient:
                 print(f"Error generating CSR: {result.stderr}")
                 return None
 
-            # Read CSR
-            csr_pem = csr_file.read_text()
+            # Copy CSR to container
+            result = subprocess.run(
+                ["sudo", "podman", "cp", str(csr_file), f"{container}:/tmp/request.csr"],
+                capture_output=True, text=True
+            )
+            if result.returncode != 0:
+                print(f"Error copying CSR to container: {result.stderr}")
+                return None
 
-        # Submit enrollment request via REST API
-        # Dogtag expects XML for enrollment, so we use the simpler pkcs10 endpoint
-        enrollment_data = {
-            "ProfileID": profile,
-            "Renewal": False,
-            "Input": [
-                {
-                    "id": "i1",
-                    "ClassID": "certReqInputImpl",
-                    "Name": "Certificate Request Input",
-                    "Attribute": [
-                        {
-                            "name": "cert_request_type",
-                            "Value": "pkcs10"
-                        },
-                        {
-                            "name": "cert_request",
-                            "Value": csr_pem
-                        }
-                    ]
-                }
-            ]
-        }
-
-        status_code, data = self._request(
-            "POST",
-            f"/ca/rest/certrequests",
-            data=enrollment_data
+        # Submit certificate request
+        print(f"  Submitting request to {container}...")
+        result = subprocess.run(
+            ["sudo", "podman", "exec", container,
+             "pki", "-d", nss_db, "-c", pki_password, "-n", admin_nickname,
+             "ca-cert-request-submit", "--profile", profile, "--csr-file", "/tmp/request.csr"],
+            capture_output=True, text=True
         )
 
-        if status_code not in (200, 201):
-            print(f"Error submitting enrollment: HTTP {status_code}")
-            if data:
-                print(f"Response: {json.dumps(data, indent=2)}")
+        if result.returncode != 0:
+            print(f"Error submitting request: {result.stderr}")
             return None
 
-        # Get request ID from response
+        # Parse request ID from output
         request_id = None
-        if isinstance(data, dict):
-            # Response may have entries array or direct fields
-            entries = data.get("entries", [data])
-            for entry in entries:
-                request_id = entry.get("requestId") or entry.get("RequestID") or entry.get("id")
-                if request_id:
-                    break
+        for line in result.stdout.split("\n"):
+            if "Request ID:" in line:
+                request_id = line.split(":")[-1].strip()
+                break
 
         if not request_id:
-            print(f"Could not find request ID in response: {data}")
+            print(f"Could not find request ID in output:\n{result.stdout}")
             return None
 
-        print(f"  Enrollment request submitted: {request_id}")
+        print(f"  Request ID: {request_id}")
 
-        # Wait a moment for processing
-        time.sleep(2)
+        # Approve the request
+        print(f"  Approving request...")
+        result = subprocess.run(
+            ["sudo", "podman", "exec", container,
+             "pki", "-d", nss_db, "-c", pki_password, "-n", admin_nickname,
+             "ca-cert-request-approve", request_id, "--force"],
+            capture_output=True, text=True
+        )
 
-        # Check request status and get certificate ID
-        status_code, data = self._request("GET", f"/ca/rest/certrequests/{request_id}")
-        if status_code != 200:
-            print(f"Error checking request status: HTTP {status_code}")
+        if result.returncode != 0:
+            print(f"Error approving request: {result.stderr}")
             return None
 
-        request_status = data.get("requestStatus") or data.get("RequestStatus", "")
-        cert_id = data.get("certId") or data.get("CertID")
+        # Get certificate ID from request
+        result = subprocess.run(
+            ["sudo", "podman", "exec", container,
+             "pki", "-d", nss_db, "-c", pki_password, "-n", admin_nickname,
+             "ca-cert-request-show", request_id],
+            capture_output=True, text=True
+        )
 
-        if request_status.lower() == "complete" and cert_id:
-            print(f"  Certificate issued: {cert_id}")
+        cert_id = None
+        for line in result.stdout.split("\n"):
+            if "Certificate ID:" in line:
+                cert_id = line.split(":")[-1].strip()
+                break
+
+        if cert_id:
+            print(f"  Certificate ID: {cert_id}")
             return cert_id
-        elif request_status.lower() == "pending":
-            # Need to approve the request
-            print(f"  Request pending approval, attempting auto-approve...")
-            status_code, _ = self._request(
-                "POST",
-                f"/ca/rest/agent/certrequests/{request_id}/approve"
-            )
-            if status_code in (200, 204):
-                time.sleep(1)
-                # Check again
-                status_code, data = self._request("GET", f"/ca/rest/certrequests/{request_id}")
-                cert_id = data.get("certId") or data.get("CertID")
-                if cert_id:
-                    print(f"  Certificate issued: {cert_id}")
-                    return cert_id
-
-        print(f"  Request status: {request_status}, cert_id: {cert_id}")
-        return cert_id
+        else:
+            print(f"Could not find certificate ID in output:\n{result.stdout}")
+            return None
 
 
 def cmd_issue(args):
