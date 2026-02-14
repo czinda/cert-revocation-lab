@@ -94,7 +94,7 @@
 
     - name: Get certificate status before revocation
       ansible.builtin.uri:
-        url: "https://localhost:{{ ca_port }}/ca/rest/certs/{{ serial_clean }}"
+        url: "https://localhost:{{ ca_port }}/ca/rest/certs/0x{{ serial_clean }}"
         method: GET
         headers:
           Accept: "application/json"
@@ -112,7 +112,7 @@
 
     - name: Revoke the certificate
       ansible.builtin.uri:
-        url: "https://localhost:{{ ca_port }}/ca/rest/agent/certs/{{ serial_clean }}/revoke"
+        url: "https://localhost:{{ ca_port }}/ca/rest/agent/certs/0x{{ serial_clean }}/revoke"
         method: POST
         headers:
           Accept: "application/json"
@@ -133,7 +133,7 @@
 
     - name: Verify revocation status
       ansible.builtin.uri:
-        url: "https://localhost:{{ ca_port }}/ca/rest/certs/{{ serial_clean }}"
+        url: "https://localhost:{{ ca_port }}/ca/rest/certs/0x{{ serial_clean }}"
         method: GET
         headers:
           Accept: "application/json"
