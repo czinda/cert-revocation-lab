@@ -336,6 +336,14 @@ class PKIClient:
             print(f"Last error: {result.stderr}")
             return None
 
+        # Import CA cert chain for SSL trust
+        ca_cert_path = f"/var/lib/pki/{instance}/conf/certs/ca_signing.crt"
+        import_ca_cmd = f"certutil -A -d {client_nssdb} -n 'CA Signing Cert' -t 'CT,C,C' -a -i {ca_cert_path} 2>/dev/null || true"
+        subprocess.run(
+            ["sudo", "podman", "exec", container, "bash", "-c", import_ca_cmd],
+            capture_output=True, text=True
+        )
+
         # Find the admin cert nickname
         result = subprocess.run(
             ["sudo", "podman", "exec", container, "certutil", "-L", "-d", client_nssdb],
@@ -353,11 +361,12 @@ class PKIClient:
 
         print(f"  Using admin cert: {admin_nickname}")
 
-        # Submit certificate request
+        # Submit certificate request (use --ignore-cert-status to bypass SSL validation)
         print(f"  Submitting request to {container}...")
         result = subprocess.run(
             ["sudo", "podman", "exec", container,
              "pki", "-d", client_nssdb, "-c", "", "-n", admin_nickname,
+             "--ignore-cert-status", "UNTRUSTED_ISSUER", "--ignore-cert-status", "UNKNOWN_ISSUER",
              "ca-cert-request-submit", "--profile", profile, "--csr-file", "/tmp/request.csr"],
             capture_output=True, text=True
         )
@@ -385,6 +394,7 @@ class PKIClient:
         result = subprocess.run(
             ["sudo", "podman", "exec", container,
              "pki", "-d", client_nssdb, "-c", "", "-n", admin_nickname,
+             "--ignore-cert-status", "UNTRUSTED_ISSUER", "--ignore-cert-status", "UNKNOWN_ISSUER",
              "ca-cert-request-approve", request_id, "--force"],
             capture_output=True, text=True
         )
@@ -397,6 +407,7 @@ class PKIClient:
         result = subprocess.run(
             ["sudo", "podman", "exec", container,
              "pki", "-d", client_nssdb, "-c", "", "-n", admin_nickname,
+             "--ignore-cert-status", "UNTRUSTED_ISSUER", "--ignore-cert-status", "UNKNOWN_ISSUER",
              "ca-cert-request-show", request_id],
             capture_output=True, text=True
         )
