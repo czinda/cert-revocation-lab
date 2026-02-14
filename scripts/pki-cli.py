@@ -153,7 +153,7 @@ class PKIClient:
 
         opener = self._get_opener()
 
-        # Step 1: Login to establish session
+        # Login to establish session
         login_url = f"{self.base_url}/ca/rest/account/login"
         req = urllib.request.Request(login_url, method="GET")
         req.add_header("Accept", "application/json")
@@ -161,38 +161,29 @@ class PKIClient:
         try:
             with opener.open(req, timeout=30) as resp:
                 response_data = resp.read().decode("utf-8")
+                # Check for nonce in response headers
+                self._nonce = resp.headers.get("X-XSRF-TOKEN")
+
+                # Check for nonce in response body
+                if not self._nonce and response_data:
+                    try:
+                        data = json.loads(response_data)
+                        self._nonce = data.get("Nonce") or data.get("nonce")
+                    except json.JSONDecodeError:
+                        pass
+
                 if debug:
-                    print(f"  Login response: {response_data[:200]}...")
+                    print(f"  Login response: {response_data[:300]}...")
                     print(f"  Login headers: {dict(resp.headers)}")
+                    print(f"  Nonce from login: {self._nonce}")
+
+                # Session established - nonce might not be required for cert auth
+                return True
         except urllib.error.HTTPError as e:
             print(f"Login failed: HTTP {e.code}")
             return False
         except urllib.error.URLError as e:
             print(f"Login connection error: {e.reason}")
-            return False
-
-        # Step 2: Get nonce from dedicated endpoint
-        nonce_url = f"{self.base_url}/ca/rest/account/nonce"
-        req = urllib.request.Request(nonce_url, method="GET")
-        req.add_header("Accept", "text/plain")
-
-        try:
-            with opener.open(req, timeout=30) as resp:
-                self._nonce = resp.read().decode("utf-8").strip()
-                if debug:
-                    print(f"  Nonce: {self._nonce}")
-                return True
-        except urllib.error.HTTPError as e:
-            if debug:
-                print(f"  Nonce endpoint returned: HTTP {e.code}")
-            # Try alternative: nonce might be in header from any request
-            self._nonce = e.headers.get("X-XSRF-TOKEN")
-            if self._nonce:
-                return True
-            return False
-        except urllib.error.URLError as e:
-            if debug:
-                print(f"  Nonce endpoint error: {e.reason}")
             return False
 
     def _request(self, method: str, endpoint: str, data: dict = None) -> Tuple[int, Optional[dict]]:
@@ -277,33 +268,71 @@ class PKIClient:
         return data
 
     def revoke_cert(self, serial: str, reason: str = "KEY_COMPROMISE", debug: bool = False) -> bool:
-        """Revoke a certificate."""
-        if not self._check_creds():
+        """Revoke a certificate using pki CLI via podman exec."""
+        # Map container and instance names
+        container_map = {
+            "rsa": {"root": "dogtag-root-ca", "intermediate": "dogtag-intermediate-ca", "iot": "dogtag-iot-ca"},
+            "ecc": {"root": "dogtag-ecc-root-ca", "intermediate": "dogtag-ecc-intermediate-ca", "iot": "dogtag-ecc-iot-ca"},
+            "pqc": {"root": "dogtag-pq-root-ca", "intermediate": "dogtag-pq-intermediate-ca", "iot": "dogtag-pq-iot-ca"},
+        }
+
+        container = container_map.get(self.pki_type, {}).get(self.ca_level)
+        if not container:
+            print(f"Unknown PKI type/CA level: {self.pki_type}/{self.ca_level}")
             return False
 
-        # Normalize serial (revoke endpoint also needs 0x prefix)
-        serial = self._normalize_serial(serial, with_prefix=True)
+        # Map reason string to numeric code
+        reason_codes = {
+            "unspecified": 0, "key_compromise": 1, "ca_compromise": 2,
+            "affiliation_changed": 3, "superseded": 4, "cessation": 5, "certificate_hold": 6,
+        }
+        reason_code = reason_codes.get(reason.lower(), 1)
+
+        # Normalize serial - strip 0x for pki CLI
+        serial_clean = self._normalize_serial(serial, with_prefix=False)
+
+        # Build revocation command using pki CLI
+        revoke_cmd = f"""
+set -e
+CLIENT_DB=/root/.dogtag/nssdb
+CA_URL=https://localhost:8443
+
+# Find admin cert nickname
+ADMIN_NICK=$(certutil -L -d $CLIENT_DB 2>/dev/null | grep -i admin | head -1 | awk '{{for(i=1;i<=NF-1;i++) printf $i" "; print ""}}' | sed 's/ *$//')
+if [ -z "$ADMIN_NICK" ]; then
+    echo "ERROR: Admin certificate not found in NSS database"
+    exit 1
+fi
+
+echo "Using admin cert: $ADMIN_NICK"
+
+# Revoke the certificate
+pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \\
+    --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \\
+    ca-cert-revoke 0x{serial_clean} --reason {reason_code} --force
+"""
 
         if debug:
-            print(f"  DEBUG: Establishing session...")
-            self._login(debug=True)
+            print(f"  DEBUG: Running revocation in container {container}")
+            print(f"  DEBUG: Serial: 0x{serial_clean}, Reason code: {reason_code}")
 
-        # Map reason string
-        reason_value = REVOCATION_REASONS.get(reason.lower(), reason.upper())
-
-        status_code, data = self._request(
-            "POST",
-            f"/ca/rest/agent/certs/{serial}/revoke",
-            data={"reason": reason_value}
+        result = subprocess.run(
+            ["sudo", "podman", "exec", container, "bash", "-c", revoke_cmd],
+            capture_output=True, text=True
         )
 
-        if status_code in (200, 204):
-            return True
+        if debug:
+            print(f"  DEBUG: Return code: {result.returncode}")
+            if result.stdout:
+                print(f"  DEBUG: stdout: {result.stdout}")
+            if result.stderr:
+                print(f"  DEBUG: stderr: {result.stderr}")
 
-        print(f"Error revoking certificate: HTTP {status_code}")
-        if data:
-            print(f"Response: {data}")
-        return False
+        if result.returncode != 0:
+            print(f"Revocation failed: {result.stderr or result.stdout}")
+            return False
+
+        return True
 
     def issue_cert(self, cn: str, profile: str = "caServerCert") -> Optional[str]:
         """Issue a certificate using pki CLI via podman exec. Returns serial number."""
