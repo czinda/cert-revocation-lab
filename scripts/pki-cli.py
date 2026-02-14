@@ -96,6 +96,31 @@ class PKIClient:
             return False
         return True
 
+    def _get_pki_password(self) -> str:
+        """Get PKI admin password from environment or .env file."""
+        # Check environment first
+        password = os.environ.get("PKI_ADMIN_PASSWORD") or os.environ.get("ADMIN_PASSWORD")
+        if password:
+            return password
+
+        # Try to read from .env file
+        env_file = PROJECT_DIR / ".env"
+        if env_file.exists():
+            with open(env_file) as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("#") or "=" not in line:
+                        continue
+                    key, _, value = line.partition("=")
+                    key = key.strip()
+                    value = value.strip().strip('"').strip("'")
+                    if key == "PKI_ADMIN_PASSWORD":
+                        return value
+                    if key == "ADMIN_PASSWORD" and not password:
+                        password = value
+
+        return password or "RedHat123"
+
     def _get_ssl_context(self) -> ssl.SSLContext:
         """Create SSL context with client certificate."""
         if self._ssl_context is None:
@@ -244,7 +269,7 @@ class PKIClient:
             return None
 
         nss_db = f"/var/lib/pki/{instance}/alias"
-        pki_password = os.environ.get("PKI_ADMIN_PASSWORD", os.environ.get("ADMIN_PASSWORD", "RedHat123"))
+        pki_password = self._get_pki_password()
         admin_nickname = f"PKI Administrator for {instance}"
 
         # Generate key and CSR
