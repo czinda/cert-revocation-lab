@@ -281,12 +281,17 @@ class PKIClient:
             print(f"Unknown PKI type/CA level: {self.pki_type}/{self.ca_level}")
             return False
 
-        # Map reason string to numeric code
-        reason_codes = {
-            "unspecified": 0, "key_compromise": 1, "ca_compromise": 2,
-            "affiliation_changed": 3, "superseded": 4, "cessation": 5, "certificate_hold": 6,
+        # Map reason string to pki CLI reason name
+        reason_names = {
+            "unspecified": "Unspecified",
+            "key_compromise": "Key_Compromise",
+            "ca_compromise": "CA_Compromise",
+            "affiliation_changed": "Affiliation_Changed",
+            "superseded": "Superseded",
+            "cessation": "Cessation_of_Operation",
+            "certificate_hold": "Certificate_Hold",
         }
-        reason_code = reason_codes.get(reason.lower(), 1)
+        reason_name = reason_names.get(reason.lower(), "Key_Compromise")
 
         # Normalize serial - strip 0x for pki CLI
         serial_clean = self._normalize_serial(serial, with_prefix=False)
@@ -309,12 +314,12 @@ echo "Using admin cert: $ADMIN_NICK"
 # Revoke the certificate
 pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \\
     --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \\
-    ca-cert-revoke 0x{serial_clean} --reason {reason_code} --force
+    ca-cert-revoke 0x{serial_clean} --reason {reason_name} --force
 """
 
         if debug:
             print(f"  DEBUG: Running revocation in container {container}")
-            print(f"  DEBUG: Serial: 0x{serial_clean}, Reason code: {reason_code}")
+            print(f"  DEBUG: Serial: 0x{serial_clean}, Reason: {reason_name}")
 
         result = subprocess.run(
             ["sudo", "podman", "exec", container, "bash", "-c", revoke_cmd],
