@@ -5,8 +5,8 @@
 # It's the cleanest approach for Dogtag operations.
 #
 # Usage:
-#   ansible-playbook revoke-cert-nssdb.yml -e serial=0x123abc
-#   ansible-playbook revoke-cert-nssdb.yml -e serial=0x123abc -e pki=ecc -e ca=iot
+#   ansible-playbook revoke-cert-nssdb.yml -e cert_serial=0x123abc
+#   ansible-playbook revoke-cert-nssdb.yml -e cert_serial=0x123abc -e pki=ecc -e ca=iot
 #
 # Prerequisites:
 #   Run scripts/setup-admin-nssdb.sh to create the NSS database
@@ -15,8 +15,8 @@
   hosts: localhost
   gather_facts: false
   vars:
-    # Required: certificate serial number
-    serial: "{{ serial | regex_replace('^0x', '') }}"
+    # Required: certificate cert_serial number
+    cert_serial: "{{ cert_serial | regex_replace('^0x', '') }}"
 
     # Optional: PKI type (rsa, ecc, pqc)
     pki: "{{ pki | default('rsa') }}"
@@ -28,7 +28,8 @@
     reason: "{{ reason | default('keyCompromise') }}"
 
     # NSS database location
-    nssdb: "/nssdb"
+    # Use playbook directory to find project root, or override with -e nssdb=/path
+    nssdb: "{{ nssdb | default(playbook_dir + '/../../data/nssdb') }}"
 
     # CA URLs (using host ports accessible from EDA)
     ca_urls:
@@ -66,10 +67,10 @@
     admin_nick: "PKI Administrator for {{ instance }}"
 
   tasks:
-    - name: Validate serial provided
+    - name: Validate cert_serial provided
       ansible.builtin.fail:
-        msg: "Serial number required. Usage: -e serial=0x123abc"
-      when: serial is not defined or serial == ''
+        msg: "Serial number required. Usage: -e cert_serial=0x123abc"
+      when: cert_serial is not defined or cert_serial == ''
 
     - name: Check NSS database exists
       ansible.builtin.stat:
@@ -87,7 +88,7 @@
       ansible.builtin.debug:
         msg: |
           Revoking certificate:
-            Serial:    {{ serial }}
+            Serial:    {{ cert_serial }}
             PKI:       {{ pki | upper }}
             CA:        {{ ca }}
             CA URL:    {{ ca_url }}
@@ -98,7 +99,7 @@
       ansible.builtin.command:
         cmd: >
           pki -d {{ nssdb }} -c '' -n "{{ admin_nick }}"
-          -U "{{ ca_url }}" ca-cert-show {{ serial }}
+          -U "{{ ca_url }}" ca-cert-show {{ cert_serial }}
       register: before_status
       changed_when: false
       ignore_errors: true
@@ -112,7 +113,7 @@
       ansible.builtin.command:
         cmd: >
           pki -d {{ nssdb }} -c '' -n "{{ admin_nick }}"
-          -U "{{ ca_url }}" ca-cert-revoke {{ serial }}
+          -U "{{ ca_url }}" ca-cert-revoke {{ cert_serial }}
           --reason {{ reason }} --force
       register: revoke_result
 
@@ -124,7 +125,7 @@
       ansible.builtin.command:
         cmd: >
           pki -d {{ nssdb }} -c '' -n "{{ admin_nick }}"
-          -U "{{ ca_url }}" ca-cert-show {{ serial }}
+          -U "{{ ca_url }}" ca-cert-show {{ cert_serial }}
       register: after_status
       changed_when: false
 
@@ -132,7 +133,7 @@
       ansible.builtin.assert:
         that:
           - "'REVOKED' in after_status.stdout"
-        success_msg: "Certificate {{ serial }} successfully revoked"
+        success_msg: "Certificate {{ cert_serial }} successfully revoked"
         fail_msg: "Revocation may have failed. Check status output."
 
     - name: Final status
@@ -141,6 +142,6 @@
           ========================================
           REVOCATION COMPLETE
           ========================================
-          Serial: {{ serial }}
+          Serial: {{ cert_serial }}
           Status: REVOKED
           ========================================
