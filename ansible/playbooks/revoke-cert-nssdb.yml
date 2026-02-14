@@ -1,0 +1,146 @@
+---
+# Certificate Revocation using NSS Database and pki CLI
+#
+# This playbook uses the shared NSS database containing all admin credentials.
+# It's the cleanest approach for Dogtag operations.
+#
+# Usage:
+#   ansible-playbook revoke-cert-nssdb.yml -e serial=0x123abc
+#   ansible-playbook revoke-cert-nssdb.yml -e serial=0x123abc -e pki=ecc -e ca=iot
+#
+# Prerequisites:
+#   Run scripts/setup-admin-nssdb.sh to create the NSS database
+
+- name: Revoke Certificate (NSS Database)
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # Required: certificate serial number
+    serial: "{{ serial | regex_replace('^0x', '') }}"
+
+    # Optional: PKI type (rsa, ecc, pqc)
+    pki: "{{ pki | default('rsa') }}"
+
+    # Optional: CA level (root, intermediate, iot)
+    ca: "{{ ca | default('iot') }}"
+
+    # Revocation reason (default: keyCompromise)
+    reason: "{{ reason | default('keyCompromise') }}"
+
+    # NSS database location
+    nssdb: "/nssdb"
+
+    # CA URLs (using host ports accessible from EDA)
+    ca_urls:
+      rsa:
+        root: "https://root-ca.cert-lab.local:8443"
+        intermediate: "https://intermediate-ca.cert-lab.local:8444"
+        iot: "https://iot-ca.cert-lab.local:8445"
+      ecc:
+        root: "https://ecc-root-ca.cert-lab.local:8463"
+        intermediate: "https://ecc-intermediate-ca.cert-lab.local:8464"
+        iot: "https://ecc-iot-ca.cert-lab.local:8465"
+      pqc:
+        root: "https://pq-root-ca.cert-lab.local:8453"
+        intermediate: "https://pq-intermediate-ca.cert-lab.local:8454"
+        iot: "https://pq-iot-ca.cert-lab.local:8455"
+
+    # PKI instance names for admin cert nicknames
+    instances:
+      rsa:
+        root: "pki-root-ca"
+        intermediate: "pki-intermediate-ca"
+        iot: "pki-iot-ca"
+      ecc:
+        root: "pki-ecc-root-ca"
+        intermediate: "pki-ecc-intermediate-ca"
+        iot: "pki-ecc-iot-ca"
+      pqc:
+        root: "pki-pq-root-ca"
+        intermediate: "pki-pq-intermediate-ca"
+        iot: "pki-pq-iot-ca"
+
+    # Derived values
+    ca_url: "{{ ca_urls[pki][ca] }}"
+    instance: "{{ instances[pki][ca] }}"
+    admin_nick: "PKI Administrator for {{ instance }}"
+
+  tasks:
+    - name: Validate serial provided
+      ansible.builtin.fail:
+        msg: "Serial number required. Usage: -e serial=0x123abc"
+      when: serial is not defined or serial == ''
+
+    - name: Check NSS database exists
+      ansible.builtin.stat:
+        path: "{{ nssdb }}/cert9.db"
+      register: nssdb_check
+
+    - name: Fail if NSS database missing
+      ansible.builtin.fail:
+        msg: |
+          NSS database not found at {{ nssdb }}
+          Run: ./scripts/setup-admin-nssdb.sh
+      when: not nssdb_check.stat.exists
+
+    - name: Show operation details
+      ansible.builtin.debug:
+        msg: |
+          Revoking certificate:
+            Serial:    {{ serial }}
+            PKI:       {{ pki | upper }}
+            CA:        {{ ca }}
+            CA URL:    {{ ca_url }}
+            Admin:     {{ admin_nick }}
+            Reason:    {{ reason }}
+
+    - name: Get certificate status before revocation
+      ansible.builtin.command:
+        cmd: >
+          pki -d {{ nssdb }} -c '' -n "{{ admin_nick }}"
+          -U "{{ ca_url }}" ca-cert-show {{ serial }}
+      register: before_status
+      changed_when: false
+      ignore_errors: true
+
+    - name: Show current status
+      ansible.builtin.debug:
+        msg: "{{ before_status.stdout_lines | default(['Status unknown']) }}"
+      when: before_status.rc == 0
+
+    - name: Revoke the certificate
+      ansible.builtin.command:
+        cmd: >
+          pki -d {{ nssdb }} -c '' -n "{{ admin_nick }}"
+          -U "{{ ca_url }}" ca-cert-revoke {{ serial }}
+          --reason {{ reason }} --force
+      register: revoke_result
+
+    - name: Show revocation output
+      ansible.builtin.debug:
+        msg: "{{ revoke_result.stdout_lines }}"
+
+    - name: Verify revocation
+      ansible.builtin.command:
+        cmd: >
+          pki -d {{ nssdb }} -c '' -n "{{ admin_nick }}"
+          -U "{{ ca_url }}" ca-cert-show {{ serial }}
+      register: after_status
+      changed_when: false
+
+    - name: Confirm revoked
+      ansible.builtin.assert:
+        that:
+          - "'REVOKED' in after_status.stdout"
+        success_msg: "Certificate {{ serial }} successfully revoked"
+        fail_msg: "Revocation may have failed. Check status output."
+
+    - name: Final status
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          REVOCATION COMPLETE
+          ========================================
+          Serial: {{ serial }}
+          Status: REVOKED
+          ========================================

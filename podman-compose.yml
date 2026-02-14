@@ -415,6 +415,7 @@ services:
       - ./ansible/collections:/collections:ro
       - ./data/logs:/opt/cert-lab/logs
       - ./data/certs:/certs:ro
+      - ./data/nssdb:/nssdb:ro
     networks:
       lab-network:
         ipv4_address: ${IP_EDA:-172.20.0.40}
