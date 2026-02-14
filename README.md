@@ -44,17 +44,22 @@ Comprehensive lab environment demonstrating automated certificate lifecycle mana
        │    Ansible      │
        │   (Rulebook)    │
        └────────┬────────┘
-                ▼
-       ┌─────────────────┐
-       │   Ansible AWX   │
-       │  (Job Template) │
-       └────────┬────────┘
-                ▼
-       ┌─────────────────┐
-       │    FreeIPA      │
-       │ (Cert Revoke)   │
-       └─────────────────┘
+                │
+       ┌────────┴────────┐
+       ▼                 ▼
+┌─────────────┐   ┌─────────────┐
+│  Dogtag CA  │   │   FreeIPA   │
+│(pki CLI via │   │ (Cert Revoke│
+│ podman exec)│   │  via API)   │
+└─────────────┘   └─────────────┘
 ```
+
+**Event Flow:**
+1. Security event detected by Mock EDR/SIEM
+2. Event published to Kafka topic `security-events`
+3. EDA rulebook consumes event and triggers playbook
+4. Playbook revokes certificate on appropriate CA
+5. Certificate status updated to REVOKED
 
 ## Components
 
@@ -133,41 +138,78 @@ vi .env
 
 ### 4. Initialize PKI Hierarchy
 
-After containers start, initialize the PKI hierarchy:
+After containers start, initialize the PKI hierarchy. The PKI containers require **rootful podman** (sudo):
 
 ```bash
-# Step 1: Initialize Root CA (self-signed)
-podman exec -it dogtag-root-ca /scripts/init-root-ca.sh
+# Option A: Run the full initialization script (recommended)
+sudo ./scripts/pki/init-pki-hierarchy.sh
 
-# Step 2: Initialize Intermediate CA
-podman exec -it dogtag-intermediate-ca /scripts/init-intermediate-ca.sh
+# Option B: Initialize each CA manually
+# Step 1: Initialize Root CA (self-signed)
+sudo podman exec -it dogtag-root-ca /scripts/init-root-ca.sh
+
+# Step 2: Initialize Intermediate CA (2-phase process)
+sudo podman exec -it dogtag-intermediate-ca /scripts/init-intermediate-ca.sh
 
 # Sign the Intermediate CA CSR with Root CA
-podman exec dogtag-root-ca /scripts/sign-csr.sh \
+sudo podman exec dogtag-root-ca /scripts/sign-csr.sh \
   /certs/intermediate-ca.csr \
   /certs/intermediate-ca-signed.crt \
   https://root-ca.cert-lab.local:8443 \
   caCACert
 
-# Step 3: Initialize IoT Sub-CA
-podman exec -it dogtag-iot-ca /scripts/init-iot-ca.sh
+# Complete Intermediate CA setup (installs signed cert)
+sudo podman exec -it dogtag-intermediate-ca /scripts/init-intermediate-ca.sh
+
+# Step 3: Initialize IoT Sub-CA (2-phase process)
+sudo podman exec -it dogtag-iot-ca /scripts/init-iot-ca.sh
 
 # Sign the IoT CA CSR with Intermediate CA
-podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \
+sudo podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \
   /certs/iot-ca.csr \
   /certs/iot-ca-signed.crt \
   https://intermediate-ca.cert-lab.local:8443 \
   caCACert
+
+# Complete IoT CA setup (installs signed cert)
+sudo podman exec -it dogtag-iot-ca /scripts/init-iot-ca.sh
+
+# Step 4: Export admin credentials for REST API access
+./scripts/export-all-admin-creds.sh
 ```
 
-### 5. Run Test Scenario
+### 5. Certificate Operations
+
+Use the `pki-cli.py` tool for certificate management:
+
+```bash
+# List certificates on IoT CA
+./scripts/pki-cli.py list --ca iot
+
+# Issue a test certificate
+./scripts/pki-cli.py issue --ca iot --cn "test-device.cert-lab.local"
+
+# Check certificate status
+./scripts/pki-cli.py status 0x<serial> --ca iot
+
+# Revoke a certificate
+./scripts/pki-cli.py revoke 0x<serial> --ca iot
+
+# Run end-to-end revocation test
+./scripts/pki-cli.py test --ca iot
+```
+
+### 6. Run Test Scenario
 
 ```bash
 # Test the end-to-end revocation automation
 ./test-revocation.sh
+
+# Or use the pki-cli tool
+./scripts/pki-cli.py test --ca iot
 ```
 
-### 6. Stop the Lab
+### 7. Stop the Lab
 
 ```bash
 # Stop all containers
@@ -237,13 +279,17 @@ cert-revocation-lab/
 │   ├── iot-ca-step1.cfg
 │   └── iot-ca-step2.cfg
 │
-├── scripts/pki/                # PKI initialization scripts
-│   ├── init-root-ca.sh
-│   ├── init-intermediate-ca.sh
-│   ├── init-iot-ca.sh
-│   ├── init-freeipa.sh
-│   ├── sign-csr.sh
-│   └── export-chain.sh
+├── scripts/
+│   ├── pki-cli.py              # Certificate management CLI tool
+│   ├── export-all-admin-creds.sh  # Export admin certificates
+│   ├── revoke-via-podman-api.py   # Revocation helper for EDA
+│   └── pki/                    # PKI initialization scripts
+│       ├── init-pki-hierarchy.sh  # Full PKI setup (recommended)
+│       ├── init-root-ca.sh
+│       ├── init-intermediate-ca.sh
+│       ├── init-iot-ca.sh
+│       ├── sign-csr.sh
+│       └── export-chain.sh
 │
 ├── containers/
 │   ├── mock-edr/               # FastAPI EDR simulator
@@ -336,6 +382,9 @@ podman-compose logs -f kafka
 
 ```bash
 podman-compose ps
+
+# For rootful PKI containers
+sudo podman ps
 ```
 
 ### Restart a Service
@@ -349,6 +398,53 @@ podman-compose restart <service-name>
 ```bash
 ./stop-lab.sh --clean
 ./start-lab.sh
+```
+
+### DNS/Network Issues (aardvark-dns)
+
+If you see `aardvark-dns runs in a different netns` error:
+
+```bash
+# Stop all containers
+podman-compose down
+sudo podman-compose -f pki-compose.yml down
+
+# Kill DNS process and remove directory
+pkill aardvark-dns
+rm -rf /run/user/$(id -u)/containers/networks/aardvark-dns
+
+# For rootful podman
+sudo pkill aardvark-dns
+sudo rm -rf /run/podman/networks/aardvark-dns
+
+# Restart containers
+./start-lab.sh
+```
+
+### Certificate Revocation Issues
+
+**REST API "Missing nonce" error:** The Dogtag REST API requires a CSRF nonce for POST requests. The EDA playbooks use the `pki` CLI tool via podman exec to bypass this limitation.
+
+**Manual revocation:**
+```bash
+# Using pki-cli.py (from host)
+./scripts/pki-cli.py revoke 0x<serial> --ca iot
+
+# Using pki CLI directly (inside container)
+sudo podman exec dogtag-iot-ca pki -d /root/.dogtag/nssdb -c '' \
+  -n "PKI Administrator for pki-iot-ca" \
+  ca-cert-revoke 0x<serial> --reason Key_Compromise --force
+```
+
+### PKI Container Won't Start
+
+PKI containers require rootful podman (systemd support):
+```bash
+# Start PKI with sudo
+sudo podman-compose -f pki-compose.yml up -d
+
+# Check logs
+sudo podman logs dogtag-root-ca
 ```
 
 ## Technologies Used
