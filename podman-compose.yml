@@ -416,6 +416,10 @@ services:
       - ./data/logs:/opt/cert-lab/logs
       - ./data/certs:/certs:ro
       - ./data/nssdb:/nssdb:ro
+      # Mount scripts for revocation helper
+      - ./scripts:/scripts:ro
+      # Mount podman socket for container access (revocation via pki CLI)
+      - /run/podman/podman.sock:/run/podman/podman.sock:rw
     networks:
       lab-network:
         ipv4_address: ${IP_EDA:-172.20.0.40}

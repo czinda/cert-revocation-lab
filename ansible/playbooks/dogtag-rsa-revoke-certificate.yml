@@ -203,64 +203,14 @@
           when: cert_details.json is defined
           tags: [lookup]
 
-        - name: Revoke certificate via REST API with session
-          ansible.builtin.shell: |
-            python3 << 'PYTHON_SCRIPT'
-            import http.cookiejar
-            import json
-            import ssl
-            import sys
-            import urllib.request
-            import urllib.error
-
-            cert = "{{ ca_config.admin_cert }}"
-            key = "{{ ca_config.admin_key }}"
-            ca_url = "{{ ca_config.url }}"
-            serial = "0x{{ cert_serial }}"
-            reason = "{{ revocation_reason }}"
-
-            # Create SSL context with client cert
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            ctx.load_cert_chain(certfile=cert, keyfile=key)
-
-            # Create opener with cookie support
-            cookie_jar = http.cookiejar.CookieJar()
-            cookie_handler = urllib.request.HTTPCookieProcessor(cookie_jar)
-            https_handler = urllib.request.HTTPSHandler(context=ctx)
-            opener = urllib.request.build_opener(cookie_handler, https_handler)
-
-            # Step 1: Login to establish session
-            login_url = f"{ca_url}/ca/rest/account/login"
-            req = urllib.request.Request(login_url, method="GET")
-            req.add_header("Accept", "application/json")
-            try:
-                with opener.open(req, timeout=30) as resp:
-                    print(f"Login: OK (HTTP {resp.status})")
-            except urllib.error.HTTPError as e:
-                print(f"Login: HTTP {e.code}")
-
-            # Step 2: Revoke certificate
-            revoke_url = f"{ca_url}/ca/rest/agent/certs/{serial}/revoke"
-            body = json.dumps({"reason": reason}).encode("utf-8")
-            req = urllib.request.Request(revoke_url, data=body, method="POST")
-            req.add_header("Accept", "application/json")
-            req.add_header("Content-Type", "application/json")
-
-            try:
-                with opener.open(req, timeout=30) as resp:
-                    print(f"Revocation: OK (HTTP {resp.status})")
-                    sys.exit(0)
-            except urllib.error.HTTPError as e:
-                error_body = e.read().decode("utf-8") if e.fp else ""
-                print(f"Revocation failed: HTTP {e.code}")
-                print(f"Response: {error_body}")
-                sys.exit(1)
-            except Exception as e:
-                print(f"Error: {e}")
-                sys.exit(1)
-            PYTHON_SCRIPT
+        - name: Revoke certificate via podman API
+          ansible.builtin.command:
+            cmd: >
+              python3 /scripts/revoke-via-podman-api.py
+              0x{{ cert_serial }}
+              --ca {{ target_ca }}
+              --pki {{ pki_type }}
+              --reason Key_Compromise
           register: revoke_result
           tags: [revoke]
 
