@@ -26,8 +26,15 @@ log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 log_step()  { echo -e "${CYAN}[STEP]${NC} $*"; }
 
-# Pass through arguments to start-lab.sh
-START_ARGS="$*"
+# Parse arguments - remove --clean since we handle it ourselves
+START_ARGS=""
+for arg in "$@"; do
+    if [ "$arg" != "--clean" ]; then
+        START_ARGS="$START_ARGS $arg"
+    fi
+done
+START_ARGS="${START_ARGS# }"  # Trim leading space
+
 if [ -z "$START_ARGS" ]; then
     START_ARGS="--rsa"  # Default to RSA
 fi
@@ -90,12 +97,12 @@ pkill -f aardvark-dns 2>/dev/null || true
 sudo pkill -f aardvark-dns 2>/dev/null || true
 rm -rf /run/user/$(id -u)/containers/networks/aardvark-dns 2>/dev/null || true
 
-# Step 7: Start fresh
+# Step 7: Start fresh (don't use --clean since we already cleaned)
 echo ""
 log_step "Starting lab with: $START_ARGS"
 echo ""
 
-./start-lab.sh --clean $START_ARGS
+./start-lab.sh $START_ARGS
 
 echo ""
 log_info "Lab reset complete!"
