@@ -15,6 +15,7 @@ No external dependencies - uses only Python standard library.
 
 import argparse
 import base64
+import http.cookiejar
 import json
 import os
 import ssl
@@ -85,6 +86,11 @@ class PKIClient:
         # SSL context for client cert auth
         self._ssl_context = None
 
+        # Session management for nonce/CSRF
+        self._cookie_jar = http.cookiejar.CookieJar()
+        self._opener = None
+        self._nonce = None
+
     def _check_creds(self) -> bool:
         """Check if admin credentials exist."""
         if not self.admin_cert.exists():
@@ -132,21 +138,63 @@ class PKIClient:
             )
         return self._ssl_context
 
-    def _request(self, method: str, endpoint: str, data: dict = None) -> Tuple[int, Optional[dict]]:
-        """Make authenticated request to PKI REST API. Returns (status_code, json_data)."""
-        url = f"{self.base_url}{endpoint}"
+    def _get_opener(self) -> urllib.request.OpenerDirector:
+        """Get URL opener with cookie and SSL support."""
+        if self._opener is None:
+            cookie_handler = urllib.request.HTTPCookieProcessor(self._cookie_jar)
+            https_handler = urllib.request.HTTPSHandler(context=self._get_ssl_context())
+            self._opener = urllib.request.build_opener(cookie_handler, https_handler)
+        return self._opener
 
-        headers = {"Accept": "application/json"}
-        body = None
+    def _login(self) -> bool:
+        """Login to PKI REST API to get session and nonce."""
+        if self._nonce:
+            return True
 
-        if data is not None:
-            headers["Content-Type"] = "application/json"
-            body = json.dumps(data).encode("utf-8")
-
-        req = urllib.request.Request(url, data=body, headers=headers, method=method)
+        url = f"{self.base_url}/ca/rest/account/login"
+        req = urllib.request.Request(url, method="POST")
+        req.add_header("Accept", "application/json")
 
         try:
-            with urllib.request.urlopen(req, context=self._get_ssl_context(), timeout=30) as resp:
+            with self._get_opener().open(req, timeout=30) as resp:
+                # Get nonce from response headers
+                self._nonce = resp.headers.get("X-XSRF-TOKEN")
+                return True
+        except urllib.error.HTTPError as e:
+            # 200 or 204 is success, but HTTPError might still be raised
+            self._nonce = e.headers.get("X-XSRF-TOKEN")
+            if self._nonce:
+                return True
+            print(f"Login failed: HTTP {e.code}")
+            return False
+        except urllib.error.URLError as e:
+            print(f"Login connection error: {e.reason}")
+            return False
+
+    def _request(self, method: str, endpoint: str, data: dict = None) -> Tuple[int, Optional[dict]]:
+        """Make authenticated request to PKI REST API. Returns (status_code, json_data)."""
+        # For POST/PUT/DELETE, we need a session with nonce
+        if method in ("POST", "PUT", "DELETE"):
+            if not self._login():
+                return 0, None
+
+        url = f"{self.base_url}{endpoint}"
+        body = None
+
+        req = urllib.request.Request(url, method=method)
+        req.add_header("Accept", "application/json")
+
+        if data is not None:
+            req.add_header("Content-Type", "application/json")
+            body = json.dumps(data).encode("utf-8")
+            req.data = body
+
+        # Include nonce for POST/PUT/DELETE
+        if self._nonce and method in ("POST", "PUT", "DELETE"):
+            req.add_header("X-XSRF-TOKEN", self._nonce)
+
+        try:
+            with self._get_opener().open(req, timeout=30) as resp:
                 response_data = resp.read().decode("utf-8")
                 return resp.status, json.loads(response_data) if response_data else {}
         except urllib.error.HTTPError as e:
