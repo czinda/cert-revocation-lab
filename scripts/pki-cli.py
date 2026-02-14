@@ -146,26 +146,34 @@ class PKIClient:
             self._opener = urllib.request.build_opener(cookie_handler, https_handler)
         return self._opener
 
-    def _login(self) -> bool:
+    def _login(self, debug: bool = False) -> bool:
         """Login to PKI REST API to get session and nonce."""
         if self._nonce:
             return True
 
+        # Dogtag uses GET for login with client cert auth
         url = f"{self.base_url}/ca/rest/account/login"
-        req = urllib.request.Request(url, method="POST")
+        req = urllib.request.Request(url, method="GET")
         req.add_header("Accept", "application/json")
 
         try:
             with self._get_opener().open(req, timeout=30) as resp:
                 # Get nonce from response headers
                 self._nonce = resp.headers.get("X-XSRF-TOKEN")
+                if debug:
+                    print(f"  Login successful, nonce: {self._nonce[:20]}..." if self._nonce else "  Login successful, no nonce in headers")
+                    print(f"  All headers: {dict(resp.headers)}")
                 return True
         except urllib.error.HTTPError as e:
-            # 200 or 204 is success, but HTTPError might still be raised
+            # Check headers even on error responses
             self._nonce = e.headers.get("X-XSRF-TOKEN")
             if self._nonce:
+                if debug:
+                    print(f"  Login returned {e.code} but got nonce: {self._nonce[:20]}...")
                 return True
             print(f"Login failed: HTTP {e.code}")
+            if debug:
+                print(f"  Headers: {dict(e.headers)}")
             return False
         except urllib.error.URLError as e:
             print(f"Login connection error: {e.reason}")
@@ -252,13 +260,17 @@ class PKIClient:
             return None
         return data
 
-    def revoke_cert(self, serial: str, reason: str = "KEY_COMPROMISE") -> bool:
+    def revoke_cert(self, serial: str, reason: str = "KEY_COMPROMISE", debug: bool = False) -> bool:
         """Revoke a certificate."""
         if not self._check_creds():
             return False
 
         # Normalize serial (revoke endpoint also needs 0x prefix)
         serial = self._normalize_serial(serial, with_prefix=True)
+
+        if debug:
+            print(f"  DEBUG: Establishing session...")
+            self._login(debug=True)
 
         # Map reason string
         reason_value = REVOCATION_REASONS.get(reason.lower(), reason.upper())
@@ -544,6 +556,7 @@ def cmd_status(args):
 def cmd_revoke(args):
     """Revoke a certificate."""
     client = PKIClient(args.pki, args.ca)
+    debug = getattr(args, 'debug', False)
 
     # Get current status
     cert = client.get_cert(args.serial)
@@ -560,7 +573,7 @@ def cmd_revoke(args):
     print(f"  Subject: {cert.get('SubjectDN', 'N/A')}")
     print(f"  Reason:  {args.reason}")
 
-    if not client.revoke_cert(args.serial, args.reason):
+    if not client.revoke_cert(args.serial, args.reason, debug=debug):
         print("FAILED: Revocation request failed")
         return 1
 
@@ -748,6 +761,8 @@ def main():
     p_revoke.add_argument("--reason", default="key_compromise",
                           choices=list(REVOCATION_REASONS.keys()),
                           help="Revocation reason (default: key_compromise)")
+    p_revoke.add_argument("--debug", action="store_true",
+                          help="Enable debug output for troubleshooting")
     p_revoke.set_defaults(func=cmd_revoke)
 
     # trigger command
