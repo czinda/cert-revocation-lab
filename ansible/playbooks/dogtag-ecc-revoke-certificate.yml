@@ -205,27 +205,34 @@
           when: cert_details.json is defined
           tags: [lookup]
 
-        - name: Revoke certificate via REST API
-          ansible.builtin.uri:
-            url: "{{ ca_config.url }}/ca/rest/agent/certs/0x{{ cert_serial }}/revoke"
-            method: POST
-            headers:
-              Accept: "application/json"
-              Content-Type: "application/json"
-            body_format: json
-            body:
-              reason: "{{ revocation_reason }}"
-            client_cert: "{{ ca_config.admin_cert }}"
-            client_key: "{{ ca_config.admin_key }}"
-            validate_certs: false
-            return_content: true
-            status_code: [200, 204]
+        - name: Revoke certificate via pki CLI
+          ansible.builtin.shell: |
+            podman exec dogtag-ecc-{{ target_ca }}-ca bash -c '
+            set -e
+            CLIENT_DB=/root/.dogtag/nssdb
+            CA_URL=https://localhost:8443
+
+            # Find admin cert nickname
+            ADMIN_NICK=$(certutil -L -d $CLIENT_DB 2>/dev/null | grep -i admin | head -1 | awk "{for(i=1;i<=NF-1;i++) printf \$i\" \"; print \"\"}" | sed "s/ *$//")
+            if [ -z "$ADMIN_NICK" ]; then
+                echo "ERROR: Admin certificate not found in NSS database"
+                exit 1
+            fi
+
+            echo "Using admin cert: $ADMIN_NICK"
+
+            # Revoke the certificate
+            pki -d $CLIENT_DB -c "" -n "$ADMIN_NICK" -U "$CA_URL" \
+                --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \
+                ca-cert-revoke 0x{{ cert_serial }} --reason Key_Compromise --force
+            '
           register: revoke_result
+          become: true
           tags: [revoke]
 
         - name: Display revocation result
           ansible.builtin.debug:
-            msg: "Revocation request submitted successfully"
+            msg: "{{ revoke_result.stdout_lines | default(['Revocation command executed']) }}"
           tags: [revoke]
 
         - name: Wait for revocation to process

@@ -1,0 +1,144 @@
+---
+# Dogtag Certificate Revocation using pki CLI
+# This playbook uses the pki CLI tool via podman exec, which bypasses
+# the REST API nonce requirement and works reliably.
+#
+# Expected variables from EDA:
+#   event.certificate_serial - Certificate serial number (hex, e.g. 0x1a2b)
+#   event.ca_level - CA level (root, intermediate, iot)
+#   event.pki_type - PKI type (rsa, ecc, pqc)
+#   event.severity - Event severity (low, medium, high, critical)
+
+- name: Revoke Certificate - Dogtag CLI
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # Event data (passed from EDA)
+    certificate_serial: "{{ event.certificate_serial | default('') }}"
+    target_ca: "{{ event.ca_level | default(ca_level) | default('iot') }}"
+    pki_type: "{{ event.pki_type | default('rsa') }}"
+    event_severity: "{{ event.severity | default('high') }}"
+    event_id: "{{ event.event_id | default('manual') }}"
+
+    # Revocation reason (string format for pki CLI)
+    revocation_reason: "{{ reason | default('Key_Compromise') }}"
+
+    # Container mappings
+    container_map:
+      rsa:
+        root: "dogtag-root-ca"
+        intermediate: "dogtag-intermediate-ca"
+        iot: "dogtag-iot-ca"
+      ecc:
+        root: "dogtag-ecc-root-ca"
+        intermediate: "dogtag-ecc-intermediate-ca"
+        iot: "dogtag-ecc-iot-ca"
+      pqc:
+        root: "dogtag-pq-root-ca"
+        intermediate: "dogtag-pq-intermediate-ca"
+        iot: "dogtag-pq-iot-ca"
+
+    container: "{{ container_map[pki_type][target_ca] }}"
+    log_file: "{{ lookup('env', 'LAB_LOG_DIR') | default('/opt/cert-lab/logs', true) }}/dogtag-revocation.log"
+
+  tasks:
+    - name: Validate certificate_serial provided
+      ansible.builtin.fail:
+        msg: "Certificate serial required. Set event.certificate_serial"
+      when: certificate_serial == ''
+
+    - name: Validate severity for automatic revocation
+      ansible.builtin.assert:
+        that:
+          - event_severity in ['high', 'critical']
+        fail_msg: "Severity '{{ event_severity }}' does not trigger automatic revocation"
+      when: not (force_revoke | default(false) | bool)
+
+    - name: Normalize serial number (remove 0x prefix for internal use)
+      ansible.builtin.set_fact:
+        serial_clean: "{{ certificate_serial | regex_replace('^0x', '') }}"
+
+    - name: Display revocation request
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          DOGTAG {{ pki_type | upper }} - CERTIFICATE REVOCATION (CLI)
+          ============================================================
+          Event ID:    {{ event_id }}
+          Serial:      0x{{ serial_clean }}
+          Container:   {{ container }}
+          CA Level:    {{ target_ca | upper }}
+          Reason:      {{ revocation_reason }}
+          ============================================================
+
+    - name: Revoke certificate using pki CLI
+      ansible.builtin.shell: |
+        podman exec {{ container }} bash -c '
+        set -e
+        CLIENT_DB=/root/.dogtag/nssdb
+        CA_URL=https://localhost:8443
+
+        # Find admin cert nickname
+        ADMIN_NICK=$(certutil -L -d $CLIENT_DB 2>/dev/null | grep -i admin | head -1 | awk "{for(i=1;i<=NF-1;i++) printf \$i\" \"; print \"\"}" | sed "s/ *$//")
+        if [ -z "$ADMIN_NICK" ]; then
+            echo "ERROR: Admin certificate not found in NSS database"
+            exit 1
+        fi
+
+        echo "Using admin cert: $ADMIN_NICK"
+
+        # Revoke the certificate
+        pki -d $CLIENT_DB -c "" -n "$ADMIN_NICK" -U "$CA_URL" \
+            --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \
+            ca-cert-revoke 0x{{ serial_clean }} --reason {{ revocation_reason }} --force
+        '
+      register: revoke_result
+      become: true
+
+    - name: Display revocation output
+      ansible.builtin.debug:
+        msg: "{{ revoke_result.stdout_lines }}"
+      when: revoke_result.stdout_lines is defined
+
+    - name: Wait for revocation to process
+      ansible.builtin.pause:
+        seconds: 2
+
+    - name: Verify revocation status using pki CLI
+      ansible.builtin.shell: |
+        podman exec {{ container }} bash -c '
+        CLIENT_DB=/root/.dogtag/nssdb
+        CA_URL=https://localhost:8443
+        ADMIN_NICK=$(certutil -L -d $CLIENT_DB 2>/dev/null | grep -i admin | head -1 | awk "{for(i=1;i<=NF-1;i++) printf \$i\" \"; print \"\"}" | sed "s/ *$//")
+        pki -d $CLIENT_DB -c "" -n "$ADMIN_NICK" -U "$CA_URL" \
+            --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \
+            ca-cert-show 0x{{ serial_clean }} | grep -i status
+        '
+      register: verify_result
+      become: true
+
+    - name: Check revocation status
+      ansible.builtin.assert:
+        that:
+          - "'REVOKED' in verify_result.stdout"
+        success_msg: "Certificate 0x{{ serial_clean }} successfully revoked"
+        fail_msg: "Revocation verification failed: {{ verify_result.stdout }}"
+
+    - name: Log revocation to file
+      ansible.builtin.lineinfile:
+        path: "{{ log_file }}"
+        line: "{{ lookup('pipe', 'date -Iseconds') }} | PKI={{ pki_type | upper }} | CA={{ target_ca }} | EVENT={{ event_id }} | SERIAL=0x{{ serial_clean }} | REASON={{ revocation_reason }} | STATUS=REVOKED | METHOD=CLI"
+        create: true
+        mode: '0644'
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          DOGTAG {{ pki_type | upper }} - REVOCATION COMPLETE
+          ============================================================
+          Certificate:  0x{{ serial_clean }}
+          CA:           {{ target_ca | upper }}
+          Status:       REVOKED
+          Reason:       {{ revocation_reason }}
+          ============================================================
