@@ -624,15 +624,45 @@ The lab supports direct certificate operations against the standalone Dogtag CAs
 
 ### EDA Playbook Architecture
 
-EDA playbooks use the **Dogtag REST API** with client certificate authentication (not `podman exec`). This allows the EDA container to revoke certificates directly without access to the host's podman socket.
+EDA playbooks use **podman exec** via the podman socket API to run the `pki` CLI inside the Dogtag containers. This approach is required because the Dogtag REST API requires a CSRF nonce for POST requests that cannot be easily obtained.
+
+**Why not REST API?**
+The Dogtag REST API requires a nonce (CSRF token) for POST requests like revocation. The nonce endpoint (`/ca/rest/account/nonce`) doesn't exist in some Dogtag versions, and the nonce isn't returned in login response headers. The `pki` CLI bypasses this by using internal Dogtag protocols.
 
 **Requirements:**
-1. Admin credentials exported to `data/certs/admin/` (run `./scripts/setup-eda-auth.sh`)
-2. EDA container has DNS entries for CA hostnames (via `extra_hosts` in compose)
+1. Podman socket mounted in EDA container (`/run/podman/podman.sock`)
+2. Scripts mounted in EDA container (`/scripts/`)
+3. Admin credentials in NSS database inside Dogtag containers (automatic during init)
+
+### PKI CLI Tool (pki-cli.py)
+
+The `scripts/pki-cli.py` tool provides certificate management without external dependencies:
+
+```bash
+# List certificates
+./scripts/pki-cli.py list --ca iot --pki rsa
+
+# Issue a certificate
+./scripts/pki-cli.py issue --ca iot --cn "device.cert-lab.local"
+
+# Check certificate status
+./scripts/pki-cli.py status 0x<serial> --ca iot
+
+# Revoke a certificate
+./scripts/pki-cli.py revoke 0x<serial> --ca iot --reason key_compromise
+
+# Run end-to-end test
+./scripts/pki-cli.py test --ca iot
+```
+
+**Notes:**
+- Uses `pki` CLI via `sudo podman exec` for revocation (bypasses REST API nonce issue)
+- REST API used for GET requests (list, status) which don't require nonce
+- Serial numbers require `0x` prefix for Dogtag REST API
 
 ### Ansible Playbooks for Dogtag
 
-**Certificate Revocation (REST API):**
+**Certificate Revocation (uses pki CLI via podman):**
 - `ansible/playbooks/dogtag-rsa-revoke-certificate.yml` - RSA-4096 PKI
 - `ansible/playbooks/dogtag-ecc-revoke-certificate.yml` - ECC P-384 PKI
 - `ansible/playbooks/dogtag-pqc-revoke-certificate.yml` - ML-DSA-87 PKI
