@@ -309,21 +309,32 @@ class PKIClient:
         admin_p12 = f"/root/.dogtag/{instance}/ca_admin_cert.p12"
         client_nssdb = "/tmp/pki-client-nssdb"
 
+        # Try different passwords - pkispawn config may use different values
+        passwords_to_try = [pki_password, "RedHat123", ""]
+
         # Create client NSS database and import admin cert
         print(f"  Setting up client authentication...")
-        setup_cmd = f"""
-            rm -rf {client_nssdb}
-            mkdir -p {client_nssdb}
-            certutil -N -d {client_nssdb} --empty-password
-            pk12util -i {admin_p12} -d {client_nssdb} -W '{pki_password}' -K ''
-        """
-        result = subprocess.run(
-            ["sudo", "podman", "exec", container, "bash", "-c", setup_cmd],
-            capture_output=True, text=True
-        )
-        if result.returncode != 0:
-            print(f"Error setting up client auth: {result.stderr}")
-            # Continue anyway, might already be set up
+        import_success = False
+        for p12_pwd in passwords_to_try:
+            setup_cmd = f"""
+                rm -rf {client_nssdb}
+                mkdir -p {client_nssdb}
+                certutil -N -d {client_nssdb} --empty-password
+                pk12util -i {admin_p12} -d {client_nssdb} -W '{p12_pwd}' -K ''
+            """
+            result = subprocess.run(
+                ["sudo", "podman", "exec", container, "bash", "-c", setup_cmd],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                import_success = True
+                break
+            print(f"  Password '{p12_pwd[:3]}...' failed, trying next...")
+
+        if not import_success:
+            print(f"Error: Could not import admin P12 with any known password")
+            print(f"Last error: {result.stderr}")
+            return None
 
         # Find the admin cert nickname
         result = subprocess.run(
