@@ -393,10 +393,21 @@ services:
       LAB_LOG_DIR: /opt/cert-lab/logs
       PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-}
     extra_hosts:
-      # PKI CA hostnames for REST API access
-      - "root-ca.cert-lab.local:${IP_ROOT_CA:-172.20.0.12}"
-      - "intermediate-ca.cert-lab.local:${IP_INTERMEDIATE_CA:-172.20.0.11}"
-      - "iot-ca.cert-lab.local:${IP_IOT_CA:-172.20.0.13}"
+      # PKI CA hostnames - use host-gateway to reach PKI via host port mappings
+      # PKI runs rootful on separate network, accessible via host ports:
+      #   Root CA: 8443, Intermediate CA: 8444, IoT CA: 8445, ACME CA: 8446
+      - "root-ca.cert-lab.local:host-gateway"
+      - "intermediate-ca.cert-lab.local:host-gateway"
+      - "iot-ca.cert-lab.local:host-gateway"
+      - "acme-ca.cert-lab.local:host-gateway"
+      # ECC PKI (ports 8463-8465)
+      - "ecc-root-ca.cert-lab.local:host-gateway"
+      - "ecc-intermediate-ca.cert-lab.local:host-gateway"
+      - "ecc-iot-ca.cert-lab.local:host-gateway"
+      # PQ PKI (ports 8453-8455)
+      - "pq-root-ca.cert-lab.local:host-gateway"
+      - "pq-intermediate-ca.cert-lab.local:host-gateway"
+      - "pq-iot-ca.cert-lab.local:host-gateway"
     volumes:
       - ./ansible/rulebooks:/rulebooks:ro
       - ./ansible/playbooks:/playbooks:ro

@@ -33,20 +33,21 @@
     log_file: "{{ lookup('env', 'LAB_LOG_DIR') | default('/opt/cert-lab/logs', true) }}/dogtag-revocation.log"
 
     # PQC PKI configuration
+    # Note: Use external host ports (8453-8455) since EDA runs on separate network
     ca_configs:
       root:
         container: "dogtag-pq-root-ca"
-        url: "https://pq-root-ca.cert-lab.local:8443"
+        url: "https://pq-root-ca.cert-lab.local:8453"
         instance: "pki-pq-root-ca"
         nss_db: "/var/lib/pki/pki-pq-root-ca/alias"
       intermediate:
         container: "dogtag-pq-intermediate-ca"
-        url: "https://pq-intermediate-ca.cert-lab.local:8443"
+        url: "https://pq-intermediate-ca.cert-lab.local:8454"
         instance: "pki-pq-intermediate-ca"
         nss_db: "/var/lib/pki/pki-pq-intermediate-ca/alias"
       iot:
         container: "dogtag-pq-iot-ca"
-        url: "https://pq-iot-ca.cert-lab.local:8443"
+        url: "https://pq-iot-ca.cert-lab.local:8455"
         instance: "pki-pq-iot-ca"
         nss_db: "/var/lib/pki/pki-pq-iot-ca/alias"
 

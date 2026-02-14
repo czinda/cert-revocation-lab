@@ -41,24 +41,24 @@
     admin_creds_dir: "{{ certs_dir }}/admin"
 
     # RSA PKI configuration - REST API URLs
+    # Note: Use external host ports since EDA runs on separate network
+    #   Root CA: 8443, Intermediate CA: 8444, IoT CA: 8445
     ca_configs:
       root:
         name: "Root CA"
         url: "https://root-ca.cert-lab.local:8443"
-        # Alternative: use container IP from compose
-        # url: "https://172.20.0.12:8443"
         admin_cert: "{{ admin_creds_dir }}/root-admin-cert.pem"
         admin_key: "{{ admin_creds_dir }}/root-admin-key.pem"
         ca_cert: "{{ certs_dir }}/root-ca.crt"
       intermediate:
         name: "Intermediate CA"
-        url: "https://intermediate-ca.cert-lab.local:8443"
+        url: "https://intermediate-ca.cert-lab.local:8444"
         admin_cert: "{{ admin_creds_dir }}/intermediate-admin-cert.pem"
         admin_key: "{{ admin_creds_dir }}/intermediate-admin-key.pem"
         ca_cert: "{{ certs_dir }}/ca-chain.crt"
       iot:
         name: "IoT CA"
-        url: "https://iot-ca.cert-lab.local:8443"
+        url: "https://iot-ca.cert-lab.local:8445"
         admin_cert: "{{ admin_creds_dir }}/iot-admin-cert.pem"
         admin_key: "{{ admin_creds_dir }}/iot-admin-key.pem"
         ca_cert: "{{ certs_dir }}/iot-ca-chain.crt"

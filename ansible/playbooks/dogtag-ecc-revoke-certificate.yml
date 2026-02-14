@@ -33,20 +33,21 @@
     log_file: "{{ lookup('env', 'LAB_LOG_DIR') | default('/opt/cert-lab/logs', true) }}/dogtag-revocation.log"
 
     # ECC PKI configuration
+    # Note: Use external host ports (8463-8465) since EDA runs on separate network
     ca_configs:
       root:
         container: "dogtag-ecc-root-ca"
-        url: "https://ecc-root-ca.cert-lab.local:8443"
+        url: "https://ecc-root-ca.cert-lab.local:8463"
         instance: "pki-ecc-root-ca"
         nss_db: "/var/lib/pki/pki-ecc-root-ca/alias"
       intermediate:
         container: "dogtag-ecc-intermediate-ca"
-        url: "https://ecc-intermediate-ca.cert-lab.local:8443"
+        url: "https://ecc-intermediate-ca.cert-lab.local:8464"
         instance: "pki-ecc-intermediate-ca"
         nss_db: "/var/lib/pki/pki-ecc-intermediate-ca/alias"
       iot:
         container: "dogtag-ecc-iot-ca"
-        url: "https://ecc-iot-ca.cert-lab.local:8443"
+        url: "https://ecc-iot-ca.cert-lab.local:8465"
         instance: "pki-ecc-iot-ca"
         nss_db: "/var/lib/pki/pki-ecc-iot-ca/alias"
 
