@@ -1,0 +1,159 @@
+---
+# Simple Certificate Revocation Playbook
+# Just revokes a certificate by serial number. No frills.
+#
+# Usage:
+#   ansible-playbook revoke-cert-simple.yml -e serial=0x123abc
+#   ansible-playbook revoke-cert-simple.yml -e serial=0x123abc -e pki=ecc
+#   ansible-playbook revoke-cert-simple.yml -e serial=0x123abc -e ca=intermediate
+
+- name: Revoke Certificate
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # Required: certificate serial number (hex with or without 0x prefix)
+    serial: "{{ serial | regex_replace('^0x', '') }}"
+
+    # Optional: PKI type (rsa, ecc, pqc) - default rsa
+    pki: "{{ pki | default('rsa') }}"
+
+    # Optional: CA level (root, intermediate, iot) - default iot
+    ca: "{{ ca | default('iot') }}"
+
+    # Port mappings
+    ports:
+      rsa:
+        root: 8443
+        intermediate: 8444
+        iot: 8445
+      ecc:
+        root: 8463
+        intermediate: 8464
+        iot: 8465
+      pqc:
+        root: 8453
+        intermediate: 8454
+        iot: 8455
+
+    # Admin credential paths (relative to /certs in EDA container)
+    admin_paths:
+      rsa: "/certs/admin"
+      ecc: "/certs/ecc/admin"
+      pqc: "/certs/pq/admin"
+
+    # Derive values
+    ca_port: "{{ ports[pki][ca] }}"
+    admin_dir: "{{ admin_paths[pki] }}"
+    admin_prefix: "{{ '' if pki == 'rsa' else pki ~ '-' }}"
+    admin_cert: "{{ admin_dir }}/{{ admin_prefix }}{{ ca }}-admin-cert.pem"
+    admin_key: "{{ admin_dir }}/{{ admin_prefix }}{{ ca }}-admin-key.pem"
+
+    # CA hostnames
+    ca_hosts:
+      rsa:
+        root: "root-ca.cert-lab.local"
+        intermediate: "intermediate-ca.cert-lab.local"
+        iot: "iot-ca.cert-lab.local"
+      ecc:
+        root: "ecc-root-ca.cert-lab.local"
+        intermediate: "ecc-intermediate-ca.cert-lab.local"
+        iot: "ecc-iot-ca.cert-lab.local"
+      pqc:
+        root: "pq-root-ca.cert-lab.local"
+        intermediate: "pq-intermediate-ca.cert-lab.local"
+        iot: "pq-iot-ca.cert-lab.local"
+
+    ca_host: "{{ ca_hosts[pki][ca] }}"
+    ca_url: "https://{{ ca_host }}:{{ ca_port }}"
+
+  tasks:
+    - name: Validate serial provided
+      ansible.builtin.fail:
+        msg: "Serial number required. Usage: -e serial=0x123abc"
+      when: serial is not defined or serial == ''
+
+    - name: Check admin cert exists
+      ansible.builtin.stat:
+        path: "{{ admin_cert }}"
+      register: cert_check
+
+    - name: Fail if admin cert missing
+      ansible.builtin.fail:
+        msg: |
+          Admin cert not found: {{ admin_cert }}
+          Run: ./scripts/export-all-admin-creds.sh
+      when: not cert_check.stat.exists
+
+    - name: Show what we're doing
+      ansible.builtin.debug:
+        msg: |
+          Revoking certificate:
+            Serial: {{ serial }}
+            CA:     {{ ca_url }}
+            Admin:  {{ admin_cert }}
+
+    - name: Get current certificate status
+      ansible.builtin.uri:
+        url: "{{ ca_url }}/ca/rest/certs/{{ serial }}"
+        method: GET
+        headers:
+          Accept: "application/json"
+        client_cert: "{{ admin_cert }}"
+        client_key: "{{ admin_key }}"
+        validate_certs: false
+        return_content: true
+      register: before_status
+      ignore_errors: true
+
+    - name: Show current status
+      ansible.builtin.debug:
+        msg: "Current status: {{ before_status.json.Status | default('UNKNOWN') }}"
+      when: before_status.json is defined
+
+    - name: Revoke the certificate
+      ansible.builtin.uri:
+        url: "{{ ca_url }}/ca/rest/agent/certs/{{ serial }}/revoke"
+        method: POST
+        headers:
+          Accept: "application/json"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          reason: "KEY_COMPROMISE"
+        client_cert: "{{ admin_cert }}"
+        client_key: "{{ admin_key }}"
+        validate_certs: false
+        return_content: true
+        status_code: [200, 204]
+      register: revoke_result
+
+    - name: Wait briefly
+      ansible.builtin.pause:
+        seconds: 1
+
+    - name: Verify revocation
+      ansible.builtin.uri:
+        url: "{{ ca_url }}/ca/rest/certs/{{ serial }}"
+        method: GET
+        headers:
+          Accept: "application/json"
+        client_cert: "{{ admin_cert }}"
+        client_key: "{{ admin_key }}"
+        validate_certs: false
+        return_content: true
+      register: after_status
+
+    - name: Show result
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          Certificate {{ serial }}
+          Status: {{ after_status.json.Status }}
+          ========================================
+
+    - name: Confirm revoked
+      ansible.builtin.assert:
+        that:
+          - after_status.json.Status == 'REVOKED'
+        success_msg: "Certificate revoked successfully"
+        fail_msg: "Revocation failed - status is {{ after_status.json.Status }}"

@@ -398,16 +398,24 @@ main() {
     init_iot_ca
     verify_hierarchy
 
-    # Setup agent authentication for each CA
-    log_phase "Setting Up Agent Authentication"
-    for ca_container in dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca; do
-        local instance=$(echo "$ca_container" | sed 's/dogtag-/pki-/')
-        if [ -x "$SCRIPT_DIR/setup-agent-auth.sh" ]; then
-            "$SCRIPT_DIR/setup-agent-auth.sh" "$ca_container" "$instance" || true
-        else
-            bash "$SCRIPT_DIR/setup-agent-auth.sh" "$ca_container" "$instance" || true
-        fi
-    done
+    # Export admin credentials for REST API access
+    log_phase "Exporting Admin Credentials"
+    local export_script="$SCRIPT_DIR/../export-all-admin-creds.sh"
+    if [ -x "$export_script" ]; then
+        "$export_script" || log_warn "Some admin creds may not have exported"
+    elif [ -f "$export_script" ]; then
+        bash "$export_script" || log_warn "Some admin creds may not have exported"
+    else
+        # Fallback: export from each CA individually
+        for ca_container in dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca; do
+            local instance=$(echo "$ca_container" | sed 's/dogtag-/pki-/')
+            if [ -x "$SCRIPT_DIR/setup-agent-auth.sh" ]; then
+                "$SCRIPT_DIR/setup-agent-auth.sh" "$ca_container" "$instance" || true
+            else
+                bash "$SCRIPT_DIR/setup-agent-auth.sh" "$ca_container" "$instance" || true
+            fi
+        done
+    fi
 
     # Ensure certs directory and admin PEM files are world-readable
     # (EDA container runs as non-root and needs to read these)

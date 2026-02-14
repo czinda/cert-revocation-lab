@@ -161,6 +161,15 @@ main() {
         bash "${SCRIPT_DIR}/configure-ds-tls.sh" pq
     fi
 
+    # Export admin credentials for REST API access
+    log_step "Exporting PQ Admin Credentials"
+    local export_script="${SCRIPT_DIR}/../export-all-admin-creds.sh"
+    if [ -x "$export_script" ]; then
+        "$export_script" || log_warn "Some admin creds may not have exported"
+    elif [ -f "$export_script" ]; then
+        bash "$export_script" || log_warn "Some admin creds may not have exported"
+    fi
+
     # Summary
     echo ""
     echo "========================================================================"
