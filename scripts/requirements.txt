@@ -1,0 +1,2 @@
+# Python dependencies for PKI CLI scripts
+requests>=2.28.0
