@@ -151,32 +151,48 @@ class PKIClient:
         if self._nonce:
             return True
 
-        # Dogtag uses GET for login with client cert auth
-        url = f"{self.base_url}/ca/rest/account/login"
-        req = urllib.request.Request(url, method="GET")
+        opener = self._get_opener()
+
+        # Step 1: Login to establish session
+        login_url = f"{self.base_url}/ca/rest/account/login"
+        req = urllib.request.Request(login_url, method="GET")
         req.add_header("Accept", "application/json")
 
         try:
-            with self._get_opener().open(req, timeout=30) as resp:
-                # Get nonce from response headers
-                self._nonce = resp.headers.get("X-XSRF-TOKEN")
+            with opener.open(req, timeout=30) as resp:
+                response_data = resp.read().decode("utf-8")
                 if debug:
-                    print(f"  Login successful, nonce: {self._nonce[:20]}..." if self._nonce else "  Login successful, no nonce in headers")
-                    print(f"  All headers: {dict(resp.headers)}")
-                return True
+                    print(f"  Login response: {response_data[:200]}...")
+                    print(f"  Login headers: {dict(resp.headers)}")
         except urllib.error.HTTPError as e:
-            # Check headers even on error responses
-            self._nonce = e.headers.get("X-XSRF-TOKEN")
-            if self._nonce:
-                if debug:
-                    print(f"  Login returned {e.code} but got nonce: {self._nonce[:20]}...")
-                return True
             print(f"Login failed: HTTP {e.code}")
-            if debug:
-                print(f"  Headers: {dict(e.headers)}")
             return False
         except urllib.error.URLError as e:
             print(f"Login connection error: {e.reason}")
+            return False
+
+        # Step 2: Get nonce from dedicated endpoint
+        nonce_url = f"{self.base_url}/ca/rest/account/nonce"
+        req = urllib.request.Request(nonce_url, method="GET")
+        req.add_header("Accept", "text/plain")
+
+        try:
+            with opener.open(req, timeout=30) as resp:
+                self._nonce = resp.read().decode("utf-8").strip()
+                if debug:
+                    print(f"  Nonce: {self._nonce}")
+                return True
+        except urllib.error.HTTPError as e:
+            if debug:
+                print(f"  Nonce endpoint returned: HTTP {e.code}")
+            # Try alternative: nonce might be in header from any request
+            self._nonce = e.headers.get("X-XSRF-TOKEN")
+            if self._nonce:
+                return True
+            return False
+        except urllib.error.URLError as e:
+            if debug:
+                print(f"  Nonce endpoint error: {e.reason}")
             return False
 
     def _request(self, method: str, endpoint: str, data: dict = None) -> Tuple[int, Optional[dict]]:
