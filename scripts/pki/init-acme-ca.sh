@@ -76,8 +76,8 @@ phase2_install_cert() {
 deploy_acme_responder() {
     log_info "Deploying ACME responder..."
 
-    # Create ACME responder configuration
-    # The ACME responder is deployed as part of the CA instance
+    # Create ACME configuration directory
+    mkdir -p /var/lib/pki/${PKI_INSTANCE}/conf/acme
 
     # Enable ACME in the CA instance
     pki-server ca-config-set enabled true -i "$PKI_INSTANCE" 2>/dev/null || true
