@@ -3,6 +3,7 @@
 PKI CLI - Certificate management for the revocation lab.
 
 Commands:
+    issue     Issue a test certificate
     list      List certificates on a CA
     revoke    Revoke a certificate
     status    Get certificate status
@@ -13,10 +14,13 @@ No external dependencies - uses only Python standard library.
 """
 
 import argparse
+import base64
 import json
 import os
 import ssl
+import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 import urllib.error
@@ -193,6 +197,142 @@ class PKIClient:
             print(f"Response: {data}")
         return False
 
+    def issue_cert(self, cn: str, profile: str = "caServerCert") -> Optional[str]:
+        """Issue a certificate via REST API. Returns serial number on success."""
+        if not self._check_creds():
+            return None
+
+        # Generate a key and CSR using openssl
+        with tempfile.TemporaryDirectory() as tmpdir:
+            key_file = Path(tmpdir) / "key.pem"
+            csr_file = Path(tmpdir) / "csr.pem"
+
+            # Generate RSA key
+            result = subprocess.run(
+                ["openssl", "genrsa", "-out", str(key_file), "2048"],
+                capture_output=True, text=True
+            )
+            if result.returncode != 0:
+                print(f"Error generating key: {result.stderr}")
+                return None
+
+            # Generate CSR
+            result = subprocess.run(
+                ["openssl", "req", "-new", "-key", str(key_file), "-out", str(csr_file),
+                 "-subj", f"/CN={cn}"],
+                capture_output=True, text=True
+            )
+            if result.returncode != 0:
+                print(f"Error generating CSR: {result.stderr}")
+                return None
+
+            # Read CSR
+            csr_pem = csr_file.read_text()
+
+        # Submit enrollment request via REST API
+        # Dogtag expects XML for enrollment, so we use the simpler pkcs10 endpoint
+        enrollment_data = {
+            "ProfileID": profile,
+            "Renewal": False,
+            "Input": [
+                {
+                    "id": "i1",
+                    "ClassID": "certReqInputImpl",
+                    "Name": "Certificate Request Input",
+                    "Attribute": [
+                        {
+                            "name": "cert_request_type",
+                            "Value": "pkcs10"
+                        },
+                        {
+                            "name": "cert_request",
+                            "Value": csr_pem
+                        }
+                    ]
+                }
+            ]
+        }
+
+        status_code, data = self._request(
+            "POST",
+            f"/ca/rest/certrequests",
+            data=enrollment_data
+        )
+
+        if status_code not in (200, 201):
+            print(f"Error submitting enrollment: HTTP {status_code}")
+            if data:
+                print(f"Response: {json.dumps(data, indent=2)}")
+            return None
+
+        # Get request ID from response
+        request_id = None
+        if isinstance(data, dict):
+            # Response may have entries array or direct fields
+            entries = data.get("entries", [data])
+            for entry in entries:
+                request_id = entry.get("requestId") or entry.get("RequestID") or entry.get("id")
+                if request_id:
+                    break
+
+        if not request_id:
+            print(f"Could not find request ID in response: {data}")
+            return None
+
+        print(f"  Enrollment request submitted: {request_id}")
+
+        # Wait a moment for processing
+        time.sleep(2)
+
+        # Check request status and get certificate ID
+        status_code, data = self._request("GET", f"/ca/rest/certrequests/{request_id}")
+        if status_code != 200:
+            print(f"Error checking request status: HTTP {status_code}")
+            return None
+
+        request_status = data.get("requestStatus") or data.get("RequestStatus", "")
+        cert_id = data.get("certId") or data.get("CertID")
+
+        if request_status.lower() == "complete" and cert_id:
+            print(f"  Certificate issued: {cert_id}")
+            return cert_id
+        elif request_status.lower() == "pending":
+            # Need to approve the request
+            print(f"  Request pending approval, attempting auto-approve...")
+            status_code, _ = self._request(
+                "POST",
+                f"/ca/rest/agent/certrequests/{request_id}/approve"
+            )
+            if status_code in (200, 204):
+                time.sleep(1)
+                # Check again
+                status_code, data = self._request("GET", f"/ca/rest/certrequests/{request_id}")
+                cert_id = data.get("certId") or data.get("CertID")
+                if cert_id:
+                    print(f"  Certificate issued: {cert_id}")
+                    return cert_id
+
+        print(f"  Request status: {request_status}, cert_id: {cert_id}")
+        return cert_id
+
+
+def cmd_issue(args):
+    """Issue a test certificate."""
+    client = PKIClient(args.pki, args.ca)
+    cn = args.cn or f"test-device-{int(time.time())}.cert-lab.local"
+
+    print(f"\nIssuing certificate on {client.config['name']} {args.ca.upper()} CA...")
+    print(f"  CN: {cn}")
+    print(f"  Profile: {args.profile}")
+
+    serial = client.issue_cert(cn, args.profile)
+    if serial:
+        print(f"\nSUCCESS: Certificate issued with serial {serial}")
+        return 0
+    else:
+        print("\nFAILED: Could not issue certificate")
+        return 1
+
 
 def cmd_list(args):
     """List certificates on a CA."""
@@ -320,17 +460,28 @@ def cmd_test(args):
 
     client = PKIClient(args.pki, args.ca)
 
-    # Step 1: Find a valid certificate
-    print("[1/4] Finding a valid certificate...")
-    certs = client.list_certs("VALID")
-    if not certs:
-        print("ERROR: No valid certificates found")
-        print("Issue a certificate first, then run this test again")
-        return 1
+    # Step 1: Find or use provided certificate serial
+    if args.serial:
+        serial = args.serial.lstrip("0x")
+        print(f"[1/4] Using provided serial: {serial}")
+        cert = client.get_cert(serial)
+        if not cert:
+            print(f"ERROR: Certificate {serial} not found")
+            return 1
+        if cert.get("Status") != "VALID":
+            print(f"ERROR: Certificate status is {cert.get('Status')}, not VALID")
+            return 1
+    else:
+        print("[1/4] Finding a valid certificate...")
+        certs = client.list_certs("VALID")
+        if not certs:
+            print("ERROR: No valid certificates found")
+            print("Issue a certificate first: ./scripts/pki-cli.py issue --ca iot")
+            return 1
 
-    cert = certs[0]
-    serial = cert["serial"]
-    print(f"  Found: {serial} ({cert['subject'][:40]}...)")
+        cert = certs[0]
+        serial = cert["serial"]
+        print(f"  Found: {serial} ({cert.get('subject', cert.get('SubjectDN', ''))[:40]}...)")
 
     # Step 2: Trigger security event
     print("\n[2/4] Triggering security event via mock EDR...")
@@ -403,6 +554,14 @@ def main():
         p.add_argument("--ca", choices=["root", "intermediate", "iot"], default="iot",
                        help="CA level (default: iot)")
 
+    # issue command
+    p_issue = subparsers.add_parser("issue", help="Issue a test certificate")
+    add_common_args(p_issue)
+    p_issue.add_argument("--cn", help="Certificate Common Name (default: auto-generated)")
+    p_issue.add_argument("--profile", default="caServerCert",
+                         help="Certificate profile (default: caServerCert)")
+    p_issue.set_defaults(func=cmd_issue)
+
     # list command
     p_list = subparsers.add_parser("list", help="List certificates on a CA")
     add_common_args(p_list)
@@ -441,6 +600,7 @@ def main():
     # test command
     p_test = subparsers.add_parser("test", help="Run end-to-end revocation test")
     add_common_args(p_test)
+    p_test.add_argument("--serial", help="Certificate serial to revoke (default: auto-find)")
     p_test.add_argument("--wait", type=int, default=10,
                         help="Seconds to wait for EDA processing (default: 10)")
     p_test.add_argument("--edr-port", type=int, default=8082,
