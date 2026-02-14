@@ -120,28 +120,35 @@ def check_ca_health(
             message=f"{pki_key.upper()} {level_key} CA returned empty response"
         )
 
-    # Parse XML response: <Status>running</Status>
-    if "<Status>" in response:
-        import re
-        match = re.search(r"<Status>(\w+)</Status>", response)
-        if match:
-            status = match.group(1).lower()
-            if status == "running":
-                return CAHealthResult(
-                    healthy=True,
-                    status="running",
-                    message=f"{pki_key.upper()} {level_key} CA is running",
-                    details={"port": port, "url": url}
-                )
-            else:
-                return CAHealthResult(
-                    healthy=False,
-                    status=status,
-                    message=f"{pki_key.upper()} {level_key} CA status: {status}"
-                )
+    # Parse response - can be XML or JSON
+    # XML format: <Status>running</Status>
+    # JSON format: {"Response": {"Status": "running", ...}}
+
+    response_lower = response.lower()
+
+    # Check for "running" in response (works for both formats)
+    if '"status"' in response_lower or "<status>" in response_lower:
+        if "running" in response_lower:
+            return CAHealthResult(
+                healthy=True,
+                status="running",
+                message=f"{pki_key.upper()} {level_key} CA is running",
+                details={"port": port, "url": url}
+            )
+        else:
+            # Extract status if possible
+            status_match = re.search(r'"status"\s*:\s*"(\w+)"', response, re.IGNORECASE)
+            if not status_match:
+                status_match = re.search(r"<Status>(\w+)</Status>", response, re.IGNORECASE)
+            status = status_match.group(1) if status_match else "unknown"
+            return CAHealthResult(
+                healthy=False,
+                status=status,
+                message=f"{pki_key.upper()} {level_key} CA status: {status}"
+            )
 
     # Check for HTML error page or other issues
-    if "<html" in response.lower() or "404" in response:
+    if "<html" in response_lower or "404" in response:
         return CAHealthResult(
             healthy=False,
             status="not_initialized",
