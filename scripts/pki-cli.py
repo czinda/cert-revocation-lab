@@ -8,21 +8,20 @@ Commands:
     status    Get certificate status
     test      Run end-to-end revocation test
     trigger   Trigger a security event via mock EDR
+
+No external dependencies - uses only Python standard library.
 """
 
 import argparse
 import json
 import os
+import ssl
 import sys
 import time
-import urllib3
+import urllib.request
+import urllib.error
 from pathlib import Path
-from typing import Optional
-
-import requests
-
-# Disable SSL warnings for self-signed certs
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+from typing import Optional, Tuple
 
 # Project paths
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -79,6 +78,9 @@ class PKIClient:
         self.admin_cert = admin_dir / f"{prefix}{ca_level}-admin-cert.pem"
         self.admin_key = admin_dir / f"{prefix}{ca_level}-admin-key.pem"
 
+        # SSL context for client cert auth
+        self._ssl_context = None
+
     def _check_creds(self) -> bool:
         """Check if admin credentials exist."""
         if not self.admin_cert.exists():
@@ -90,40 +92,65 @@ class PKIClient:
             return False
         return True
 
-    def _request(self, method: str, endpoint: str, **kwargs) -> requests.Response:
-        """Make authenticated request to PKI REST API."""
-        url = f"{self.base_url}{endpoint}"
-        kwargs.setdefault("verify", False)
-        kwargs.setdefault("cert", (str(self.admin_cert), str(self.admin_key)))
-        kwargs.setdefault("headers", {})
-        kwargs["headers"].setdefault("Accept", "application/json")
+    def _get_ssl_context(self) -> ssl.SSLContext:
+        """Create SSL context with client certificate."""
+        if self._ssl_context is None:
+            self._ssl_context = ssl.create_default_context()
+            self._ssl_context.check_hostname = False
+            self._ssl_context.verify_mode = ssl.CERT_NONE
+            self._ssl_context.load_cert_chain(
+                certfile=str(self.admin_cert),
+                keyfile=str(self.admin_key)
+            )
+        return self._ssl_context
 
-        return requests.request(method, url, **kwargs)
+    def _request(self, method: str, endpoint: str, data: dict = None) -> Tuple[int, Optional[dict]]:
+        """Make authenticated request to PKI REST API. Returns (status_code, json_data)."""
+        url = f"{self.base_url}{endpoint}"
+
+        headers = {"Accept": "application/json"}
+        body = None
+
+        if data is not None:
+            headers["Content-Type"] = "application/json"
+            body = json.dumps(data).encode("utf-8")
+
+        req = urllib.request.Request(url, data=body, headers=headers, method=method)
+
+        try:
+            with urllib.request.urlopen(req, context=self._get_ssl_context(), timeout=30) as resp:
+                response_data = resp.read().decode("utf-8")
+                return resp.status, json.loads(response_data) if response_data else {}
+        except urllib.error.HTTPError as e:
+            response_data = e.read().decode("utf-8") if e.fp else ""
+            try:
+                return e.code, json.loads(response_data) if response_data else {}
+            except json.JSONDecodeError:
+                return e.code, {"error": response_data}
+        except urllib.error.URLError as e:
+            print(f"Connection error: {e.reason}")
+            return 0, None
 
     def list_certs(self, status_filter: str = "VALID") -> list:
         """List certificates on the CA."""
         if not self._check_creds():
             return []
 
-        try:
-            resp = self._request("GET", "/ca/rest/certs")
-            resp.raise_for_status()
-            data = resp.json()
-
-            certs = []
-            for entry in data.get("entries", []):
-                cert_status = entry.get("Status", "")
-                if status_filter.lower() == "all" or cert_status == status_filter:
-                    certs.append({
-                        "serial": entry.get("id", ""),
-                        "status": cert_status,
-                        "subject": entry.get("SubjectDN", ""),
-                    })
-            return certs
-
-        except requests.RequestException as e:
-            print(f"Error listing certificates: {e}")
+        status_code, data = self._request("GET", "/ca/rest/certs")
+        if status_code != 200 or data is None:
+            print(f"Error listing certificates: HTTP {status_code}")
             return []
+
+        certs = []
+        for entry in data.get("entries", []):
+            cert_status = entry.get("Status", "")
+            if status_filter.lower() == "all" or cert_status == status_filter:
+                certs.append({
+                    "serial": entry.get("id", ""),
+                    "status": cert_status,
+                    "subject": entry.get("SubjectDN", ""),
+                })
+        return certs
 
     def get_cert(self, serial: str) -> Optional[dict]:
         """Get certificate details by serial."""
@@ -133,16 +160,13 @@ class PKIClient:
         # Strip 0x prefix
         serial = serial.lstrip("0x")
 
-        try:
-            resp = self._request("GET", f"/ca/rest/certs/{serial}")
-            if resp.status_code == 404:
-                return None
-            resp.raise_for_status()
-            return resp.json()
-
-        except requests.RequestException as e:
-            print(f"Error getting certificate: {e}")
+        status_code, data = self._request("GET", f"/ca/rest/certs/{serial}")
+        if status_code == 404:
             return None
+        if status_code != 200 or data is None:
+            print(f"Error getting certificate: HTTP {status_code}")
+            return None
+        return data
 
     def revoke_cert(self, serial: str, reason: str = "KEY_COMPROMISE") -> bool:
         """Revoke a certificate."""
@@ -155,21 +179,19 @@ class PKIClient:
         # Map reason string
         reason_value = REVOCATION_REASONS.get(reason.lower(), reason.upper())
 
-        try:
-            resp = self._request(
-                "POST",
-                f"/ca/rest/agent/certs/{serial}/revoke",
-                headers={"Content-Type": "application/json"},
-                json={"reason": reason_value},
-            )
-            resp.raise_for_status()
+        status_code, data = self._request(
+            "POST",
+            f"/ca/rest/agent/certs/{serial}/revoke",
+            data={"reason": reason_value}
+        )
+
+        if status_code in (200, 204):
             return True
 
-        except requests.RequestException as e:
-            print(f"Error revoking certificate: {e}")
-            if hasattr(e, "response") and e.response is not None:
-                print(f"Response: {e.response.text}")
-            return False
+        print(f"Error revoking certificate: HTTP {status_code}")
+        if data:
+            print(f"Response: {data}")
+        return False
 
 
 def cmd_list(args):
@@ -263,9 +285,16 @@ def cmd_trigger(args):
         payload["certificate_serial"] = args.serial
 
     try:
-        resp = requests.post(url, json=payload, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+
         print(f"Event triggered: {data.get('event_id', 'unknown')}")
         print(f"  Device:   {payload['device_id']}")
         print(f"  Scenario: {args.scenario}")
@@ -274,7 +303,7 @@ def cmd_trigger(args):
             print(f"  Serial:   {args.serial}")
         return 0
 
-    except requests.RequestException as e:
+    except urllib.error.URLError as e:
         print(f"Error triggering event: {e}")
         print("Is mock-edr running? Check: curl http://localhost:8082/health")
         return 1
@@ -316,11 +345,18 @@ def cmd_test(args):
     }
 
     try:
-        resp = requests.post(url, json=payload, timeout=10)
-        resp.raise_for_status()
-        event_id = resp.json().get("event_id", "unknown")
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        event_id = data.get("event_id", "unknown")
         print(f"  Event triggered: {event_id}")
-    except requests.RequestException as e:
+    except urllib.error.URLError as e:
         print(f"  ERROR: Failed to trigger event: {e}")
         print("  Is mock-edr running?")
         return 1
