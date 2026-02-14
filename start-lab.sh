@@ -15,19 +15,8 @@ cd "$SCRIPT_DIR"
 ORIGINAL_USER="${SUDO_USER:-$USER}"
 ORIGINAL_UID=$(id -u "$ORIGINAL_USER" 2>/dev/null || echo $UID)
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
-log_phase() { echo -e "\n${CYAN}========================================================================${NC}"; echo -e "${CYAN}  $1${NC}"; echo -e "${CYAN}========================================================================${NC}\n"; }
+# Shared colors and log functions
+source "$SCRIPT_DIR/scripts/lib-common.sh"
 
 # PKI Selection flags (default: RSA only for backward compatibility)
 START_RSA_PKI=false
