@@ -93,7 +93,6 @@
             ca-cert-revoke 0x{{ serial_clean }} --reason {{ revocation_reason }} --force
         '
       register: revoke_result
-      become: true
 
     - name: Display revocation output
       ansible.builtin.debug:
@@ -115,7 +114,6 @@
             ca-cert-show 0x{{ serial_clean }} | grep -i status
         '
       register: verify_result
-      become: true
 
     - name: Check revocation status
       ansible.builtin.assert:

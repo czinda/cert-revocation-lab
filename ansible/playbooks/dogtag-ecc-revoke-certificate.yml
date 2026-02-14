@@ -227,7 +227,6 @@
                 ca-cert-revoke 0x{{ cert_serial }} --reason Key_Compromise --force
             '
           register: revoke_result
-          become: true
           tags: [revoke]
 
         - name: Display revocation result
