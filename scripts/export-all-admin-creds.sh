@@ -34,6 +34,7 @@ declare -A CA_CONFIGS=(
     ["dogtag-root-ca"]="pki-root-ca:root:."
     ["dogtag-intermediate-ca"]="pki-intermediate-ca:intermediate:."
     ["dogtag-iot-ca"]="pki-iot-ca:iot:."
+    ["dogtag-acme-ca"]="pki-acme-ca:acme:."
     # ECC PKI
     ["dogtag-ecc-root-ca"]="pki-ecc-root-ca:ecc-root:ecc"
     ["dogtag-ecc-intermediate-ca"]="pki-ecc-intermediate-ca:ecc-intermediate:ecc"

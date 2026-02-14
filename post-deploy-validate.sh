@@ -835,6 +835,139 @@ validate_single_pki() {
     [ "$pki_ok" = true ] && return 0 || return 1
 }
 
+validate_acme_ca() {
+    local cert_dir="$1"   # e.g. "data/certs"
+    local acme_ok=true
+
+    echo ""
+    echo -e "  ${BLUE}--- ACME Sub-CA ---${NC}"
+
+    # DS container
+    check_start "T4" "389DS ACME (ds-acme) ..."
+    if is_rootful_running "ds-acme"; then
+        local h
+        h=$(rootful_health "ds-acme")
+        if [ "$h" = "healthy" ]; then
+            check_pass
+        else
+            check_wait
+            local elapsed=0
+            while [ $elapsed -lt $WAIT_PKI_DS ]; do
+                sleep $WAIT_RETRY
+                elapsed=$((elapsed + WAIT_RETRY))
+                h=$(rootful_health "ds-acme")
+                [ "$h" = "healthy" ] && { check_pass; break; }
+                if run_rootful podman exec "ds-acme" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
+                    check_pass; break
+                fi
+            done
+            [ "$h" != "healthy" ] && { check_fail "Not healthy after ${WAIT_PKI_DS}s"; acme_ok=false; }
+        fi
+    else
+        local st
+        st=$(rootful_status "ds-acme")
+        if [ "$st" = "missing" ]; then
+            check_skip "ACME DS not deployed"
+            return 1
+        fi
+        if [ "$AUTO_FIX" = true ]; then
+            echo -ne "${YELLOW}restarting${NC} "
+            run_rootful podman start "ds-acme" &>/dev/null
+            sleep 15
+            is_rootful_running "ds-acme" && { check_fixed "Restarted"; add_fixed "ds-acme"; } || { check_fail "Restart failed"; acme_ok=false; }
+        else
+            check_fail "Not running ($st)"; acme_ok=false
+        fi
+    fi
+
+    # ACME CA container
+    check_start "T4" "Dogtag ACME CA (dogtag-acme-ca, port 8446) ..."
+    if is_rootful_running "dogtag-acme-ca"; then
+        check_wait
+        local elapsed=0 ca_up=false
+        while [ $elapsed -lt $WAIT_PKI_CA ]; do
+            if curl -sk "https://localhost:8446/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
+                ca_up=true; break
+            fi
+            sleep $WAIT_RETRY
+            elapsed=$((elapsed + WAIT_RETRY))
+        done
+        if [ "$ca_up" = true ]; then
+            check_pass
+        elif [ "$AUTO_FIX" = true ]; then
+            echo -ne "${YELLOW}starting PKI server${NC} "
+            run_rootful podman exec "dogtag-acme-ca" bash -c "
+                if [ -d /var/lib/pki/pki-acme-ca ]; then
+                    pgrep -f 'catalina' > /dev/null 2>&1 || nohup pki-server run pki-acme-ca > /var/log/pki/pki-acme-ca/startup.log 2>&1 &
+                fi
+            " 2>/dev/null
+            local elapsed2=0
+            while [ $elapsed2 -lt 60 ]; do
+                sleep $WAIT_RETRY; elapsed2=$((elapsed2 + WAIT_RETRY))
+                if curl -sk "https://localhost:8446/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
+                    check_fixed "PKI server started"; add_fixed "dogtag-acme-ca"; ca_up=true; break
+                fi
+            done
+            [ "$ca_up" != true ] && { check_fail "PKI server not responding"; acme_ok=false; add_failed "dogtag-acme-ca"; }
+        else
+            check_fail "CA not responding on port 8446"; acme_ok=false
+        fi
+    else
+        local st
+        st=$(rootful_status "dogtag-acme-ca")
+        if [ "$st" = "missing" ]; then
+            check_skip "ACME CA not deployed"
+            return 1
+        fi
+        if [ "$AUTO_FIX" = true ]; then
+            echo -ne "${YELLOW}restarting${NC} "
+            run_rootful podman start "dogtag-acme-ca" &>/dev/null
+            sleep 10
+            is_rootful_running "dogtag-acme-ca" && { check_fixed "Restarted (CA may need time)"; add_fixed "dogtag-acme-ca"; } || { check_fail "Restart failed"; acme_ok=false; }
+        else
+            check_fail "Not running ($st)"; acme_ok=false
+        fi
+    fi
+
+    # ACME CA certificate chain
+    local acme_cert="${cert_dir}/acme-ca.crt"
+    local chain_cert="${cert_dir}/ca-chain.crt"
+    if [ -f "$acme_cert" ] && [ -f "$chain_cert" ]; then
+        check_start "T4" "ACME CA chain: Intermediate -> ACME ..."
+        if openssl verify -CAfile "$chain_cert" "$acme_cert" &>/dev/null; then
+            check_pass
+        else
+            check_fail "Chain verification failed"; acme_ok=false
+        fi
+    elif [ -f "$acme_cert" ]; then
+        check_start "T4" "ACME CA certificate ..."
+        check_pass
+        echo -e "         ${DIM}$(openssl x509 -in "$acme_cert" -noout -subject 2>/dev/null)${NC}"
+    fi
+
+    # ACME directory endpoint (warn-only)
+    check_start "T4" "ACME directory endpoint ..."
+    if curl -sk "https://localhost:8446/acme/directory" 2>/dev/null | grep -q "newNonce\|newAccount\|newOrder"; then
+        check_pass
+    else
+        check_skip "ACME responder not active (may need configuration)"
+    fi
+
+    [ "$acme_ok" = true ] && return 0 || return 1
+}
+
+validate_est_endpoint() {
+    local pki_label="$1"
+    local iot_port="$2"
+
+    check_start "T4" "$pki_label EST endpoint (port $iot_port) ..."
+    if curl -sk "https://localhost:${iot_port}/.well-known/est/cacerts" 2>/dev/null | head -1 | grep -q "BEGIN\|MIIB\|MIIC\|MIID"; then
+        check_pass
+    else
+        check_skip "EST not enabled (optional)"
+    fi
+}
+
 tier_4_pki() {
     tier_header 4 "PKI INFRASTRUCTURE"
 
@@ -855,12 +988,20 @@ tier_4_pki() {
 
     if [ "$RSA_PKI_DEPLOYED" = true ]; then
         validate_single_pki rsa "ds-" "dogtag-" 8443 8444 8445 "data/certs" "RSA-4096" || ok=false
+        # ACME CA (subordinate to RSA Intermediate CA)
+        if [ "$(rootful_status dogtag-acme-ca)" != "missing" ]; then
+            validate_acme_ca "data/certs" || ok=false
+        fi
+        # EST on RSA IoT CA
+        validate_est_endpoint "RSA-4096" 8445
     fi
     if [ "$ECC_PKI_DEPLOYED" = true ]; then
         validate_single_pki ecc "ds-ecc-" "dogtag-ecc-" 8463 8464 8465 "data/certs/ecc" "ECC P-384" || ok=false
+        validate_est_endpoint "ECC P-384" 8465
     fi
     if [ "$PQ_PKI_DEPLOYED" = true ]; then
         validate_single_pki pq "ds-pq-" "dogtag-pq-" 8453 8454 8455 "data/certs/pq" "ML-DSA-87" || ok=false
+        validate_est_endpoint "ML-DSA-87" 8455
     fi
 
     [ "$ok" = true ] && set_tier_status 4 pass || set_tier_status 4 fail

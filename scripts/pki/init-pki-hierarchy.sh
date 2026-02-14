@@ -317,6 +317,81 @@ init_iot_ca() {
     log_success "IoT CA initialization complete"
 }
 
+# Initialize ACME Sub-CA
+init_acme_ca() {
+    log_phase "Initializing ACME Sub-CA"
+
+    # Check if ACME CA container exists
+    if ! $PODMAN ps --format '{{.Names}}' | grep -q "^dogtag-acme-ca$"; then
+        log_warn "ACME CA container (dogtag-acme-ca) not running, skipping"
+        return 0
+    fi
+
+    # Check if already initialized
+    if $PODMAN exec dogtag-acme-ca test -f /certs/acme-ca.crt 2>/dev/null; then
+        if $PODMAN exec dogtag-acme-ca curl -sk https://acme-ca.cert-lab.local:8443/ca/admin/ca/getStatus 2>/dev/null | grep -q "running"; then
+            log_success "ACME CA already initialized and running"
+            return 0
+        fi
+    fi
+
+    setup_mock_systemctl "dogtag-acme-ca"
+
+    # Phase 1: Generate CSR
+    log_info "Running ACME CA initialization (Phase 1: CSR generation)..."
+    $PODMAN exec dogtag-acme-ca /scripts/init-acme-ca.sh || true
+
+    # Check if CSR was generated
+    if ! $PODMAN exec dogtag-acme-ca test -f /certs/acme-ca.csr; then
+        log_error "ACME CA CSR was not generated"
+        return 1
+    fi
+    log_success "ACME CA CSR generated"
+
+    # Sign the CSR with Intermediate CA
+    sign_csr "dogtag-intermediate-ca" "/certs/acme-ca.csr" "/certs/acme-ca-signed.crt" \
+        "https://intermediate-ca.cert-lab.local:8443" "caCACert"
+
+    # Phase 2: Install signed certificate + deploy ACME responder
+    log_info "Running ACME CA initialization (Phase 2: certificate installation + ACME responder)..."
+    $PODMAN exec dogtag-acme-ca /scripts/init-acme-ca.sh
+
+    # Verify
+    wait_for_ca "ACME CA" "https://acme-ca.cert-lab.local:8443" 60
+    log_success "ACME CA initialization complete"
+}
+
+# Enable EST on IoT CA
+enable_est() {
+    log_phase "Enabling EST on IoT CA"
+
+    # Check if IoT CA is running
+    if ! $PODMAN ps --format '{{.Names}}' | grep -q "^dogtag-iot-ca$"; then
+        log_warn "IoT CA container not running, skipping EST enablement"
+        return 0
+    fi
+
+    # Check if EST is already responding
+    if $PODMAN exec dogtag-iot-ca curl -sk https://localhost:8443/.well-known/est/cacerts 2>/dev/null | head -1 | grep -q "BEGIN\|MIIB\|MIIC\|MIID"; then
+        log_success "EST already enabled and responding on IoT CA"
+        return 0
+    fi
+
+    log_info "Running EST enablement script..."
+    $PODMAN exec dogtag-iot-ca /scripts/enable-est.sh || {
+        log_warn "EST enablement failed (non-fatal)"
+        return 0
+    }
+
+    # Verify EST endpoint
+    sleep 3
+    if $PODMAN exec dogtag-iot-ca curl -sk https://localhost:8443/.well-known/est/cacerts 2>/dev/null | head -1 | grep -q "BEGIN\|MIIB\|MIIC\|MIID"; then
+        log_success "EST endpoint verified at /.well-known/est/cacerts"
+    else
+        log_warn "EST endpoint not responding yet (may need container restart)"
+    fi
+}
+
 # Verify the complete hierarchy
 verify_hierarchy() {
     log_phase "Verifying PKI Hierarchy"
@@ -332,6 +407,10 @@ verify_hierarchy() {
         $PODMAN cp dogtag-intermediate-ca:/certs/ca-chain.crt "$certs_dir/" 2>/dev/null || true
         $PODMAN cp dogtag-iot-ca:/certs/iot-ca.crt "$certs_dir/" 2>/dev/null || true
         $PODMAN cp dogtag-iot-ca:/certs/iot-ca-chain.crt "$certs_dir/" 2>/dev/null || true
+        if $PODMAN ps --format '{{.Names}}' | grep -q "^dogtag-acme-ca$"; then
+            $PODMAN cp dogtag-acme-ca:/certs/acme-ca.crt "$certs_dir/" 2>/dev/null || true
+            $PODMAN cp dogtag-acme-ca:/certs/acme-ca-chain.crt "$certs_dir/" 2>/dev/null || true
+        fi
     fi
 
     # Verify inside container
@@ -345,9 +424,17 @@ verify_hierarchy() {
         echo "IoT Sub-CA:"
         openssl x509 -in /certs/iot-ca.crt -noout -subject -issuer
         echo ""
+        if [ -f /certs/acme-ca.crt ]; then
+            echo "ACME Sub-CA:"
+            openssl x509 -in /certs/acme-ca.crt -noout -subject -issuer
+            echo ""
+        fi
         echo "Chain Verification:"
         openssl verify -CAfile /certs/root-ca.crt /certs/intermediate-ca.crt
         openssl verify -CAfile /certs/ca-chain.crt /certs/iot-ca.crt
+        if [ -f /certs/acme-ca.crt ]; then
+            openssl verify -CAfile /certs/ca-chain.crt /certs/acme-ca.crt
+        fi
     '
 
     log_success "PKI Hierarchy verified"
@@ -364,6 +451,17 @@ print_summary() {
     echo "  Root CA:         https://localhost:8443/ca"
     echo "  Intermediate CA: https://localhost:8444/ca"
     echo "  IoT CA:          https://localhost:8445/ca"
+    if $PODMAN ps --format '{{.Names}}' 2>/dev/null | grep -q "^dogtag-acme-ca$"; then
+        echo "  ACME CA:         https://localhost:8446/ca"
+        echo "  ACME Directory:  https://localhost:8446/acme/directory"
+    fi
+    echo ""
+    echo "Protocol Endpoints:"
+    echo "  EST cacerts:     https://localhost:8445/.well-known/est/cacerts"
+    echo "  EST enroll:      https://localhost:8445/.well-known/est/simpleenroll"
+    if $PODMAN ps --format '{{.Names}}' 2>/dev/null | grep -q "^dogtag-acme-ca$"; then
+        echo "  ACME directory:  https://localhost:8446/acme/directory"
+    fi
     echo ""
     echo "Certificates:"
     echo "  data/certs/root-ca.crt"
@@ -371,11 +469,18 @@ print_summary() {
     echo "  data/certs/iot-ca.crt"
     echo "  data/certs/ca-chain.crt (Root + Intermediate)"
     echo "  data/certs/iot-ca-chain.crt (Full chain)"
+    if $PODMAN ps --format '{{.Names}}' 2>/dev/null | grep -q "^dogtag-acme-ca$"; then
+        echo "  data/certs/acme-ca.crt"
+        echo "  data/certs/acme-ca-chain.crt (Full chain)"
+    fi
     echo ""
     echo "Hierarchy:"
     echo "  Root CA (self-signed)"
     echo "    └── Intermediate CA"
-    echo "        └── IoT Sub-CA"
+    echo "        ├── IoT Sub-CA (EST)"
+    if $PODMAN ps --format '{{.Names}}' 2>/dev/null | grep -q "^dogtag-acme-ca$"; then
+        echo "        └── ACME Sub-CA"
+    fi
     echo ""
     echo -e "${GREEN}========================================================================${NC}"
 }
@@ -384,7 +489,7 @@ print_summary() {
 main() {
     log_phase "PKI Hierarchy Automatic Initialization"
 
-    # Check containers are running
+    # Check required containers are running
     for container in dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca; do
         if ! $PODMAN ps --format '{{.Names}}' | grep -q "^${container}$"; then
             log_error "Container $container is not running"
@@ -393,9 +498,18 @@ main() {
         fi
     done
 
+    # Check optional ACME CA container
+    if $PODMAN ps --format '{{.Names}}' | grep -q "^dogtag-acme-ca$"; then
+        log_info "ACME CA container detected, will initialize"
+    else
+        log_info "ACME CA container not found (optional), skipping"
+    fi
+
     init_root_ca
     init_intermediate_ca
     init_iot_ca
+    init_acme_ca
+    enable_est
     verify_hierarchy
 
     # Export admin credentials for REST API access

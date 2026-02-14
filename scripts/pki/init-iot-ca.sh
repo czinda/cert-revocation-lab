@@ -62,6 +62,18 @@ phase2_install_cert() {
     # Export admin credentials for REST API authentication (used by EDA)
     export_admin_creds "$PKI_INSTANCE" "iot"
 
+    # Enable EST (Enrollment over Secure Transport) on IoT CA
+    local est_script="$(dirname "$0")/enable-est.sh"
+    if [ -x "$est_script" ]; then
+        log_info "Enabling EST subsystem..."
+        "$est_script" && log_info "EST enabled successfully" || log_warn "EST enablement failed (non-fatal)"
+    elif [ -f "$est_script" ]; then
+        log_info "Enabling EST subsystem..."
+        bash "$est_script" && log_info "EST enabled successfully" || log_warn "EST enablement failed (non-fatal)"
+    else
+        log_warn "enable-est.sh not found, skipping EST enablement"
+    fi
+
     print_header "IoT CA Initialization Complete"
     echo "Certificate: $CA_CERT"
     echo "CA Chain:    ${CERTS_DIR}/iot-ca-chain.crt"

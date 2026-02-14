@@ -32,8 +32,8 @@ log_phase() { echo -e "\n${CYAN}================================================
 # Configuration based on PKI type
 case "$PKI_TYPE" in
     rsa)
-        DS_CONTAINERS=("ds-root" "ds-intermediate" "ds-iot")
-        DS_HOSTNAMES=("ds-root.cert-lab.local" "ds-intermediate.cert-lab.local" "ds-iot.cert-lab.local")
+        DS_CONTAINERS=("ds-root" "ds-intermediate" "ds-iot" "ds-acme")
+        DS_HOSTNAMES=("ds-root.cert-lab.local" "ds-intermediate.cert-lab.local" "ds-iot.cert-lab.local" "ds-acme.cert-lab.local")
         ISSUING_CA_CONTAINER="dogtag-intermediate-ca"
         ISSUING_CA_URL="https://intermediate-ca.cert-lab.local:8443"
         PKI_INSTANCE="pki-intermediate-ca"

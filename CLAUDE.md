@@ -24,8 +24,9 @@ Uses Dogtag PKI and FreeIPA, integrated with Event-Driven Ansible for real-time 
 │ Root CA (8443)          │ Root CA (8463)          │ Root CA (8453)          │
 │     │                   │     │                   │     │                   │
 │ Intermediate CA (8444)  │ Intermediate CA (8464)  │ Intermediate CA (8454)  │
-│     │                   │     │                   │     │                   │
-│ IoT Sub-CA (8445)       │ IoT Sub-CA (8465)       │ IoT Sub-CA (8455)       │
+│     ├──┐                │     │                   │     │                   │
+│ IoT Sub-CA (8445/EST)   │ IoT Sub-CA (8465)       │ IoT Sub-CA (8455)       │
+│ ACME Sub-CA (8446)      │                         │                         │
 ├─────────────────────────┼─────────────────────────┼─────────────────────────┤
 │ Network: 172.26.0.0/24  │ Network: 172.28.0.0/24  │ Network: 172.27.0.0/24  │
 │ Security: CERT-LAB      │ Security: CERT-LAB-ECC  │ Security: CERT-LAB-PQ   │
@@ -200,10 +201,21 @@ sudo podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \
   /certs/iot-ca.csr /certs/iot-ca-signed.crt \
   https://intermediate-ca.cert-lab.local:8443 caCACert
 
-# Complete IoT CA (Phase 2: installs cert)
+# Complete IoT CA (Phase 2: installs cert + enables EST)
 sudo podman exec -it dogtag-iot-ca /scripts/init-iot-ca.sh
 
-# 4. FreeIPA uses its internal Dogtag CA
+# 4. Initialize ACME Sub-CA (Phase 1: generates CSR)
+sudo podman exec -it dogtag-acme-ca /scripts/init-acme-ca.sh
+
+# Sign ACME CA CSR with Intermediate CA (profile: caCACert)
+sudo podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \
+  /certs/acme-ca.csr /certs/acme-ca-signed.crt \
+  https://intermediate-ca.cert-lab.local:8443 caCACert
+
+# Complete ACME CA (Phase 2: installs cert + deploys ACME responder)
+sudo podman exec -it dogtag-acme-ca /scripts/init-acme-ca.sh
+
+# 5. FreeIPA uses its internal Dogtag CA
 # (External CA mode is complex; internal CA works out of the box)
 ```
 
@@ -303,7 +315,9 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 |----|---------|-------|
 | 172.26.0.12 | RSA Root CA | 8443:8443 |
 | 172.26.0.11 | RSA Intermediate CA | 8444:8443 |
-| 172.26.0.13 | RSA IoT CA | 8445:8443 |
+| 172.26.0.13 | RSA IoT CA (EST) | 8445:8443 |
+| 172.26.0.17 | ds-acme (389DS) | internal |
+| 172.26.0.18 | ACME Sub-CA | 8446:8443 |
 | 172.26.0.14-16 | 389DS instances | internal |
 
 **ECC P-384 PKI Network (172.28.0.0/24)** - rootful podman:
@@ -366,7 +380,9 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 │   ├── init-root-ca.sh                # RSA Root CA
 │   ├── init-intermediate-ca.sh        # RSA Intermediate CA
 │   ├── init-iot-ca.sh                 # RSA IoT CA
-│   ├── init-pki-hierarchy.sh          # RSA full hierarchy
+│   ├── init-pki-hierarchy.sh          # RSA full hierarchy (+ ACME CA + EST)
+│   ├── init-acme-ca.sh               # ACME Sub-CA
+│   ├── enable-est.sh                 # EST subsystem on IoT CA
 │   ├── init-ecc-root-ca.sh            # ECC Root CA
 │   ├── init-ecc-intermediate-ca.sh    # ECC Intermediate CA
 │   ├── init-ecc-iot-ca.sh             # ECC IoT CA
@@ -680,7 +696,7 @@ ansible-playbook ansible/playbooks/dogtag-pqc-issue-certificate.yml \
 
 ## ACME and EST Subsystems
 
-The lab includes ACME (Automated Certificate Management Environment) and EST (Enrollment over Secure Transport) subsystems for automated certificate enrollment.
+The lab includes ACME (Automated Certificate Management Environment) and EST (Enrollment over Secure Transport) subsystems for automated certificate enrollment. Both are integrated into the automated initialization pipeline (`init-pki-hierarchy.sh`) and validation (`post-deploy-validate.sh`).
 
 ### Architecture
 
@@ -694,9 +710,17 @@ Intermediate CA (172.26.0.11:8444)
             └── ACME Responder (RFC 8555)
 ```
 
-### ACME CA Initialization
+### Automated Initialization
 
-The ACME CA is a Tier 3 CA subordinate to the Intermediate CA, providing ACME protocol support.
+Both ACME CA and EST are initialized automatically by `init-pki-hierarchy.sh`:
+
+1. After IoT CA init completes, `enable-est.sh` runs inside the IoT CA container
+2. If `dogtag-acme-ca` container is running, `init-acme-ca.sh` runs (two-phase CSR + install)
+3. Admin credentials for ACME CA are exported by `export-all-admin-creds.sh`
+
+### ACME CA Manual Initialization
+
+If you need to initialize the ACME CA separately (not using `init-pki-hierarchy.sh`):
 
 ```bash
 # Start ACME containers (included in pki-compose.yml)
@@ -720,12 +744,20 @@ sudo podman exec -it dogtag-acme-ca /scripts/init-acme-ca.sh
 
 ### EST Subsystem
 
-EST provides RFC 7030 certificate enrollment, running as a subsystem within the IoT CA.
+EST provides RFC 7030 certificate enrollment, running as a subsystem within the IoT CA. EST is automatically enabled at the end of IoT CA initialization (`init-iot-ca.sh` phase 2). For manual enablement:
 
 ```bash
 # Enable EST on IoT CA (after IoT CA is initialized)
 sudo podman exec -it dogtag-iot-ca /scripts/enable-est.sh
 ```
+
+### IoT Client EST-First Enrollment
+
+The IoT Client simulator (`containers/iot-client/app.py`) uses an EST-first enrollment strategy:
+1. Probes `/.well-known/est/cacerts` to check EST availability per PKI type
+2. If EST is available, enrolls via `/.well-known/est/simpleenroll` (RFC 7030)
+3. Falls back to Dogtag REST API (`/ca/rest/certrequests`) if EST is unavailable
+4. Health endpoint reports both CA and EST availability per PKI type
 
 **EST Endpoints:**
 - `https://iot-ca.cert-lab.local:8445/.well-known/est/cacerts` - Get CA certificates

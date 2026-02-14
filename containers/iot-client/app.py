@@ -207,46 +207,92 @@ async def check_ca_available(pki_type: PKIType) -> bool:
         return False
 
 
-async def submit_certificate_request(device: IoTDevice) -> Dict[str, Any]:
-    """Submit CSR to Dogtag CA and get certificate"""
-    config = CA_CONFIG[device.pki_type]
+# EST availability cache per PKI type
+_est_available: Dict[str, Optional[bool]] = {}
 
-    # EST-style enrollment URL (simplified for Dogtag)
-    # Dogtag doesn't have native EST, so we use the enrollment REST API
-    base_url = f"https://localhost:{config['port']}"
+
+async def check_est_available(pki_type: PKIType) -> bool:
+    """Check if EST endpoint is available on the IoT CA"""
+    config = CA_CONFIG[pki_type]
+    est_url = f"https://localhost:{config['port']}/.well-known/est/cacerts"
 
     try:
-        # For Dogtag, we use the certificate enrollment endpoint
-        # In a real EST implementation, this would be /.well-known/est/simpleenroll
+        async with httpx.AsyncClient(verify=False, timeout=5.0) as client:
+            response = await client.get(est_url)
+            available = response.status_code == 200 and len(response.content) > 0
+            _est_available[pki_type.value] = available
+            return available
+    except Exception as e:
+        logger.debug(f"EST not available for {pki_type}: {e}")
+        _est_available[pki_type.value] = False
+        return False
 
-        # Prepare PKCS#10 CSR in base64 for Dogtag enrollment
-        csr_b64 = base64.b64encode(device.csr_pem.encode()).decode()
 
-        # Use Dogtag's enrollment API
-        enroll_url = f"{base_url}/ca/rest/certrequests"
+async def submit_est_enrollment(device: IoTDevice) -> Dict[str, Any]:
+    """Submit CSR via EST protocol (/.well-known/est/simpleenroll) - primary path"""
+    config = CA_CONFIG[device.pki_type]
+    est_url = f"https://localhost:{config['port']}/.well-known/est/simpleenroll"
 
-        payload = {
-            "ProfileID": "caServerCert",
-            "Input": [
-                {
-                    "id": "i1",
-                    "ClassID": "certReqInputImpl",
-                    "Attribute": [
-                        {
-                            "name": "cert_request_type",
-                            "Value": "pkcs10"
-                        },
-                        {
-                            "name": "cert_request",
-                            "Value": device.csr_pem
-                        }
-                    ]
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=30.0) as client:
+            response = await client.post(
+                est_url,
+                content=device.csr_pem.encode(),
+                headers={
+                    "Content-Type": "application/pkcs10",
+                    "Accept": "application/pkcs7-mime"
                 }
-            ]
+            )
+
+            if response.status_code == 200:
+                return {
+                    "success": True,
+                    "certificate": response.text,
+                    "status": "enrolled",
+                    "method": "est"
+                }
+
+            return {
+                "success": False,
+                "error": f"EST enrollment failed: {response.status_code} - {response.text[:200]}"
+            }
+
+    except Exception as e:
+        logger.warning(f"EST enrollment failed: {e}")
+        return {
+            "success": False,
+            "error": f"EST enrollment error: {e}"
         }
 
+
+async def submit_dogtag_rest_enrollment(device: IoTDevice) -> Dict[str, Any]:
+    """Submit CSR via Dogtag REST API (/ca/rest/certrequests) - fallback path"""
+    config = CA_CONFIG[device.pki_type]
+    base_url = f"https://localhost:{config['port']}"
+    enroll_url = f"{base_url}/ca/rest/certrequests"
+
+    payload = {
+        "ProfileID": "caServerCert",
+        "Input": [
+            {
+                "id": "i1",
+                "ClassID": "certReqInputImpl",
+                "Attribute": [
+                    {
+                        "name": "cert_request_type",
+                        "Value": "pkcs10"
+                    },
+                    {
+                        "name": "cert_request",
+                        "Value": device.csr_pem
+                    }
+                ]
+            }
+        ]
+    }
+
+    try:
         async with httpx.AsyncClient(verify=False, timeout=30.0) as client:
-            # Submit enrollment request
             response = await client.post(
                 enroll_url,
                 json=payload,
@@ -262,40 +308,40 @@ async def submit_certificate_request(device: IoTDevice) -> Dict[str, Any]:
                         "success": True,
                         "request_id": request_id,
                         "status": "pending",
-                        "message": "Certificate request submitted, pending approval"
+                        "message": "Certificate request submitted, pending approval",
+                        "method": "rest"
                     }
-
-            # If REST API fails, try a simpler approach using EST-style endpoint
-            # (if configured on the CA)
-            est_url = f"{base_url}/.well-known/est/simpleenroll"
-            est_response = await client.post(
-                est_url,
-                content=device.csr_pem.encode(),
-                headers={
-                    "Content-Type": "application/pkcs10",
-                    "Accept": "application/pkcs7-mime"
-                }
-            )
-
-            if est_response.status_code == 200:
-                # EST returns PKCS#7 with the certificate
-                return {
-                    "success": True,
-                    "certificate": est_response.text,
-                    "status": "enrolled"
-                }
 
             return {
                 "success": False,
-                "error": f"Enrollment failed: {response.status_code} - {response.text[:200]}"
+                "error": f"REST enrollment failed: {response.status_code} - {response.text[:200]}"
             }
 
     except Exception as e:
-        logger.error(f"Certificate request failed: {e}")
+        logger.error(f"REST enrollment failed: {e}")
         return {
             "success": False,
-            "error": str(e)
+            "error": f"REST enrollment error: {e}"
         }
+
+
+async def submit_certificate_request(device: IoTDevice) -> Dict[str, Any]:
+    """Submit CSR to CA - tries EST first, falls back to Dogtag REST API"""
+    # Try EST first (preferred for IoT devices per RFC 7030)
+    est_avail = _est_available.get(device.pki_type.value)
+    if est_avail is None:
+        est_avail = await check_est_available(device.pki_type)
+
+    if est_avail:
+        logger.info(f"Attempting EST enrollment for {device.device_id}")
+        result = await submit_est_enrollment(device)
+        if result.get("success"):
+            return result
+        logger.warning(f"EST enrollment failed for {device.device_id}, falling back to REST API")
+
+    # Fallback to Dogtag REST API
+    logger.info(f"Using Dogtag REST API enrollment for {device.device_id}")
+    return await submit_dogtag_rest_enrollment(device)
 
 
 async def enroll_device_internal(device: IoTDevice) -> bool:
@@ -351,15 +397,18 @@ async def enroll_device_internal(device: IoTDevice) -> bool:
 async def health_check():
     """Health check endpoint"""
     ca_status = {}
+    est_status = {}
     for pki_type in PKIType:
         ca_status[pki_type.value] = await check_ca_available(pki_type)
+        est_status[pki_type.value] = await check_est_available(pki_type)
 
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
         "total_devices": len(devices),
         "statistics": stats,
-        "ca_availability": ca_status
+        "ca_availability": ca_status,
+        "est_availability": est_status,
     }
 
 
@@ -543,15 +592,31 @@ async def get_device_csr(device_id: str):
 
 @app.get("/ca/{pki_type}/cacerts")
 async def get_ca_certificates(pki_type: PKIType):
-    """Get CA certificates (EST /.well-known/est/cacerts equivalent)"""
+    """Get CA certificates (prefers EST /.well-known/est/cacerts, falls back to REST)"""
     config = CA_CONFIG[pki_type]
 
     if not await check_ca_available(pki_type):
         raise HTTPException(status_code=503, detail=f"CA for {pki_type} is not available")
 
     try:
-        url = f"https://localhost:{config['port']}/ca/rest/cert/ca/signing"
         async with httpx.AsyncClient(verify=False, timeout=10.0) as client:
+            # Try EST cacerts endpoint first
+            est_url = f"https://localhost:{config['port']}/.well-known/est/cacerts"
+            try:
+                est_response = await client.get(est_url)
+                if est_response.status_code == 200 and len(est_response.content) > 0:
+                    return {
+                        "pki_type": pki_type.value,
+                        "ca_host": config["host"],
+                        "ca_port": config["port"],
+                        "source": "est",
+                        "certificate_chain": est_response.text
+                    }
+            except Exception:
+                pass
+
+            # Fallback to Dogtag REST API
+            url = f"https://localhost:{config['port']}/ca/rest/cert/ca/signing"
             response = await client.get(url, headers={"Accept": "application/json"})
 
             if response.status_code == 200:
@@ -559,16 +624,17 @@ async def get_ca_certificates(pki_type: PKIType):
                     "pki_type": pki_type.value,
                     "ca_host": config["host"],
                     "ca_port": config["port"],
+                    "source": "rest",
                     "certificate": response.json()
                 }
             else:
-                # Try alternate endpoint
                 alt_url = f"https://localhost:{config['port']}/ca/ee/ca/getCertChain"
                 alt_response = await client.get(alt_url)
                 return {
                     "pki_type": pki_type.value,
                     "ca_host": config["host"],
                     "ca_port": config["port"],
+                    "source": "rest",
                     "certificate_chain": alt_response.text
                 }
     except Exception as e:
@@ -634,12 +700,14 @@ async def get_statistics():
 async def startup_event():
     """Startup event handler"""
     logger.info("IoT Client Simulator starting...")
-    logger.info("Checking CA availability...")
+    logger.info("Checking CA and EST availability...")
 
     for pki_type in PKIType:
-        available = await check_ca_available(pki_type)
-        status = "available" if available else "not available"
-        logger.info(f"  {pki_type.value} IoT CA: {status}")
+        ca_available = await check_ca_available(pki_type)
+        ca_status = "available" if ca_available else "not available"
+        est_available = await check_est_available(pki_type) if ca_available else False
+        est_status = "available" if est_available else "not available"
+        logger.info(f"  {pki_type.value} IoT CA: {ca_status}, EST: {est_status}")
 
 
 if __name__ == "__main__":
