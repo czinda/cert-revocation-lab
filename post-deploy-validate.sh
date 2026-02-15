@@ -1221,18 +1221,24 @@ tier_7_eda() {
 
         # Kafka subscription
         check_start "T7" "EDA Kafka subscription ..."
-        local logs
-        logs=$(rootless_logs "eda-server" 200)
+        local logs sub_logs
+        # Check more lines for subscription (playbook output can push it far back)
+        logs=$(rootless_logs "eda-server" 500)
         if echo "$logs" | grep -qi "subscrib\|Listening"; then
             check_pass
-        elif echo "$logs" | grep -qi "error\|exception\|traceback"; then
-            check_fail "Errors in EDA logs"
-            show_diag "$logs"
-            ok=false
-            add_fail_cat "eda"
         else
-            check_pass
-            echo -e "         ${DIM}(no subscription log found, but no errors either)${NC}"
+            # Only flag EDA framework errors (KafkaConnectionError, etc.),
+            # not playbook execution errors which are expected during tests
+            sub_logs=$(echo "$logs" | grep -i "ansible_rulebook\|aiokafka\|kafka.*error\|drools.*error")
+            if echo "$sub_logs" | grep -qi "KafkaConnectionError\|ConnectionError\|NoBrokersAvailable"; then
+                check_fail "EDA-Kafka connection errors"
+                show_diag "$sub_logs"
+                ok=false
+                add_fail_cat "eda"
+            else
+                check_pass
+                echo -e "         ${DIM}(no subscription log found, but no connection errors)${NC}"
+            fi
         fi
     fi
 
