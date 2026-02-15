@@ -333,10 +333,15 @@ setup_volumes() {
 
 # Update /etc/hosts if needed
 setup_hosts() {
-    log_info "Checking /etc/hosts entries..."
+    log_info "Checking DNS resolution for cert-lab.local..."
 
-    if ! grep -q "cert-lab.local" /etc/hosts 2>/dev/null; then
-        log_info "Adding DNS entries to /etc/hosts (requires sudo)..."
+    if getent hosts root-ca.cert-lab.local &>/dev/null; then
+        log_success "cert-lab.local DNS is working"
+    else
+        log_warn "root-ca.cert-lab.local does not resolve"
+        log_info "Option 1 (recommended): Configure dnsmasq with: address=/cert-lab.local/127.0.0.1"
+        log_info "Option 2: Add entries to /etc/hosts manually"
+        log_info "Adding fallback /etc/hosts entries (requires sudo)..."
         sudo tee -a /etc/hosts > /dev/null << 'EOF'
 
 # Certificate Revocation Lab - PKI CAs (rootful podman, accessed via host port mappings)
@@ -349,9 +354,7 @@ setup_hosts() {
 127.0.0.1 awx.cert-lab.local postgres.cert-lab.local redis.cert-lab.local
 127.0.0.1 edr.cert-lab.local siem.cert-lab.local jupyter.cert-lab.local
 EOF
-        log_success "DNS entries added"
-    else
-        log_success "DNS entries already present"
+        log_success "Fallback DNS entries added to /etc/hosts"
     fi
 }
 

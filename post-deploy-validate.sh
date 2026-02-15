@@ -321,15 +321,11 @@ tier_0_prerequisites() {
         ok=false
     fi
 
-    check_start "T0" "/etc/hosts DNS entries ..."
-    if grep -q "cert-lab.local" /etc/hosts 2>/dev/null; then
+    check_start "T0" "cert-lab.local DNS resolution ..."
+    if getent hosts root-ca.cert-lab.local &>/dev/null; then
         check_pass
     else
-        if [ "$AUTO_FIX" = true ]; then
-            check_fail "Missing (run start-lab.sh to add or add manually)"
-        else
-            check_fail "Missing"
-        fi
+        check_fail "root-ca.cert-lab.local does not resolve (configure dnsmasq or /etc/hosts)"
         add_failed "hosts-dns"
         # Not fatal - containers use their own DNS
     fi
