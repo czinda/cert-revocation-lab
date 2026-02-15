@@ -300,11 +300,17 @@ if [ -f /tmp/ca-signing.crt ]; then
     certutil -A -d $CLIENT_DB -n 'CA Signing Cert' -t 'CT,C,C' -a -i /tmp/ca-signing.crt 2>/dev/null || true
 fi
 
-# Import admin P12 if available
+# Import admin P12 if available (try PKI admin password first, then token password)
 ADMIN_P12=/root/.dogtag/$INSTANCE/ca_admin_cert.p12
-TOKEN_PASS=$(cat /var/lib/pki/$INSTANCE/conf/password.conf 2>/dev/null | grep "internal=" | cut -d= -f2 || echo "{config.pki_admin_password}")
 if [ -f "$ADMIN_P12" ]; then
-    pk12util -i "$ADMIN_P12" -d $CLIENT_DB -k /dev/null -W "$TOKEN_PASS" 2>/dev/null || true
+    IMPORTED=false
+    for P12_PWD in '{config.pki_admin_password}' 'RedHat123' '' \
+        $(cat /var/lib/pki/$INSTANCE/conf/password.conf 2>/dev/null | grep "internal=" | cut -d= -f2); do
+        if pk12util -i "$ADMIN_P12" -d $CLIENT_DB -k /dev/null -W "$P12_PWD" 2>/dev/null; then
+            IMPORTED=true
+            break
+        fi
+    done
 fi
 
 # Submit certificate request
@@ -342,10 +348,12 @@ pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" ca-cert-request-approve --
 
     rc, stdout, stderr = run_podman_exec(ca_config.container, approve_cmd)
     if rc != 0:
+        # Error details may be in stdout (shell echo) or stderr (pki CLI)
+        error_detail = stderr.strip() or stdout.strip()
         return CertificateResult(
             success=False,
             request_id=request_id,
-            message=f"Failed to approve request: {stderr}"
+            message=f"Failed to approve request: {error_detail}"
         )
 
     # Extract certificate ID
@@ -470,27 +478,47 @@ def revoke_certificate(
     revoke_cmd = f"""
 set -e
 CLIENT_DB=/root/.dogtag/nssdb
+INSTANCE={ca_config.instance}
 CA_URL=https://{ca_config.hostname}:8443
+
+# Ensure client NSS database exists
+mkdir -p $CLIENT_DB
+if [ ! -f $CLIENT_DB/cert9.db ]; then
+    certutil -N -d $CLIENT_DB --empty-password
+fi
+
+# Import admin P12 if not already in database
+ADMIN_P12=/root/.dogtag/$INSTANCE/ca_admin_cert.p12
+if [ -f "$ADMIN_P12" ] && ! certutil -L -d $CLIENT_DB 2>/dev/null | grep -qiE "admin|caadmin"; then
+    for P12_PWD in '{config.pki_admin_password}' 'RedHat123' ''; do
+        if pk12util -i "$ADMIN_P12" -d $CLIENT_DB -k /dev/null -W "$P12_PWD" 2>/dev/null; then
+            break
+        fi
+    done
+fi
 
 # Find admin cert nickname
 ADMIN_NICK=$(certutil -L -d $CLIENT_DB 2>/dev/null | grep -iE "admin|caadmin" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
 
 if [ -z "$ADMIN_NICK" ]; then
-    echo "ERROR: Admin certificate not found"
+    echo "ERROR: Admin certificate not found in NSS database"
     exit 1
 fi
 
 # Revoke the certificate
-pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" ca-cert-revoke {serial} --reason {reason} --force
+pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \\
+    --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \\
+    ca-cert-revoke {serial} --reason {reason} --force
 """
 
     rc, stdout, stderr = run_podman_exec(ca_config.container, revoke_cmd)
 
     if rc != 0:
+        error_detail = stderr.strip() or stdout.strip()
         return RevocationResult(
             success=False,
             serial=serial,
-            message=f"Failed to revoke certificate: {stderr}"
+            message=f"Failed to revoke certificate: {error_detail}"
         )
 
     # Verify revocation
