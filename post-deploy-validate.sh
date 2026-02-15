@@ -1202,8 +1202,8 @@ tier_7_eda() {
         check_start "T7" "ansible-rulebook process ..."
         local elapsed=0 found=false
         while [ $elapsed -lt $WAIT_EDA ]; do
-            # Use /proc/1/cmdline since ps isn't available in the container
-            if run_as_user podman exec eda-server grep -q ansible-rulebook /proc/1/cmdline 2>/dev/null; then
+            # Check for ansible-rulebook in any process (PID 1 may be the wrapper script)
+            if run_as_user podman exec eda-server sh -c 'grep -rql ansible-rulebook /proc/*/cmdline 2>/dev/null' 2>/dev/null; then
                 found=true
                 break
             fi
