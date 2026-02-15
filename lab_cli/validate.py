@@ -1124,11 +1124,14 @@ def tier_7_eda(config: LabConfig, auto_fix: bool = False) -> TestCategory:
     ))
 
     # Check if ansible-rulebook is running
+    # Use /proc scan since ps/pgrep may not be installed in container
     waited = 0
     rulebook_running = False
     while waited < TIMEOUTS["eda"]:
         rc, stdout, _ = run_as_user([
-            "podman", "exec", "eda-server", "ps", "aux",
+            "podman", "exec", "eda-server",
+            "bash", "-c",
+            "cat /proc/*/cmdline 2>/dev/null | tr '\\0' '\\n'",
         ])
         if rc == 0 and "ansible-rulebook" in stdout:
             rulebook_running = True
