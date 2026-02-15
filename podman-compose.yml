@@ -230,6 +230,7 @@ services:
     networks:
       lab-network:
         ipv4_address: ${IP_ZOOKEEPER:-172.20.0.30}
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "2181"]
       interval: 10s
@@ -263,6 +264,7 @@ services:
     ports:
       - "9092:9092"
       - "29092:29092"
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
       interval: 10s
@@ -432,19 +434,20 @@ services:
         ipv4_address: ${IP_EDA:-172.20.0.40}
     ports:
       - "5000:5000"
-    # Run the security-events rulebook
+    restart: unless-stopped
+    # Wrapper script waits for Kafka and restarts ansible-rulebook on failure
     command: >
-      ansible-rulebook
+      /bin/bash /scripts/eda-entrypoint.sh
       --rulebook /rulebooks/security-events.yml
       --inventory /inventory/hosts.yml
       --verbose
     healthcheck:
-      # Use /proc/1/cmdline since ps isn't available in the container
-      test: ["CMD-SHELL", "grep -q ansible-rulebook /proc/1/cmdline"]
+      # Check wrapper script is running (PID 1) and ansible-rulebook is a child
+      test: ["CMD-SHELL", "pgrep -f ansible-rulebook > /dev/null 2>&1 || grep -q eda-entrypoint /proc/1/cmdline"]
       interval: 10s
       timeout: 10s
       retries: 5
-      start_period: 60s
+      start_period: 90s
 
   # ===========================================================================
   # Mock Security Tools
