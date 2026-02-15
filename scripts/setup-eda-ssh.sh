@@ -54,6 +54,28 @@ else
     echo "Key added successfully."
 fi
 
+# Fix ownership for rootless podman
+# EDA container runs as uid 1001 (appuser), which maps to uid 100000+1000=101000 in rootless podman
+# The UID mapping can be checked with: podman unshare cat /proc/self/uid_map
+echo ""
+echo "Setting file ownership for rootless podman..."
+# Get the mapped UID for container uid 1001
+# In rootless podman: container uid 1 maps to host uid 100000, so uid 1001 maps to 101000
+CONTAINER_UID=101000
+if command -v podman &>/dev/null; then
+    # Check if rootless podman is available
+    UID_MAP=$(podman unshare cat /proc/self/uid_map 2>/dev/null | tail -1)
+    if [[ -n "$UID_MAP" ]]; then
+        # Parse: <container_start> <host_start> <count>
+        HOST_START=$(echo "$UID_MAP" | awk '{print $2}')
+        # Container uid 1001 = HOST_START + (1001 - 1) = HOST_START + 1000
+        CONTAINER_UID=$((HOST_START + 1000))
+        echo "Detected rootless podman UID mapping: container uid 1001 -> host uid $CONTAINER_UID"
+    fi
+fi
+sudo chown -R "$CONTAINER_UID:$CONTAINER_UID" "$SSH_DIR"
+echo "Ownership set to $CONTAINER_UID"
+
 # Add localhost to known_hosts (for host.containers.internal)
 echo ""
 echo "Adding host keys to known_hosts..."
