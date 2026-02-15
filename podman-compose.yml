@@ -439,7 +439,8 @@ services:
       --inventory /inventory/hosts.yml
       --verbose
     healthcheck:
-      test: ["CMD-SHELL", "ps aux | grep -v grep | grep -q ansible-rulebook"]
+      # Use /proc/1/cmdline since ps isn't available in the container
+      test: ["CMD-SHELL", "grep -q ansible-rulebook /proc/1/cmdline"]
       interval: 10s
       timeout: 10s
       retries: 5
