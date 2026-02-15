@@ -128,43 +128,31 @@
       when: not admin_cert_stat.stat.exists
       tags: [validation]
 
-    - name: Block for Dogtag REST API operations
+    # All operations via SSH to lab host (bypasses REST API SSL trust issues)
+    - name: Block for Dogtag PKI CLI operations via SSH
       block:
-        - name: Search for certificate by subject (if serial not provided)
-          ansible.builtin.uri:
-            url: "{{ ca_config.url }}/ca/rest/certs"
-            method: GET
-            headers:
-              Accept: "application/json"
-            url_username: ""
-            url_password: ""
-            client_cert: "{{ ca_config.admin_cert }}"
-            client_key: "{{ ca_config.admin_key }}"
-            validate_certs: false
-            return_content: true
-            status_code: [200]
-          register: cert_search
-          when: certificate_serial == ''
-          tags: [lookup]
-
-        - name: Find matching certificate from search results
-          ansible.builtin.set_fact:
-            cert_serial: >-
-              {{
-                cert_search.json.entries
-                | selectattr('SubjectDN', 'search', certificate_cn, ignorecase=True)
-                | selectattr('Status', 'equalto', 'VALID')
-                | map(attribute='id')
-                | first
-                | default('')
-              }}
-          when: certificate_serial == '' and cert_search is defined and cert_search.json is defined
-          tags: [lookup]
-
         - name: Use provided certificate serial
           ansible.builtin.set_fact:
             cert_serial: "{{ certificate_serial | regex_replace('^0x', '') }}"
           when: certificate_serial != ''
+          tags: [lookup]
+
+        - name: Search for certificate by subject via SSH (if serial not provided)
+          ansible.builtin.shell:
+            cmd: |
+              cd {{ hostvars['lab-host'].lab_root_dir | default('/home/czinda/cert-revocation-lab') }}
+              sudo podman exec dogtag-{{ target_ca }}-ca pki -d /root/.dogtag/nssdb -c '' \
+                ca-cert-find --name "{{ certificate_cn }}" --status VALID 2>/dev/null \
+                | grep "Serial Number:" | head -1 | awk '{print $3}' | sed 's/^0x//'
+          delegate_to: lab-host
+          register: cert_search_result
+          when: certificate_serial == ''
+          tags: [lookup]
+
+        - name: Set certificate serial from search
+          ansible.builtin.set_fact:
+            cert_serial: "{{ cert_search_result.stdout | trim }}"
+          when: certificate_serial == '' and cert_search_result.stdout | default('') | trim != ''
           tags: [lookup]
 
         - name: Verify certificate serial found
@@ -175,40 +163,13 @@
 
         - name: Display certificate to revoke
           ansible.builtin.debug:
-            msg: "Found certificate serial: {{ cert_serial }}"
-          tags: [lookup]
-
-        - name: Get certificate details before revocation
-          ansible.builtin.uri:
-            url: "{{ ca_config.url }}/ca/rest/certs/0x{{ cert_serial }}"
-            method: GET
-            headers:
-              Accept: "application/json"
-            client_cert: "{{ ca_config.admin_cert }}"
-            client_key: "{{ ca_config.admin_key }}"
-            validate_certs: false
-            return_content: true
-            status_code: [200]
-          register: cert_details
-          tags: [lookup]
-
-        - name: Display certificate details
-          ansible.builtin.debug:
-            msg: |
-              Certificate Details:
-                Serial:    {{ cert_details.json.id | default('N/A') }}
-                Subject:   {{ cert_details.json.SubjectDN | default('N/A') }}
-                Issuer:    {{ cert_details.json.IssuerDN | default('N/A') }}
-                Status:    {{ cert_details.json.Status | default('N/A') }}
-                NotBefore: {{ cert_details.json.NotValidBefore | default('N/A') }}
-                NotAfter:  {{ cert_details.json.NotValidAfter | default('N/A') }}
-          when: cert_details.json is defined
+            msg: "Found certificate serial: 0x{{ cert_serial }}"
           tags: [lookup]
 
         - name: Revoke certificate via SSH to lab host
           ansible.builtin.shell:
             cmd: |
-              cd {{ hostvars['lab-host'].lab_root_dir | default('/home/czinda/git/cert-revocation-lab') }}
+              cd {{ hostvars['lab-host'].lab_root_dir | default('/home/czinda/cert-revocation-lab') }}
               ./scripts/pki-cli.py revoke 0x{{ cert_serial }} --ca {{ target_ca }} --reason KEY_COMPROMISE
           delegate_to: lab-host
           register: revoke_result
@@ -224,26 +185,22 @@
             seconds: 2
           tags: [verify]
 
-        - name: Verify revocation status
-          ansible.builtin.uri:
-            url: "{{ ca_config.url }}/ca/rest/certs/0x{{ cert_serial }}"
-            method: GET
-            headers:
-              Accept: "application/json"
-            client_cert: "{{ ca_config.admin_cert }}"
-            client_key: "{{ ca_config.admin_key }}"
-            validate_certs: false
-            return_content: true
-            status_code: [200]
+        - name: Verify revocation status via SSH
+          ansible.builtin.shell:
+            cmd: |
+              cd {{ hostvars['lab-host'].lab_root_dir | default('/home/czinda/cert-revocation-lab') }}
+              sudo podman exec dogtag-{{ target_ca }}-ca pki -d /root/.dogtag/nssdb -c '' \
+                ca-cert-show 0x{{ cert_serial }} 2>/dev/null | grep "Status:" | awk '{print $2}'
+          delegate_to: lab-host
           register: verify_status
           tags: [verify]
 
         - name: Confirm revocation
           ansible.builtin.assert:
             that:
-              - verify_status.json.Status == 'REVOKED'
-            success_msg: "Certificate {{ cert_serial }} successfully revoked"
-            fail_msg: "Certificate revocation verification failed - Status: {{ verify_status.json.Status | default('unknown') }}"
+              - verify_status.stdout | trim == 'REVOKED'
+            success_msg: "Certificate 0x{{ cert_serial }} successfully revoked"
+            fail_msg: "Certificate revocation verification failed - Status: {{ verify_status.stdout | default('unknown') }}"
           tags: [verify]
 
         - name: Log revocation to file
