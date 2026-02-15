@@ -203,14 +203,12 @@
           when: cert_details.json is defined
           tags: [lookup]
 
-        - name: Revoke certificate via podman API
-          ansible.builtin.command:
-            cmd: >
-              python3 /scripts/revoke-via-podman-api.py
-              0x{{ cert_serial }}
-              --ca {{ target_ca }}
-              --pki {{ pki_type }}
-              --reason Key_Compromise
+        - name: Revoke certificate via SSH to lab host
+          ansible.builtin.shell:
+            cmd: |
+              cd {{ hostvars['lab-host'].lab_root_dir | default('/home/czinda/git/cert-revocation-lab') }}
+              ./scripts/pki-cli.py revoke 0x{{ cert_serial }} --ca {{ target_ca }} --reason KEY_COMPROMISE
+          delegate_to: lab-host
           register: revoke_result
           tags: [revoke]
 

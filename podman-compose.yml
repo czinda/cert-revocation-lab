@@ -392,6 +392,10 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka.${LAB_DOMAIN:-cert-lab.local}:9092
       LAB_LOG_DIR: /opt/cert-lab/logs
       PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-}
+      # Lab host settings for SSH-based revocation
+      LAB_HOST_IP: ${LAB_HOST_IP:-host.containers.internal}
+      LAB_HOST_USER: ${LAB_HOST_USER:-}
+      LAB_ROOT_DIR: ${LAB_ROOT_DIR:-}
     extra_hosts:
       # PKI CA hostnames - use host-gateway to reach PKI via host port mappings
       # PKI runs rootful on separate network, accessible via host ports:
@@ -418,6 +422,9 @@ services:
       - ./data/nssdb:/nssdb:ro
       # Mount scripts for revocation helper
       - ./scripts:/scripts:ro
+      # SSH keys for connecting to lab host (to run pki-cli.py)
+      # Run ./scripts/setup-eda-ssh.sh to generate keys before starting EDA
+      - ./data/eda-ssh:/app/.ssh:ro
       # Note: Podman socket not mounted because EDA (rootless) can't access
       # rootful PKI containers. Revocation uses SSH to host instead.
     networks:
