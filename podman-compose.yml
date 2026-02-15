@@ -418,8 +418,8 @@ services:
       - ./data/nssdb:/nssdb:ro
       # Mount scripts for revocation helper
       - ./scripts:/scripts:ro
-      # Mount podman socket for container access (revocation via pki CLI)
-      - /run/podman/podman.sock:/run/podman/podman.sock:rw
+      # Note: Podman socket not mounted because EDA (rootless) can't access
+      # rootful PKI containers. Revocation uses SSH to host instead.
     networks:
       lab-network:
         ipv4_address: ${IP_EDA:-172.20.0.40}
