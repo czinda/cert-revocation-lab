@@ -8,6 +8,7 @@
 #   ./reset-lab.sh --rsa     # Reset with RSA PKI only
 #   ./reset-lab.sh --ecc     # Reset with ECC PKI only
 #   ./reset-lab.sh --pqc     # Reset with PQC PKI only
+#   ./reset-lab.sh --force   # Skip confirmation prompt
 #
 set -e
 
@@ -17,12 +18,15 @@ cd "$SCRIPT_DIR"
 # Shared colors and log functions
 source "$SCRIPT_DIR/scripts/lib-common.sh"
 
-# Parse arguments - remove --clean since we handle it ourselves
+# Parse arguments - remove --clean/--force since we handle them ourselves
+FORCE=false
 START_ARGS=""
 for arg in "$@"; do
-    if [ "$arg" != "--clean" ]; then
-        START_ARGS="$START_ARGS $arg"
-    fi
+    case "$arg" in
+        --clean) ;;
+        --force|-f) FORCE=true ;;
+        *) START_ARGS="$START_ARGS $arg" ;;
+    esac
 done
 START_ARGS="${START_ARGS# }"  # Trim leading space
 
@@ -35,17 +39,19 @@ echo "========================================"
 echo "  Lab Reset - Clean and Redeploy"
 echo "========================================"
 echo ""
-log_warn "This will DESTROY all lab data and redeploy from scratch."
-echo ""
-read -p "Are you sure? (y/N) " -n 1 -r
-echo ""
 
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    log_info "Aborted."
-    exit 0
+if [ "$FORCE" = false ]; then
+    log_warn "This will DESTROY all lab data and redeploy from scratch."
+    echo ""
+    read -p "Are you sure? (y/N) " -n 1 -r
+    echo ""
+
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        log_info "Aborted."
+        exit 0
+    fi
+    echo ""
 fi
-
-echo ""
 
 # Step 1: Stop rootless containers
 log_step "Stopping rootless containers..."
