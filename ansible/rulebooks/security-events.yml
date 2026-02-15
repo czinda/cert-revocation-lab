@@ -140,6 +140,7 @@
     # =========================================================================
 
     # Rule 9: Key compromise - immediate revocation (all PKI types)
+    # ca_level not hardcoded - uses event.ca_level (defaults to iot in playbook)
     - name: Certificate Private Key Compromise - RSA
       condition: >
         event.body.event_type == "key_compromise" and
@@ -151,7 +152,6 @@
           extra_vars:
             event: "{{ event.body }}"
             priority: "emergency"
-            ca_level: "intermediate"
             reason: 1  # keyCompromise
 
     - name: Certificate Private Key Compromise - ECC
@@ -165,7 +165,6 @@
           extra_vars:
             event: "{{ event.body }}"
             priority: "emergency"
-            ca_level: "intermediate"
             reason: 1
 
     - name: Certificate Private Key Compromise - PQC
@@ -179,7 +178,6 @@
           extra_vars:
             event: "{{ event.body }}"
             priority: "emergency"
-            ca_level: "intermediate"
             reason: 1
 
     # Rule 10: Geographic anomaly - potential credential theft

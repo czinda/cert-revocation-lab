@@ -705,11 +705,12 @@ def cmd_test(args):
         print("[1/4] Finding a valid certificate...")
         certs = client.list_certs("VALID")
         # Filter out CA signing certs and system certs (not revocable for testing)
-        user_certs = [c for c in certs if "CN=CA" not in c.get("subject", "")
-                      and "Signing Certificate" not in c.get("subject", "")
-                      and "Subsystem Certificate" not in c.get("subject", "")
-                      and "OCSP" not in c.get("subject", "")
-                      and "Audit" not in c.get("subject", "")]
+        system_keywords = ["Signing Certificate", "Subsystem Certificate",
+                           "OCSP", "Audit", "PKI Administrator", "OU=Root CA",
+                           "OU=Intermediate CA", "OU=IoT CA", "OU=ACME CA",
+                           "OU=ECC", "OU=PQ"]
+        user_certs = [c for c in certs
+                      if not any(kw in c.get("subject", "") for kw in system_keywords)]
         if not user_certs:
             print("ERROR: No valid user certificates found")
             print("Issue a certificate first: ./scripts/pki-cli.py issue --ca iot")
