@@ -68,7 +68,20 @@ REVOCATION_REASONS = {
 
 
 class PKIClient:
-    """Client for Dogtag PKI REST API operations."""
+    """Client for Dogtag PKI certificate management via podman exec."""
+
+    # Container name map (shared across all methods)
+    CONTAINER_MAP = {
+        "rsa": {"root": "dogtag-root-ca", "intermediate": "dogtag-intermediate-ca", "iot": "dogtag-iot-ca"},
+        "ecc": {"root": "dogtag-ecc-root-ca", "intermediate": "dogtag-ecc-intermediate-ca", "iot": "dogtag-ecc-iot-ca"},
+        "pqc": {"root": "dogtag-pq-root-ca", "intermediate": "dogtag-pq-intermediate-ca", "iot": "dogtag-pq-iot-ca"},
+    }
+
+    INSTANCE_MAP = {
+        "rsa": {"root": "pki-root-ca", "intermediate": "pki-intermediate-ca", "iot": "pki-iot-ca"},
+        "ecc": {"root": "pki-ecc-root-ca", "intermediate": "pki-ecc-intermediate-ca", "iot": "pki-ecc-iot-ca"},
+        "pqc": {"root": "pki-pq-root-ca", "intermediate": "pki-pq-intermediate-ca", "iot": "pki-pq-iot-ca"},
+    }
 
     def __init__(self, pki_type: str = "rsa", ca_level: str = "iot"):
         self.pki_type = pki_type
@@ -76,6 +89,8 @@ class PKIClient:
         self.config = PKI_CONFIG[pki_type]
         self.port = self.config["ports"][ca_level]
         self.base_url = f"https://localhost:{self.port}"
+        self.container = self.CONTAINER_MAP.get(pki_type, {}).get(ca_level)
+        self.instance = self.INSTANCE_MAP.get(pki_type, {}).get(ca_level)
 
         # Admin credentials
         prefix = self.config["cert_prefix"]
@@ -90,6 +105,25 @@ class PKIClient:
         self._cookie_jar = http.cookiejar.CookieJar()
         self._opener = None
         self._nonce = None
+
+    def _podman_exec(self, cmd: str, debug: bool = False) -> Optional[str]:
+        """Run a command inside the CA container via sudo podman exec."""
+        if not self.container:
+            print(f"Unknown PKI type/CA level: {self.pki_type}/{self.ca_level}")
+            return None
+        result = subprocess.run(
+            ["sudo", "podman", "exec", self.container, "bash", "-c", cmd],
+            capture_output=True, text=True
+        )
+        if debug:
+            print(f"  DEBUG: podman exec {self.container}: rc={result.returncode}")
+            if result.stdout:
+                print(f"  DEBUG: stdout: {result.stdout[:500]}")
+            if result.stderr:
+                print(f"  DEBUG: stderr: {result.stderr[:500]}")
+        if result.returncode != 0:
+            return None
+        return result.stdout
 
     def _check_creds(self) -> bool:
         """Check if admin credentials exist."""
@@ -223,24 +257,30 @@ class PKIClient:
             return 0, None
 
     def list_certs(self, status_filter: str = "VALID") -> list:
-        """List certificates on the CA."""
-        if not self._check_creds():
-            return []
-
-        status_code, data = self._request("GET", "/ca/rest/certs")
-        if status_code != 200 or data is None:
-            print(f"Error listing certificates: HTTP {status_code}")
+        """List certificates on the CA via pki CLI."""
+        status_arg = f"--status {status_filter}" if status_filter.lower() != "all" else ""
+        cmd = f"pki -d /root/.dogtag/nssdb -c '' ca-cert-find {status_arg} 2>/dev/null"
+        output = self._podman_exec(cmd)
+        if output is None:
+            print("Error listing certificates (podman exec failed)")
             return []
 
         certs = []
-        for entry in data.get("entries", []):
-            cert_status = entry.get("Status", "")
-            if status_filter.lower() == "all" or cert_status == status_filter:
-                certs.append({
-                    "serial": entry.get("id", ""),
-                    "status": cert_status,
-                    "subject": entry.get("SubjectDN", ""),
-                })
+        current = {}
+        for line in output.splitlines():
+            line = line.strip()
+            if line.startswith("Serial Number:"):
+                if current:
+                    certs.append(current)
+                serial = line.split(":", 1)[1].strip()
+                current = {"serial": serial, "status": "", "subject": ""}
+            elif line.startswith("Subject DN:"):
+                current["subject"] = line.split(":", 1)[1].strip()
+            elif line.startswith("Status:"):
+                current["status"] = line.split(":", 1)[1].strip()
+        if current and current.get("serial"):
+            certs.append(current)
+
         return certs
 
     def _normalize_serial(self, serial: str, with_prefix: bool = True) -> str:
@@ -252,32 +292,33 @@ class PKIClient:
         return clean
 
     def get_cert(self, serial: str) -> Optional[dict]:
-        """Get certificate details by serial."""
-        if not self._check_creds():
-            return None
-
-        # Dogtag REST API requires 0x prefix for GET requests
+        """Get certificate details by serial via pki CLI."""
         serial = self._normalize_serial(serial, with_prefix=True)
+        cmd = f"pki -d /root/.dogtag/nssdb -c '' ca-cert-show {serial} 2>/dev/null"
+        output = self._podman_exec(cmd)
+        if output is None:
+            return None
 
-        status_code, data = self._request("GET", f"/ca/rest/certs/{serial}")
-        if status_code == 404:
-            return None
-        if status_code != 200 or data is None:
-            print(f"Error getting certificate: HTTP {status_code}")
-            return None
-        return data
+        data = {}
+        for line in output.splitlines():
+            line = line.strip()
+            if line.startswith("Serial Number:"):
+                data["id"] = line.split(":", 1)[1].strip()
+            elif line.startswith("Subject DN:"):
+                data["SubjectDN"] = line.split(":", 1)[1].strip()
+            elif line.startswith("Status:"):
+                data["Status"] = line.split(":", 1)[1].strip()
+            elif line.startswith("Issuer DN:"):
+                data["IssuerDN"] = line.split(":", 1)[1].strip()
+            elif line.startswith("Not Valid Before:"):
+                data["NotBefore"] = line.split(":", 1)[1].strip()
+            elif line.startswith("Not Valid After:"):
+                data["NotAfter"] = line.split(":", 1)[1].strip()
+        return data if data else None
 
     def revoke_cert(self, serial: str, reason: str = "KEY_COMPROMISE", debug: bool = False) -> bool:
         """Revoke a certificate using pki CLI via podman exec."""
-        # Map container and instance names
-        container_map = {
-            "rsa": {"root": "dogtag-root-ca", "intermediate": "dogtag-intermediate-ca", "iot": "dogtag-iot-ca"},
-            "ecc": {"root": "dogtag-ecc-root-ca", "intermediate": "dogtag-ecc-intermediate-ca", "iot": "dogtag-ecc-iot-ca"},
-            "pqc": {"root": "dogtag-pq-root-ca", "intermediate": "dogtag-pq-intermediate-ca", "iot": "dogtag-pq-iot-ca"},
-        }
-
-        container = container_map.get(self.pki_type, {}).get(self.ca_level)
-        if not container:
+        if not self.container:
             print(f"Unknown PKI type/CA level: {self.pki_type}/{self.ca_level}")
             return False
 
@@ -318,11 +359,11 @@ pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \\
 """
 
         if debug:
-            print(f"  DEBUG: Running revocation in container {container}")
+            print(f"  DEBUG: Running revocation in container {self.container}")
             print(f"  DEBUG: Serial: 0x{serial_clean}, Reason: {reason_name}")
 
         result = subprocess.run(
-            ["sudo", "podman", "exec", container, "bash", "-c", revoke_cmd],
+            ["sudo", "podman", "exec", self.container, "bash", "-c", revoke_cmd],
             capture_output=True, text=True
         )
 
@@ -341,53 +382,13 @@ pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \\
 
     def issue_cert(self, cn: str, profile: str = "caServerCert") -> Optional[str]:
         """Issue a certificate using pki CLI via podman exec. Returns serial number."""
-        # Determine container name based on PKI type and CA level
-        container_map = {
-            "rsa": {
-                "root": "dogtag-root-ca",
-                "intermediate": "dogtag-intermediate-ca",
-                "iot": "dogtag-iot-ca",
-            },
-            "ecc": {
-                "root": "dogtag-ecc-root-ca",
-                "intermediate": "dogtag-ecc-intermediate-ca",
-                "iot": "dogtag-ecc-iot-ca",
-            },
-            "pqc": {
-                "root": "dogtag-pq-root-ca",
-                "intermediate": "dogtag-pq-intermediate-ca",
-                "iot": "dogtag-pq-iot-ca",
-            },
-        }
-
-        instance_map = {
-            "rsa": {
-                "root": "pki-root-ca",
-                "intermediate": "pki-intermediate-ca",
-                "iot": "pki-iot-ca",
-            },
-            "ecc": {
-                "root": "pki-ecc-root-ca",
-                "intermediate": "pki-ecc-intermediate-ca",
-                "iot": "pki-ecc-iot-ca",
-            },
-            "pqc": {
-                "root": "pki-pq-root-ca",
-                "intermediate": "pki-pq-intermediate-ca",
-                "iot": "pki-pq-iot-ca",
-            },
-        }
-
-        container = container_map.get(self.pki_type, {}).get(self.ca_level)
-        instance = instance_map.get(self.pki_type, {}).get(self.ca_level)
-
-        if not container or not instance:
+        if not self.container or not self.instance:
             print(f"Unknown PKI type/CA level: {self.pki_type}/{self.ca_level}")
             return None
 
-        nss_db = f"/var/lib/pki/{instance}/alias"
+        nss_db = f"/var/lib/pki/{self.instance}/alias"
         pki_password = self._get_pki_password()
-        admin_nickname = f"PKI Administrator for {instance}"
+        admin_nickname = f"PKI Administrator for {self.instance}"
 
         # Generate key and CSR
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -415,7 +416,7 @@ pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \\
 
             # Copy CSR to container
             result = subprocess.run(
-                ["sudo", "podman", "cp", str(csr_file), f"{container}:/tmp/request.csr"],
+                ["sudo", "podman", "cp", str(csr_file), f"{self.container}:/tmp/request.csr"],
                 capture_output=True, text=True
             )
             if result.returncode != 0:
@@ -424,7 +425,7 @@ pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \\
 
         # The admin P12 is at /root/.dogtag/{instance}/ca_admin_cert.p12
         # We need to set up a client NSS database with this cert
-        admin_p12 = f"/root/.dogtag/{instance}/ca_admin_cert.p12"
+        admin_p12 = f"/root/.dogtag/{self.instance}/ca_admin_cert.p12"
         client_nssdb = "/tmp/pki-client-nssdb"
 
         # Try different passwords - pkispawn config may use different values
@@ -441,7 +442,7 @@ pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \\
                 pk12util -i {admin_p12} -d {client_nssdb} -W '{p12_pwd}' -K ''
             """
             result = subprocess.run(
-                ["sudo", "podman", "exec", container, "bash", "-c", setup_cmd],
+                ["sudo", "podman", "exec", self.container, "bash", "-c", setup_cmd],
                 capture_output=True, text=True
             )
             if result.returncode == 0:
@@ -455,16 +456,16 @@ pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \\
             return None
 
         # Import CA cert chain for SSL trust
-        ca_cert_path = f"/var/lib/pki/{instance}/conf/certs/ca_signing.crt"
+        ca_cert_path = f"/var/lib/pki/{self.instance}/conf/certs/ca_signing.crt"
         import_ca_cmd = f"certutil -A -d {client_nssdb} -n 'CA Signing Cert' -t 'CT,C,C' -a -i {ca_cert_path} 2>/dev/null || true"
         subprocess.run(
-            ["sudo", "podman", "exec", container, "bash", "-c", import_ca_cmd],
+            ["sudo", "podman", "exec", self.container, "bash", "-c", import_ca_cmd],
             capture_output=True, text=True
         )
 
         # Find the admin cert nickname
         result = subprocess.run(
-            ["sudo", "podman", "exec", container, "certutil", "-L", "-d", client_nssdb],
+            ["sudo", "podman", "exec", self.container, "certutil", "-L", "-d", client_nssdb],
             capture_output=True, text=True
         )
         admin_nickname = None
@@ -475,14 +476,14 @@ pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \\
 
         if not admin_nickname:
             # Default nickname pattern
-            admin_nickname = f"PKI Administrator for {instance}"
+            admin_nickname = f"PKI Administrator for {self.instance}"
 
         print(f"  Using admin cert: {admin_nickname}")
 
         # Submit certificate request (use --ignore-cert-status to bypass SSL validation)
-        print(f"  Submitting request to {container}...")
+        print(f"  Submitting request to {self.container}...")
         result = subprocess.run(
-            ["sudo", "podman", "exec", container,
+            ["sudo", "podman", "exec", self.container,
              "pki", "-d", client_nssdb, "-c", "", "-n", admin_nickname,
              "--ignore-cert-status", "UNTRUSTED_ISSUER", "--ignore-cert-status", "UNKNOWN_ISSUER",
              "ca-cert-request-submit", "--profile", profile, "--csr-file", "/tmp/request.csr"],
@@ -510,7 +511,7 @@ pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \\
         # Approve the request
         print(f"  Approving request...")
         result = subprocess.run(
-            ["sudo", "podman", "exec", container,
+            ["sudo", "podman", "exec", self.container,
              "pki", "-d", client_nssdb, "-c", "", "-n", admin_nickname,
              "--ignore-cert-status", "UNTRUSTED_ISSUER", "--ignore-cert-status", "UNKNOWN_ISSUER",
              "ca-cert-request-approve", request_id, "--force"],
@@ -523,7 +524,7 @@ pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \\
 
         # Get certificate ID from request
         result = subprocess.run(
-            ["sudo", "podman", "exec", container,
+            ["sudo", "podman", "exec", self.container,
              "pki", "-d", client_nssdb, "-c", "", "-n", admin_nickname,
              "--ignore-cert-status", "UNTRUSTED_ISSUER", "--ignore-cert-status", "UNKNOWN_ISSUER",
              "ca-cert-request-show", request_id],
@@ -703,14 +704,20 @@ def cmd_test(args):
     else:
         print("[1/4] Finding a valid certificate...")
         certs = client.list_certs("VALID")
-        if not certs:
-            print("ERROR: No valid certificates found")
+        # Filter out CA signing certs and system certs (not revocable for testing)
+        user_certs = [c for c in certs if "CN=CA" not in c.get("subject", "")
+                      and "Signing Certificate" not in c.get("subject", "")
+                      and "Subsystem Certificate" not in c.get("subject", "")
+                      and "OCSP" not in c.get("subject", "")
+                      and "Audit" not in c.get("subject", "")]
+        if not user_certs:
+            print("ERROR: No valid user certificates found")
             print("Issue a certificate first: ./scripts/pki-cli.py issue --ca iot")
             return 1
 
-        cert = certs[0]
+        cert = user_certs[0]
         serial = cert["serial"]
-        print(f"  Found: {serial} ({cert.get('subject', cert.get('SubjectDN', ''))[:40]}...)")
+        print(f"  Found: {serial} ({cert.get('subject', '')[:60]})")
 
     # Step 2: Trigger security event
     print("\n[2/4] Triggering security event via mock EDR...")
