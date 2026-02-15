@@ -337,17 +337,43 @@ class PKIClient:
         # Normalize serial - strip 0x for pki CLI
         serial_clean = self._normalize_serial(serial, with_prefix=False)
 
-        # Build revocation command using pki CLI
+        # Build revocation command - import admin P12 into temp NSS db, then revoke
+        instance = self.instance
+        pki_password = self._get_pki_password()
         revoke_cmd = f"""
 set -e
-CLIENT_DB=/root/.dogtag/nssdb
+CLIENT_DB=/tmp/pki-revoke-nssdb
+ADMIN_P12=/root/.dogtag/{instance}/ca_admin_cert.p12
 CA_URL=https://localhost:8443
 
-# Find admin cert nickname
-ADMIN_NICK=$(certutil -L -d $CLIENT_DB 2>/dev/null | grep -i admin | head -1 | awk '{{for(i=1;i<=NF-1;i++) printf $i" "; print ""}}' | sed 's/ *$//')
-if [ -z "$ADMIN_NICK" ]; then
-    echo "ERROR: Admin certificate not found in NSS database"
+# Set up temp NSS database with admin cert
+rm -rf $CLIENT_DB
+mkdir -p $CLIENT_DB
+certutil -N -d $CLIENT_DB --empty-password
+
+# Try importing admin P12 with known passwords
+IMPORTED=false
+for PWD in '{pki_password}' 'RedHat123' ''; do
+    if pk12util -i $ADMIN_P12 -d $CLIENT_DB -W "$PWD" -K '' 2>/dev/null; then
+        IMPORTED=true
+        break
+    fi
+done
+if [ "$IMPORTED" != "true" ]; then
+    echo "ERROR: Could not import admin P12"
     exit 1
+fi
+
+# Import CA signing cert for SSL trust
+CA_CERT=/var/lib/pki/{instance}/conf/certs/ca_signing.crt
+if [ -f "$CA_CERT" ]; then
+    certutil -A -d $CLIENT_DB -n 'CA Signing Cert' -t 'CT,C,C' -a -i $CA_CERT 2>/dev/null || true
+fi
+
+# Find admin cert nickname
+ADMIN_NICK=$(certutil -L -d $CLIENT_DB 2>/dev/null | grep -i "admin\\|caadmin" | head -1 | awk '{{for(i=1;i<=NF-1;i++) printf $i" "; print ""}}' | sed 's/ *$//')
+if [ -z "$ADMIN_NICK" ]; then
+    ADMIN_NICK="PKI Administrator for {instance}"
 fi
 
 echo "Using admin cert: $ADMIN_NICK"
@@ -356,6 +382,9 @@ echo "Using admin cert: $ADMIN_NICK"
 pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \\
     --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \\
     ca-cert-revoke 0x{serial_clean} --reason {reason_name} --force
+
+# Cleanup
+rm -rf $CLIENT_DB
 """
 
         if debug:
