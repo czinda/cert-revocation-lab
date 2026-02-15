@@ -19,15 +19,17 @@
     pki_name: "RSA-4096"
 
     # CA selection (root, intermediate, iot)
-    target_ca: "{{ event.ca_level | default(ca_level) | default('iot') }}"
+    # Use ca_level from extra_vars first, then event.ca_level, handling null values
+    target_ca: "{{ ca_level | default(event.ca_level | default('iot', true), true) }}"
 
     # Event data (passed from EDA)
-    device_fqdn: "{{ event.device_fqdn | default('unknown.cert-lab.local') }}"
-    certificate_cn: "{{ event.certificate_cn | default(device_fqdn) }}"
-    certificate_serial: "{{ event.certificate_serial | default('') }}"
-    event_severity: "{{ event.severity | default('high') }}"
-    event_id: "{{ event.event_id | default('manual') }}"
-    event_description: "{{ event.description | default('Security incident') }}"
+    # Use 'default(value, true)' to treat null/None as undefined
+    device_fqdn: "{{ event.device_fqdn | default('unknown.cert-lab.local', true) }}"
+    certificate_cn: "{{ event.certificate_cn | default(device_fqdn, true) }}"
+    certificate_serial: "{{ event.certificate_serial | default('', true) }}"
+    event_severity: "{{ event.severity | default('high', true) }}"
+    event_id: "{{ event.event_id | default('manual', true) }}"
+    event_description: "{{ event.description | default('Security incident', true) }}"
 
     # Revocation settings
     # CRL reason codes and their string values for Dogtag REST API:
