@@ -144,7 +144,7 @@
       condition: >
         event.body.event_type == "key_compromise" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == "rsa")
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -247,7 +247,7 @@
       condition: >
         event.body.event_type == "firmware_integrity" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == "rsa")
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -290,7 +290,7 @@
       condition: >
         event.body.event_type == "device_cloning" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == "rsa")
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -333,7 +333,7 @@
       condition: >
         event.body.event_type == "iot_anomaly" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == "rsa")
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -376,7 +376,7 @@
       condition: >
         event.body.event_type == "protocol_attack" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == "rsa")
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
