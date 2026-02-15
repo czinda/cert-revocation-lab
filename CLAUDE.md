@@ -610,6 +610,26 @@ sudo podman logs -f freeipa
 
 The `freeipa-compose.yml` runs `ipa-server-install` with unattended options (`-U --no-ntp --no-host-dns`).
 
+### EDA SSH Setup for Certificate Revocation
+EDA (Event-Driven Ansible) runs in rootless podman but PKI containers run in rootful podman (sudo). Direct podman exec is not possible across this boundary.
+
+**Solution:** EDA uses SSH to connect to the lab host and run `pki-cli.py` commands:
+
+```bash
+# Generate SSH keys and add to authorized_keys
+./scripts/setup-eda-ssh.sh
+
+# Add settings to .env
+echo "LAB_HOST_IP=host.containers.internal" >> .env
+echo "LAB_HOST_USER=$USER" >> .env
+echo "LAB_ROOT_DIR=$(pwd)" >> .env
+
+# Restart EDA to pick up new mounts
+podman-compose stop eda-server && podman-compose up -d eda-server
+```
+
+The setup script automatically handles UID mapping for rootless podman (container uid 1001 maps to host uid 101000).
+
 ### Port Mappings for Rootless Podman
 Privileged ports (<1024) are remapped to higher ports for rootless compatibility:
 - FreeIPA HTTPS: 4443 (not 443)

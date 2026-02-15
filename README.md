@@ -176,6 +176,15 @@ sudo podman exec -it dogtag-iot-ca /scripts/init-iot-ca.sh
 
 # Step 4: Export admin credentials for REST API access
 ./scripts/export-all-admin-creds.sh
+
+# Step 5: Setup SSH for EDA (Event-Driven Ansible)
+# EDA runs in rootless podman and needs SSH to reach rootful PKI
+./scripts/setup-eda-ssh.sh
+
+# Add to .env (use values shown by setup script)
+echo "LAB_HOST_IP=host.containers.internal" >> .env
+echo "LAB_HOST_USER=$USER" >> .env
+echo "LAB_ROOT_DIR=$(pwd)" >> .env
 ```
 
 ### 5. Certificate Operations
