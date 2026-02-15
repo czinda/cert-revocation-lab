@@ -11,8 +11,8 @@
 #   1. Root CA initialization (self-signed)
 #   2. Intermediate CA initialization (signed by Root CA)
 #   3. IoT Sub-CA initialization (signed by Intermediate CA)
-#   4. ACME Sub-CA initialization (RSA only, if container exists)
-#   5. EST enablement on IoT CA (RSA only)
+#   4. EST Sub-CA initialization (signed by Intermediate CA, EST enabled)
+#   5. ACME Sub-CA initialization (RSA only, if container exists)
 #
 # Prerequisites:
 #   - PKI containers must be running (via pki-compose.yml / pki-ecc-compose.yml / pki-pq-compose.yml)
@@ -48,6 +48,7 @@ case "$PKI_TYPE" in
         ROOT_PORT="8463"
         INTERMEDIATE_PORT="8464"
         IOT_PORT="8465"
+        EST_PORT="8466"
         COMPOSE_FILE="pki-ecc-compose.yml"
         ALGO_DESC="ECDSA P-384 with SHA-384"
         SECURITY_DOMAIN="CERT-LAB-ECC"
@@ -63,6 +64,7 @@ case "$PKI_TYPE" in
         ROOT_PORT="8453"
         INTERMEDIATE_PORT="8454"
         IOT_PORT="8455"
+        EST_PORT="8456"
         COMPOSE_FILE="pki-pq-compose.yml"
         ALGO_DESC="ML-DSA-87 (NIST FIPS 204 Level 5)"
         SECURITY_DOMAIN="CERT-LAB-PQ"
@@ -78,6 +80,7 @@ case "$PKI_TYPE" in
         ROOT_PORT="8443"
         INTERMEDIATE_PORT="8444"
         IOT_PORT="8445"
+        EST_PORT="8447"
         COMPOSE_FILE="pki-compose.yml"
         ALGO_DESC=""
         SECURITY_DOMAIN="CERT-LAB"
@@ -89,12 +92,15 @@ esac
 ROOT_CONTAINER="${CT_PREFIX}root-ca"
 INTERMEDIATE_CONTAINER="${CT_PREFIX}intermediate-ca"
 IOT_CONTAINER="${CT_PREFIX}iot-ca"
+EST_CONTAINER="${CT_PREFIX}est-ca"
 ROOT_HOSTNAME="${CA_PREFIX}root-ca.cert-lab.local"
 INTERMEDIATE_HOSTNAME="${CA_PREFIX}intermediate-ca.cert-lab.local"
 IOT_HOSTNAME="${CA_PREFIX}iot-ca.cert-lab.local"
+EST_HOSTNAME="${CA_PREFIX}est-ca.cert-lab.local"
 ROOT_URL="https://${ROOT_HOSTNAME}:8443"
 INTERMEDIATE_URL="https://${INTERMEDIATE_HOSTNAME}:8443"
 IOT_URL="https://${IOT_HOSTNAME}:8443"
+EST_URL="https://${EST_HOSTNAME}:8443"
 
 # Override log functions with PKI-type-specific prefix
 log_info() { echo -e "${BLUE}[${LOG_PREFIX}]${NC} $*"; }
@@ -427,36 +433,63 @@ init_acme_ca() {
     log_success "ACME CA initialization complete"
 }
 
-# Enable EST on IoT CA (RSA only — EST enablement is triggered from per-CA init scripts for all types)
-enable_est() {
-    if [ "$PKI_TYPE" != "rsa" ]; then
+# Initialize EST Sub-CA (signed by Intermediate CA, EST enabled)
+init_est_ca() {
+    log_phase "Initializing ${CA_PREFIX}EST Sub-CA"
+
+    # Check if EST CA container exists
+    if ! $PODMAN ps --format '{{.Names}}' | grep -q "^${EST_CONTAINER}$"; then
+        log_warn "EST CA container (${EST_CONTAINER}) not running, skipping"
         return 0
     fi
 
-    log_phase "Enabling EST on IoT CA"
+    # Check if already initialized
+    if $PODMAN exec "$EST_CONTAINER" test -f /certs/est-ca.crt 2>/dev/null; then
+        if $PODMAN exec "$EST_CONTAINER" curl -sk "${EST_URL}/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
+            log_success "${CA_PREFIX}EST CA already initialized and running"
+            return 0
+        fi
+    fi
 
-    # Check if IoT CA is running
-    if ! $PODMAN ps --format '{{.Names}}' | grep -q "^${IOT_CONTAINER}$"; then
-        log_warn "IoT CA container not running, skipping EST enablement"
+    setup_mock_systemctl "$EST_CONTAINER"
+
+    # Phase 1: Generate CSR
+    log_info "Running EST CA initialization (Phase 1: CSR generation)..."
+    $PODMAN exec "$EST_CONTAINER" /scripts/init-${SCRIPT_PREFIX}est-ca.sh || true
+
+    # Check if CSR was generated
+    if ! $PODMAN exec "$EST_CONTAINER" test -f /certs/est-ca.csr; then
+        log_error "EST CA CSR was not generated"
+        return 1
+    fi
+    log_success "EST CA CSR generated"
+
+    # Sign the CSR with Intermediate CA
+    sign_csr "$INTERMEDIATE_CONTAINER" "/certs/est-ca.csr" "/certs/est-ca-signed.crt" \
+        "$INTERMEDIATE_URL" "caCACert"
+
+    # Phase 2: Install signed certificate + enable EST
+    log_info "Running EST CA initialization (Phase 2: certificate installation + EST enablement)..."
+    $PODMAN exec "$EST_CONTAINER" /scripts/init-${SCRIPT_PREFIX}est-ca.sh
+
+    # Verify
+    wait_for_ca "${CA_PREFIX}EST CA" "$EST_URL" 60
+    log_success "${CA_PREFIX}EST CA initialization complete"
+}
+
+# Verify EST endpoint on EST CA
+verify_est() {
+    log_phase "Verifying EST on ${CA_PREFIX}EST Sub-CA"
+
+    # Check if EST CA container exists
+    if ! $PODMAN ps --format '{{.Names}}' | grep -q "^${EST_CONTAINER}$"; then
+        log_warn "EST CA container not running, skipping EST verification"
         return 0
     fi
 
-    # Check if EST is already responding
-    if $PODMAN exec "$IOT_CONTAINER" curl -sk https://localhost:8443/.well-known/est/cacerts 2>/dev/null | head -1 | grep -q "BEGIN\|MIIB\|MIIC\|MIID"; then
-        log_success "EST already enabled and responding on IoT CA"
-        return 0
-    fi
-
-    log_info "Running EST enablement script..."
-    $PODMAN exec "$IOT_CONTAINER" /scripts/enable-est.sh || {
-        log_warn "EST enablement failed (non-fatal)"
-        return 0
-    }
-
-    # Verify EST endpoint
-    sleep 3
-    if $PODMAN exec "$IOT_CONTAINER" curl -sk https://localhost:8443/.well-known/est/cacerts 2>/dev/null | head -1 | grep -q "BEGIN\|MIIB\|MIIC\|MIID"; then
-        log_success "EST endpoint verified at /.well-known/est/cacerts"
+    # Check if EST is responding
+    if $PODMAN exec "$EST_CONTAINER" curl -sk https://localhost:8443/.well-known/est/cacerts 2>/dev/null | head -1 | grep -q "BEGIN\|MIIB\|MIIC\|MIID"; then
+        log_success "EST endpoint verified at ${EST_HOSTNAME}:8443/.well-known/est/cacerts"
     else
         log_warn "EST endpoint not responding yet (may need container restart)"
     fi
@@ -480,6 +513,10 @@ verify_hierarchy() {
         $PODMAN cp "${INTERMEDIATE_CONTAINER}:/certs/ca-chain.crt" "$certs_dir/" 2>/dev/null || true
         $PODMAN cp "${IOT_CONTAINER}:/certs/iot-ca.crt" "$certs_dir/" 2>/dev/null || true
         $PODMAN cp "${IOT_CONTAINER}:/certs/iot-ca-chain.crt" "$certs_dir/" 2>/dev/null || true
+        if $PODMAN ps --format '{{.Names}}' | grep -q "^${EST_CONTAINER}$"; then
+            $PODMAN cp "${EST_CONTAINER}:/certs/est-ca.crt" "$certs_dir/" 2>/dev/null || true
+            $PODMAN cp "${EST_CONTAINER}:/certs/est-ca-chain.crt" "$certs_dir/" 2>/dev/null || true
+        fi
         if [ "$PKI_TYPE" = "rsa" ] && $PODMAN ps --format '{{.Names}}' | grep -q "^dogtag-acme-ca$"; then
             $PODMAN cp dogtag-acme-ca:/certs/acme-ca.crt "$certs_dir/" 2>/dev/null || true
             $PODMAN cp dogtag-acme-ca:/certs/acme-ca-chain.crt "$certs_dir/" 2>/dev/null || true
@@ -497,6 +534,11 @@ verify_hierarchy() {
         echo "IoT Sub-CA:"
         openssl x509 -in /certs/iot-ca.crt -noout -subject -issuer
         echo ""
+        if [ -f /certs/est-ca.crt ]; then
+            echo "EST Sub-CA:"
+            openssl x509 -in /certs/est-ca.crt -noout -subject -issuer
+            echo ""
+        fi
         if [ -f /certs/acme-ca.crt ]; then
             echo "ACME Sub-CA:"
             openssl x509 -in /certs/acme-ca.crt -noout -subject -issuer
@@ -505,6 +547,9 @@ verify_hierarchy() {
         echo "Chain Verification:"
         openssl verify -CAfile /certs/root-ca.crt /certs/intermediate-ca.crt
         openssl verify -CAfile /certs/ca-chain.crt /certs/iot-ca.crt
+        if [ -f /certs/est-ca.crt ]; then
+            openssl verify -CAfile /certs/ca-chain.crt /certs/est-ca.crt
+        fi
         if [ -f /certs/acme-ca.crt ]; then
             openssl verify -CAfile /certs/ca-chain.crt /certs/acme-ca.crt
         fi
@@ -525,20 +570,23 @@ print_summary() {
     echo "  ${CA_PREFIX}Root CA:         https://localhost:${ROOT_PORT}/ca"
     echo "  ${CA_PREFIX}Intermediate CA: https://localhost:${INTERMEDIATE_PORT}/ca"
     echo "  ${CA_PREFIX}IoT CA:          https://localhost:${IOT_PORT}/ca"
+    if $PODMAN ps --format '{{.Names}}' 2>/dev/null | grep -q "^${EST_CONTAINER}$"; then
+        echo "  ${CA_PREFIX}EST CA:          https://localhost:${EST_PORT}/ca"
+    fi
     if [ "$PKI_TYPE" = "rsa" ] && $PODMAN ps --format '{{.Names}}' 2>/dev/null | grep -q "^dogtag-acme-ca$"; then
         echo "  ACME CA:         https://localhost:8446/ca"
         echo "  ACME Directory:  https://localhost:8446/acme/directory"
     fi
     echo ""
-    if [ "$PKI_TYPE" = "rsa" ]; then
-        echo "Protocol Endpoints:"
-        echo "  EST cacerts:     https://localhost:${IOT_PORT}/.well-known/est/cacerts"
-        echo "  EST enroll:      https://localhost:${IOT_PORT}/.well-known/est/simpleenroll"
-        if $PODMAN ps --format '{{.Names}}' 2>/dev/null | grep -q "^dogtag-acme-ca$"; then
-            echo "  ACME directory:  https://localhost:8446/acme/directory"
-        fi
-        echo ""
+    echo "Protocol Endpoints:"
+    if $PODMAN ps --format '{{.Names}}' 2>/dev/null | grep -q "^${EST_CONTAINER}$"; then
+        echo "  EST cacerts:     https://localhost:${EST_PORT}/.well-known/est/cacerts"
+        echo "  EST enroll:      https://localhost:${EST_PORT}/.well-known/est/simpleenroll"
     fi
+    if [ "$PKI_TYPE" = "rsa" ] && $PODMAN ps --format '{{.Names}}' 2>/dev/null | grep -q "^dogtag-acme-ca$"; then
+        echo "  ACME directory:  https://localhost:8446/acme/directory"
+    fi
+    echo ""
     echo "Certificates:"
     local cert_subdir="rsa"
     [ "$PKI_TYPE" = "ecc" ] && cert_subdir="ecc"
@@ -548,6 +596,10 @@ print_summary() {
     echo "  data/certs/${cert_subdir}/iot-ca.crt"
     echo "  data/certs/${cert_subdir}/ca-chain.crt (Root + Intermediate)"
     echo "  data/certs/${cert_subdir}/iot-ca-chain.crt (Full chain)"
+    if $PODMAN ps --format '{{.Names}}' 2>/dev/null | grep -q "^${EST_CONTAINER}$"; then
+        echo "  data/certs/${cert_subdir}/est-ca.crt"
+        echo "  data/certs/${cert_subdir}/est-ca-chain.crt (Full chain)"
+    fi
     if [ "$PKI_TYPE" = "rsa" ] && $PODMAN ps --format '{{.Names}}' 2>/dev/null | grep -q "^dogtag-acme-ca$"; then
         echo "  data/certs/${cert_subdir}/acme-ca.crt"
         echo "  data/certs/${cert_subdir}/acme-ca-chain.crt (Full chain)"
@@ -556,9 +608,16 @@ print_summary() {
     echo "Hierarchy:"
     echo "  ${CA_PREFIX}Root CA (self-signed)"
     echo "    └── ${CA_PREFIX}Intermediate CA"
-    echo "        ├── ${CA_PREFIX}IoT Sub-CA${PKI_TYPE:+ }$([ "$PKI_TYPE" = "rsa" ] && echo "(EST)")"
-    if [ "$PKI_TYPE" = "rsa" ] && $PODMAN ps --format '{{.Names}}' 2>/dev/null | grep -q "^dogtag-acme-ca$"; then
-        echo "        └── ACME Sub-CA"
+    echo "        ├── ${CA_PREFIX}IoT Sub-CA"
+    if $PODMAN ps --format '{{.Names}}' 2>/dev/null | grep -q "^${EST_CONTAINER}$"; then
+        if [ "$PKI_TYPE" = "rsa" ] && $PODMAN ps --format '{{.Names}}' 2>/dev/null | grep -q "^dogtag-acme-ca$"; then
+            echo "        ├── ${CA_PREFIX}EST Sub-CA (EST)"
+            echo "        └── ACME Sub-CA (ACME)"
+        else
+            echo "        └── ${CA_PREFIX}EST Sub-CA (EST)"
+        fi
+    elif [ "$PKI_TYPE" = "rsa" ] && $PODMAN ps --format '{{.Names}}' 2>/dev/null | grep -q "^dogtag-acme-ca$"; then
+        echo "        └── ACME Sub-CA (ACME)"
     fi
     echo ""
     echo -e "${GREEN}========================================================================${NC}"
@@ -577,6 +636,13 @@ main() {
         fi
     done
 
+    # Check optional EST CA container
+    if $PODMAN ps --format '{{.Names}}' | grep -q "^${EST_CONTAINER}$"; then
+        log_info "EST CA container (${EST_CONTAINER}) detected, will initialize"
+    else
+        log_info "EST CA container (${EST_CONTAINER}) not found (optional), skipping"
+    fi
+
     # Check optional ACME CA container (RSA only)
     if [ "$PKI_TYPE" = "rsa" ]; then
         if $PODMAN ps --format '{{.Names}}' | grep -q "^dogtag-acme-ca$"; then
@@ -589,8 +655,9 @@ main() {
     init_root_ca
     init_intermediate_ca
     init_iot_ca
+    init_est_ca
     init_acme_ca
-    enable_est
+    verify_est
     verify_hierarchy
 
     # Export admin credentials for REST API access

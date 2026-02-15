@@ -107,9 +107,11 @@ services:
       - "ds-pq-root.cert-lab.local:172.27.0.14"
       - "ds-pq-intermediate.cert-lab.local:172.27.0.15"
       - "ds-pq-iot.cert-lab.local:172.27.0.16"
+      - "ds-pq-est.cert-lab.local:172.27.0.17"
       - "pq-root-ca.cert-lab.local:172.27.0.12"
       - "pq-intermediate-ca.cert-lab.local:172.27.0.11"
       - "pq-iot-ca.cert-lab.local:172.27.0.13"
+      - "pq-est-ca.cert-lab.local:172.27.0.18"
     networks:
       pki-pq-net:
         ipv4_address: 172.27.0.12
@@ -152,9 +154,11 @@ services:
       - "ds-pq-root.cert-lab.local:172.27.0.14"
       - "ds-pq-intermediate.cert-lab.local:172.27.0.15"
       - "ds-pq-iot.cert-lab.local:172.27.0.16"
+      - "ds-pq-est.cert-lab.local:172.27.0.17"
       - "pq-root-ca.cert-lab.local:172.27.0.12"
       - "pq-intermediate-ca.cert-lab.local:172.27.0.11"
       - "pq-iot-ca.cert-lab.local:172.27.0.13"
+      - "pq-est-ca.cert-lab.local:172.27.0.18"
     networks:
       pki-pq-net:
         ipv4_address: 172.27.0.11
@@ -197,15 +201,84 @@ services:
       - "ds-pq-root.cert-lab.local:172.27.0.14"
       - "ds-pq-intermediate.cert-lab.local:172.27.0.15"
       - "ds-pq-iot.cert-lab.local:172.27.0.16"
+      - "ds-pq-est.cert-lab.local:172.27.0.17"
       - "pq-root-ca.cert-lab.local:172.27.0.12"
       - "pq-intermediate-ca.cert-lab.local:172.27.0.11"
       - "pq-iot-ca.cert-lab.local:172.27.0.13"
+      - "pq-est-ca.cert-lab.local:172.27.0.18"
     networks:
       pki-pq-net:
         ipv4_address: 172.27.0.13
     ports:
       - "8455:8443"
       - "8485:8080"
+    command: ["/bin/bash", "-c", "sleep infinity"]
+
+  # 389 Directory Server for PQ EST CA
+  ds-pq-est:
+    image: quay.io/389ds/dirsrv:${DS_VERSION:-latest}
+    container_name: ds-pq-est
+    hostname: ds-pq-est.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      DS_SUFFIX_NAME: pq-est-ca
+    volumes:
+      - ds-pq-est-data:/data
+    networks:
+      pki-pq-net:
+        ipv4_address: 172.27.0.17
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/libexec/dirsrv/dscontainer -H || ldapsearch -x -H ldap://localhost:3389 -b '' -s base > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      start_period: 120s
+      retries: 10
+
+  # Dogtag PQ EST Sub-CA - ML-DSA-87, EST (RFC 7030)
+  dogtag-pq-est-ca:
+    image: ${PQ_PKI_IMAGE:-localhost/dogtag-pki-pq:latest}
+    container_name: dogtag-pq-est-ca
+    hostname: pq-est-ca.${LAB_DOMAIN:-cert-lab.local}
+    privileged: true
+    depends_on:
+      ds-pq-est:
+        condition: service_healthy
+      dogtag-pq-intermediate-ca:
+        condition: service_started
+    environment:
+      PKI_DS_URL: ldap://ds-pq-est.cert-lab.local:3389
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_INSTANCE_NAME: pki-pq-est-ca
+      DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      # ML-DSA-87 specific settings
+      PQ_CA_KEY_TYPE: mldsa
+      PQ_CA_KEY_ALGORITHM: ML-DSA-87
+      PQ_CA_KEY_SIZE: 87
+    volumes:
+      - ./configs/pki:/etc/pki-configs:ro
+      - ./scripts/pki:/scripts:ro
+      - ./data/certs/pq:/certs
+      - pki-pq-est-data:/var/lib/pki
+      - pki-pq-est-logs:/var/log/pki
+    extra_hosts:
+      - "ds-pq-root.cert-lab.local:172.27.0.14"
+      - "ds-pq-intermediate.cert-lab.local:172.27.0.15"
+      - "ds-pq-iot.cert-lab.local:172.27.0.16"
+      - "ds-pq-est.cert-lab.local:172.27.0.17"
+      - "pq-root-ca.cert-lab.local:172.27.0.12"
+      - "pq-intermediate-ca.cert-lab.local:172.27.0.11"
+      - "pq-iot-ca.cert-lab.local:172.27.0.13"
+      - "pq-est-ca.cert-lab.local:172.27.0.18"
+    networks:
+      pki-pq-net:
+        ipv4_address: 172.27.0.18
+    ports:
+      - "8456:8443"
+      - "8486:8080"
     command: ["/bin/bash", "-c", "sleep infinity"]
 
 networks:
@@ -223,3 +296,6 @@ volumes:
   pki-pq-intermediate-logs:
   pki-pq-iot-data:
   pki-pq-iot-logs:
+  ds-pq-est-data:
+  pki-pq-est-data:
+  pki-pq-est-logs:

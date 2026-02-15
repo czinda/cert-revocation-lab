@@ -12,7 +12,7 @@ EST_REALM="${EST_REALM:-EST Realm}"
 # Source common functions
 source "$(dirname "$0")/lib-pki-common.sh"
 
-print_header "Enabling EST Subsystem on IoT CA"
+print_header "Enabling EST Subsystem"
 
 # Check if IoT CA is running
 if ! curl -sk "https://localhost:8443/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
@@ -139,8 +139,9 @@ else
     log_warn "EST endpoint not responding - may need container restart"
 fi
 
+HOSTNAME=$(hostname -f 2>/dev/null || echo "localhost")
 print_header "EST Enablement Complete"
-echo "EST Endpoint: https://iot-ca.cert-lab.local:8445/.well-known/est/"
+echo "EST Endpoint: https://${HOSTNAME}:8443/.well-known/est/"
 echo ""
 echo "Available EST operations:"
 echo "  /cacerts     - Get CA certificates"
@@ -151,5 +152,5 @@ echo "Example enrollment (from client):"
 echo "  curl --cacert ca-chain.crt --cert client.crt --key client.key \\"
 echo "       -X POST -H 'Content-Type: application/pkcs10' \\"
 echo "       --data-binary @request.p10 \\"
-echo "       https://iot-ca.cert-lab.local:8445/.well-known/est/simpleenroll"
+echo "       https://${HOSTNAME}:8443/.well-known/est/simpleenroll"
 echo ""

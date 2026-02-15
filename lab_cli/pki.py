@@ -13,14 +13,6 @@ from typing import Optional
 from .config import LabConfig, PKIType, CALevel, CAConfig, CA_CONFIGS
 
 
-# Port mappings for CA levels (host port -> container port 8443)
-CA_PORT_MAPPINGS = {
-    "rsa": {"root": 8443, "intermediate": 8444, "iot": 8445, "acme": 8446},
-    "ecc": {"root": 8463, "intermediate": 8464, "iot": 8465},
-    "pqc": {"root": 8453, "intermediate": 8454, "iot": 8455},
-}
-
-
 @dataclass
 class CAHealthResult:
     """Result of a CA health check."""
@@ -71,24 +63,24 @@ def check_ca_health(
     pki_key = pki_type.value
     level_key = ca_level.value
 
-    # Get port mapping
-    if pki_key not in CA_PORT_MAPPINGS:
+    # Get CA config
+    if pki_key not in CA_CONFIGS:
         return CAHealthResult(
             healthy=False,
             status="unknown",
             message=f"Unknown PKI type: {pki_key}"
         )
 
-    level_ports = CA_PORT_MAPPINGS[pki_key]
-    if level_key not in level_ports:
+    level_configs = CA_CONFIGS[pki_key]
+    if level_key not in level_configs:
         return CAHealthResult(
             healthy=False,
             status="unknown",
             message=f"Unknown CA level {level_key} for {pki_key} PKI"
         )
 
-    port = level_ports[level_key]
-    url = f"https://localhost:{port}/ca/admin/ca/getStatus"
+    ca_config = level_configs[level_key]
+    url = f"{ca_config.host_url}/ca/admin/ca/getStatus"
 
     cmd = [
         "curl", "-sk", "--connect-timeout", str(int(timeout)),
@@ -108,7 +100,7 @@ def check_ca_health(
         return CAHealthResult(
             healthy=False,
             status="unreachable",
-            message=f"{pki_key.upper()} {level_key} CA not responding (port {port})"
+            message=f"{pki_key.upper()} {level_key} CA not responding ({ca_config.host_url})"
         )
 
     response = result.stdout.strip()
@@ -133,7 +125,7 @@ def check_ca_health(
                 healthy=True,
                 status="running",
                 message=f"{pki_key.upper()} {level_key} CA is running",
-                details={"port": port, "url": url}
+                details={"port": ca_config.host_port, "url": url}
             )
         else:
             # Extract status if possible

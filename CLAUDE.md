@@ -25,7 +25,8 @@ Uses Dogtag PKI and FreeIPA, integrated with Event-Driven Ansible for real-time 
 │     │                   │     │                   │     │                   │
 │ Intermediate CA (8444)  │ Intermediate CA (8464)  │ Intermediate CA (8454)  │
 │     ├──┐                │     │                   │     │                   │
-│ IoT Sub-CA (8445/EST)   │ IoT Sub-CA (8465)       │ IoT Sub-CA (8455)       │
+│ IoT Sub-CA (8445)       │ IoT Sub-CA (8465)       │ IoT Sub-CA (8455)       │
+│ EST Sub-CA (8447/EST)   │ EST Sub-CA (8466/EST)   │ EST Sub-CA (8456/EST)   │
 │ ACME Sub-CA (8446)      │                         │                         │
 ├─────────────────────────┼─────────────────────────┼─────────────────────────┤
 │ Network: 172.26.0.0/24  │ Network: 172.28.0.0/24  │ Network: 172.27.0.0/24  │
@@ -201,7 +202,7 @@ sudo podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \
   /certs/iot-ca.csr /certs/iot-ca-signed.crt \
   https://intermediate-ca.cert-lab.local:8443 caCACert
 
-# Complete IoT CA (Phase 2: installs cert + enables EST)
+# Complete IoT CA (Phase 2: installs cert)
 sudo podman exec -it dogtag-iot-ca /scripts/init-iot-ca.sh
 
 # 4. Initialize ACME Sub-CA (Phase 1: generates CSR)
@@ -315,9 +316,11 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 |----|---------|-------|
 | 172.26.0.12 | RSA Root CA | 8443:8443 |
 | 172.26.0.11 | RSA Intermediate CA | 8444:8443 |
-| 172.26.0.13 | RSA IoT CA (EST) | 8445:8443 |
+| 172.26.0.13 | RSA IoT CA | 8445:8443 |
 | 172.26.0.17 | ds-acme (389DS) | internal |
 | 172.26.0.18 | ACME Sub-CA | 8446:8443 |
+| 172.26.0.19 | RSA EST DS | internal |
+| 172.26.0.20 | RSA EST CA (EST) | 8447:8443 |
 | 172.26.0.14-16 | 389DS instances | internal |
 
 **ECC P-384 PKI Network (172.28.0.0/24)** - rootful podman:
@@ -327,6 +330,8 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 | 172.28.0.12 | ECC Root CA | 8463:8443 |
 | 172.28.0.11 | ECC Intermediate CA | 8464:8443 |
 | 172.28.0.13 | ECC IoT CA | 8465:8443 |
+| 172.28.0.17 | ECC EST DS | internal |
+| 172.28.0.18 | ECC EST CA (EST) | 8466:8443 |
 | 172.28.0.14-16 | 389DS instances | internal |
 
 **ML-DSA-87 PKI Network (172.27.0.0/24)** - rootful podman:
@@ -336,6 +341,8 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 | 172.27.0.12 | PQ Root CA | 8453:8443 |
 | 172.27.0.11 | PQ Intermediate CA | 8454:8443 |
 | 172.27.0.13 | PQ IoT CA | 8455:8443 |
+| 172.27.0.17 | PQ EST DS | internal |
+| 172.27.0.18 | PQ EST CA (EST) | 8456:8443 |
 | 172.27.0.14-16 | 389DS instances | internal |
 
 **FreeIPA Network (172.25.0.0/24)** - rootful podman:
@@ -373,7 +380,13 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 │   ├── pq-intermediate-ca-step1.cfg     # PQ Intermediate (CSR)
 │   ├── pq-intermediate-ca-step2.cfg     # PQ Intermediate (install)
 │   ├── pq-iot-ca-step1.cfg              # PQ IoT (CSR)
-│   └── pq-iot-ca-step2.cfg              # PQ IoT (install)
+│   ├── pq-iot-ca-step2.cfg              # PQ IoT (install)
+│   ├── est-ca-step1.cfg                 # RSA EST (CSR)
+│   ├── est-ca-step2.cfg                 # RSA EST (install)
+│   ├── ecc-est-ca-step1.cfg             # ECC EST (CSR)
+│   ├── ecc-est-ca-step2.cfg             # ECC EST (install)
+│   ├── pq-est-ca-step1.cfg              # PQ EST (CSR)
+│   └── pq-est-ca-step2.cfg              # PQ EST (install)
 │
 ├── scripts/pki/               # PKI initialization scripts
 │   ├── lib-pki-common.sh              # Shared functions
@@ -382,14 +395,17 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 │   ├── init-iot-ca.sh                 # RSA IoT CA
 │   ├── init-pki-hierarchy.sh          # RSA full hierarchy (+ ACME CA + EST)
 │   ├── init-acme-ca.sh               # ACME Sub-CA
-│   ├── enable-est.sh                 # EST subsystem on IoT CA
+│   ├── init-est-ca.sh                 # EST Sub-CA (multi-PKI)
+│   ├── enable-est.sh                 # EST subsystem on EST CA
 │   ├── init-ecc-root-ca.sh            # ECC Root CA
 │   ├── init-ecc-intermediate-ca.sh    # ECC Intermediate CA
 │   ├── init-ecc-iot-ca.sh             # ECC IoT CA
+│   ├── init-ecc-est-ca.sh             # ECC EST wrapper
 │   ├── init-ecc-pki-hierarchy.sh      # ECC full hierarchy
 │   ├── init-pq-root-ca.sh             # PQ Root CA
 │   ├── init-pq-intermediate-ca.sh     # PQ Intermediate CA
 │   ├── init-pq-iot-ca.sh              # PQ IoT CA
+│   ├── init-pq-est-ca.sh              # PQ EST wrapper
 │   ├── init-pq-pki-hierarchy.sh       # PQ full hierarchy
 │   ├── sign-csr.sh
 │   └── export-chain.sh
@@ -754,6 +770,8 @@ The lab includes ACME (Automated Certificate Management Environment) and EST (En
 Intermediate CA (172.26.0.11:8444)
     │
     ├── IoT Sub-CA (172.26.0.13:8445)
+    │
+    ├── EST Sub-CA (172.26.0.20:8447)
     │       └── EST Subsystem (RFC 7030)
     │
     └── ACME Sub-CA (172.26.0.18:8446)
@@ -762,11 +780,11 @@ Intermediate CA (172.26.0.11:8444)
 
 ### Automated Initialization
 
-Both ACME CA and EST are initialized automatically by `init-pki-hierarchy.sh`:
+Both ACME CA and EST CA are initialized automatically by `init-pki-hierarchy.sh`:
 
-1. After IoT CA init completes, `enable-est.sh` runs inside the IoT CA container
+1. After IoT CA init completes, `init-est-ca.sh` initializes the EST Sub-CA (two-phase CSR + install + enables EST subsystem)
 2. If `dogtag-acme-ca` container is running, `init-acme-ca.sh` runs (two-phase CSR + install)
-3. Admin credentials for ACME CA are exported by `export-all-admin-creds.sh`
+3. Admin credentials for ACME CA and EST CA are exported by `export-all-admin-creds.sh`
 
 ### ACME CA Manual Initialization
 
@@ -794,36 +812,36 @@ sudo podman exec -it dogtag-acme-ca /scripts/init-acme-ca.sh
 
 ### EST Subsystem
 
-EST provides RFC 7030 certificate enrollment, running as a subsystem within the IoT CA. EST is automatically enabled at the end of IoT CA initialization (`init-iot-ca.sh` phase 2). For manual enablement:
+EST provides RFC 7030 certificate enrollment, running in its own dedicated EST Sub-CA container. EST is initialized as a separate subordinate CA under the Intermediate CA, with its own 389DS instance. For manual enablement:
 
 ```bash
-# Enable EST on IoT CA (after IoT CA is initialized)
-sudo podman exec -it dogtag-iot-ca /scripts/enable-est.sh
+# Enable EST on EST CA (after EST CA is initialized)
+sudo podman exec -it dogtag-est-ca /scripts/enable-est.sh
 ```
 
 ### IoT Client EST-First Enrollment
 
 The IoT Client simulator (`containers/iot-client/app.py`) uses an EST-first enrollment strategy:
-1. Probes `/.well-known/est/cacerts` to check EST availability per PKI type
-2. If EST is available, enrolls via `/.well-known/est/simpleenroll` (RFC 7030)
-3. Falls back to Dogtag REST API (`/ca/rest/certrequests`) if EST is unavailable
+1. Probes `/.well-known/est/cacerts` on the EST Sub-CA to check EST availability per PKI type
+2. If EST is available, enrolls via `/.well-known/est/simpleenroll` on the EST Sub-CA (RFC 7030)
+3. Falls back to Dogtag REST API (`/ca/rest/certrequests`) on the IoT CA if EST is unavailable
 4. Health endpoint reports both CA and EST availability per PKI type
 
 **EST Endpoints:**
-- `https://iot-ca.cert-lab.local:8445/.well-known/est/cacerts` - Get CA certificates
-- `https://iot-ca.cert-lab.local:8445/.well-known/est/simpleenroll` - Enroll for certificate
-- `https://iot-ca.cert-lab.local:8445/.well-known/est/simplereenroll` - Re-enroll certificate
+- `https://est-ca.cert-lab.local:8447/.well-known/est/cacerts` - Get CA certificates
+- `https://est-ca.cert-lab.local:8447/.well-known/est/simpleenroll` - Enroll for certificate
+- `https://est-ca.cert-lab.local:8447/.well-known/est/simplereenroll` - Re-enroll certificate
 
 **EST Client Example:**
 ```bash
 # Get CA certificates
-curl -sk https://iot-ca.cert-lab.local:8445/.well-known/est/cacerts
+curl -sk https://est-ca.cert-lab.local:8447/.well-known/est/cacerts
 
 # Enroll with client certificate authentication
 curl --cacert ca-chain.crt --cert client.crt --key client.key \
      -X POST -H 'Content-Type: application/pkcs10' \
      --data-binary @request.p10 \
-     https://iot-ca.cert-lab.local:8445/.well-known/est/simpleenroll
+     https://est-ca.cert-lab.local:8447/.well-known/est/simpleenroll
 ```
 
 ### CLI Commands for ACME/EST
@@ -848,3 +866,5 @@ curl --cacert ca-chain.crt --cert client.crt --key client.key \
 |----|---------|-------|---------|
 | 172.26.0.17 | ds-acme | 3389 | 389DS for ACME CA |
 | 172.26.0.18 | dogtag-acme-ca | 8446:8443 | ACME Sub-CA + Responder |
+| 172.26.0.19 | ds-est | 3389 | 389DS for EST CA |
+| 172.26.0.20 | dogtag-est-ca | 8447:8443 | EST Sub-CA + EST Subsystem |

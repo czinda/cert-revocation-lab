@@ -38,18 +38,33 @@ PKI_CONFIG = {
     "rsa": {
         "name": "RSA-4096",
         "ports": {"root": 8443, "intermediate": 8444, "iot": 8445},
+        "hostnames": {
+            "root": "root-ca.cert-lab.local",
+            "intermediate": "intermediate-ca.cert-lab.local",
+            "iot": "iot-ca.cert-lab.local",
+        },
         "admin_dir": CERTS_DIR / "admin",
         "cert_prefix": "",
     },
     "ecc": {
         "name": "ECC P-384",
         "ports": {"root": 8463, "intermediate": 8464, "iot": 8465},
+        "hostnames": {
+            "root": "ecc-root-ca.cert-lab.local",
+            "intermediate": "ecc-intermediate-ca.cert-lab.local",
+            "iot": "ecc-iot-ca.cert-lab.local",
+        },
         "admin_dir": CERTS_DIR / "ecc" / "admin",
         "cert_prefix": "ecc-",
     },
     "pqc": {
         "name": "ML-DSA-87",
         "ports": {"root": 8453, "intermediate": 8454, "iot": 8455},
+        "hostnames": {
+            "root": "pq-root-ca.cert-lab.local",
+            "intermediate": "pq-intermediate-ca.cert-lab.local",
+            "iot": "pq-iot-ca.cert-lab.local",
+        },
         "admin_dir": CERTS_DIR / "pq" / "admin",
         "cert_prefix": "pq-",
     },
@@ -88,7 +103,8 @@ class PKIClient:
         self.ca_level = ca_level
         self.config = PKI_CONFIG[pki_type]
         self.port = self.config["ports"][ca_level]
-        self.base_url = f"https://localhost:{self.port}"
+        self.hostname = self.config["hostnames"][ca_level]
+        self.base_url = f"https://{self.hostname}:{self.port}"
         self.container = self.CONTAINER_MAP.get(pki_type, {}).get(ca_level)
         self.instance = self.INSTANCE_MAP.get(pki_type, {}).get(ca_level)
 
@@ -340,11 +356,12 @@ class PKIClient:
         # Build revocation command - import admin P12 into temp NSS db, then revoke
         instance = self.instance
         pki_password = self._get_pki_password()
+        ca_hostname = self.hostname
         revoke_cmd = f"""
 set -e
 CLIENT_DB=/tmp/pki-revoke-nssdb
 ADMIN_P12=/root/.dogtag/{instance}/ca_admin_cert.p12
-CA_URL=https://localhost:8443
+CA_URL=https://{ca_hostname}:8443
 
 # Set up temp NSS database with admin cert
 rm -rf $CLIENT_DB

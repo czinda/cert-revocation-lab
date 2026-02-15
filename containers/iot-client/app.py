@@ -68,7 +68,7 @@ class DeviceStatus(str, Enum):
     ERROR = "error"
 
 
-# CA Configuration per PKI type
+# CA Configuration per PKI type (IoT CA - REST API cert issuance)
 CA_CONFIG = {
     PKIType.RSA: {
         "host": os.getenv("RSA_IOT_CA_HOST", "iot-ca.cert-lab.local"),
@@ -96,6 +96,31 @@ CA_CONFIG = {
         "instance": "pki-pq-iot-ca",
         "key_type": "rsa",  # CSR uses RSA, CA signs with ML-DSA
         "key_size": 4096,
+    },
+}
+
+# EST CA Configuration per PKI type (dedicated EST Sub-CAs)
+EST_CA_CONFIG = {
+    PKIType.RSA: {
+        "host": os.getenv("RSA_EST_CA_HOST", "est-ca.cert-lab.local"),
+        "port": int(os.getenv("RSA_EST_CA_PORT", "8447")),
+        "internal_port": 8443,
+        "container": "dogtag-est-ca",
+        "instance": "pki-est-ca",
+    },
+    PKIType.ECC: {
+        "host": os.getenv("ECC_EST_CA_HOST", "ecc-est-ca.cert-lab.local"),
+        "port": int(os.getenv("ECC_EST_CA_PORT", "8466")),
+        "internal_port": 8443,
+        "container": "dogtag-ecc-est-ca",
+        "instance": "pki-ecc-est-ca",
+    },
+    PKIType.PQC: {
+        "host": os.getenv("PQC_EST_CA_HOST", "pq-est-ca.cert-lab.local"),
+        "port": int(os.getenv("PQC_EST_CA_PORT", "8456")),
+        "internal_port": 8443,
+        "container": "dogtag-pq-est-ca",
+        "instance": "pki-pq-est-ca",
     },
 }
 
@@ -210,8 +235,8 @@ _est_available: Dict[str, Optional[bool]] = {}
 
 
 async def check_est_available(pki_type: PKIType) -> bool:
-    """Check if EST endpoint is available on the IoT CA"""
-    config = CA_CONFIG[pki_type]
+    """Check if EST endpoint is available on the EST CA"""
+    config = EST_CA_CONFIG[pki_type]
     est_url = f"https://localhost:{config['port']}/.well-known/est/cacerts"
 
     try:
@@ -228,7 +253,7 @@ async def check_est_available(pki_type: PKIType) -> bool:
 
 async def submit_est_enrollment(device: IoTDevice) -> Dict[str, Any]:
     """Submit CSR via EST protocol (/.well-known/est/simpleenroll) - primary path"""
-    config = CA_CONFIG[device.pki_type]
+    config = EST_CA_CONFIG[device.pki_type]
     est_url = f"https://localhost:{config['port']}/.well-known/est/simpleenroll"
 
     try:
@@ -596,17 +621,19 @@ async def get_ca_certificates(pki_type: PKIType):
     if not await check_ca_available(pki_type):
         raise HTTPException(status_code=503, detail=f"CA for {pki_type} is not available")
 
+    est_config = EST_CA_CONFIG[pki_type]
+
     try:
         async with httpx.AsyncClient(verify=False, timeout=10.0) as client:
-            # Try EST cacerts endpoint first
-            est_url = f"https://localhost:{config['port']}/.well-known/est/cacerts"
+            # Try EST cacerts endpoint first (on dedicated EST CA)
+            est_url = f"https://localhost:{est_config['port']}/.well-known/est/cacerts"
             try:
                 est_response = await client.get(est_url)
                 if est_response.status_code == 200 and len(est_response.content) > 0:
                     return {
                         "pki_type": pki_type.value,
-                        "ca_host": config["host"],
-                        "ca_port": config["port"],
+                        "ca_host": est_config["host"],
+                        "ca_port": est_config["port"],
                         "source": "est",
                         "certificate_chain": est_response.text
                     }

@@ -716,9 +716,11 @@ validate_single_pki() {
 
         if is_rootful_running "$ca_name"; then
             check_wait
+            local ca_hostname="${ca_name#dogtag-}.${LAB_DOMAIN:-cert-lab.local}"
+            local ca_url="https://${ca_hostname}:${ca_port}"
             local elapsed=0 ca_up=false
             while [ $elapsed -lt $WAIT_PKI_CA ]; do
-                if curl -sk "https://localhost:${ca_port}/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
+                if curl -sk "${ca_url}/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
                     ca_up=true
                     break
                 fi
@@ -742,7 +744,7 @@ validate_single_pki() {
                 while [ $elapsed2 -lt 60 ]; do
                     sleep $WAIT_RETRY
                     elapsed2=$((elapsed2 + WAIT_RETRY))
-                    if curl -sk "https://localhost:${ca_port}/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
+                    if curl -sk "${ca_url}/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
                         check_fixed "PKI server started"
                         add_fixed "$ca_name"
                         continue 2
@@ -881,12 +883,13 @@ validate_acme_ca() {
     fi
 
     # ACME CA container
+    local acme_url="https://acme-ca.${LAB_DOMAIN:-cert-lab.local}:8446"
     check_start "T4" "Dogtag ACME CA (dogtag-acme-ca, port 8446) ..."
     if is_rootful_running "dogtag-acme-ca"; then
         check_wait
         local elapsed=0 ca_up=false
         while [ $elapsed -lt $WAIT_PKI_CA ]; do
-            if curl -sk "https://localhost:8446/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
+            if curl -sk "${acme_url}/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
                 ca_up=true; break
             fi
             sleep $WAIT_RETRY
@@ -904,7 +907,7 @@ validate_acme_ca() {
             local elapsed2=0
             while [ $elapsed2 -lt 60 ]; do
                 sleep $WAIT_RETRY; elapsed2=$((elapsed2 + WAIT_RETRY))
-                if curl -sk "https://localhost:8446/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
+                if curl -sk "${acme_url}/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
                     check_fixed "PKI server started"; add_fixed "dogtag-acme-ca"; ca_up=true; break
                 fi
             done
@@ -947,7 +950,7 @@ validate_acme_ca() {
 
     # ACME directory endpoint (warn-only)
     check_start "T4" "ACME directory endpoint ..."
-    if curl -sk "https://localhost:8446/acme/directory" 2>/dev/null | grep -q "newNonce\|newAccount\|newOrder"; then
+    if curl -sk "${acme_url}/acme/directory" 2>/dev/null | grep -q "newNonce\|newAccount\|newOrder"; then
         check_pass
     else
         check_skip "ACME responder not active (may need configuration)"
@@ -956,12 +959,143 @@ validate_acme_ca() {
     [ "$acme_ok" = true ] && return 0 || return 1
 }
 
+validate_est_ca() {
+    local pki_label="$1"
+    local est_container="$2"  # e.g., dogtag-est-ca, dogtag-ecc-est-ca
+    local est_port="$3"       # e.g., 8447, 8466, 8456
+    local cert_dir="$4"       # e.g., data/certs, data/certs/ecc
+    local est_ok=true
+
+    echo ""
+    echo -e "  ${BLUE}--- $pki_label EST Sub-CA ---${NC}"
+
+    # DS container
+    local ds_name="${est_container/dogtag-/ds-}"
+    ds_name="${ds_name/-ca/}"
+    check_start "T4" "389DS EST ($ds_name) ..."
+    if is_rootful_running "$ds_name"; then
+        local h
+        h=$(rootful_health "$ds_name")
+        if [ "$h" = "healthy" ]; then
+            check_pass
+        else
+            check_wait
+            local elapsed=0
+            while [ $elapsed -lt $WAIT_PKI_DS ]; do
+                sleep $WAIT_RETRY
+                elapsed=$((elapsed + WAIT_RETRY))
+                h=$(rootful_health "$ds_name")
+                [ "$h" = "healthy" ] && { check_pass; break; }
+                if run_rootful podman exec "$ds_name" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
+                    check_pass; break
+                fi
+            done
+            [ "$h" != "healthy" ] && { check_fail "Not healthy after ${WAIT_PKI_DS}s"; est_ok=false; }
+        fi
+    else
+        local st
+        st=$(rootful_status "$ds_name")
+        if [ "$st" = "missing" ]; then
+            check_skip "EST DS not deployed"
+            return 1
+        fi
+        if [ "$AUTO_FIX" = true ]; then
+            echo -ne "${YELLOW}restarting${NC} "
+            run_rootful podman start "$ds_name" &>/dev/null
+            sleep 15
+            is_rootful_running "$ds_name" && { check_fixed "Restarted"; add_fixed "$ds_name"; } || { check_fail "Restart failed"; est_ok=false; }
+        else
+            check_fail "Not running ($st)"; est_ok=false
+        fi
+    fi
+
+    # EST CA container
+    local est_hostname="${est_container#dogtag-}.${LAB_DOMAIN:-cert-lab.local}"
+    local est_url="https://${est_hostname}:${est_port}"
+    check_start "T4" "Dogtag EST CA ($est_container, port $est_port) ..."
+    if is_rootful_running "$est_container"; then
+        check_wait
+        local elapsed=0 ca_up=false
+        while [ $elapsed -lt $WAIT_PKI_CA ]; do
+            if curl -sk "${est_url}/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
+                ca_up=true; break
+            fi
+            sleep $WAIT_RETRY
+            elapsed=$((elapsed + WAIT_RETRY))
+        done
+        if [ "$ca_up" = true ]; then
+            check_pass
+        elif [ "$AUTO_FIX" = true ]; then
+            local inst="${est_container/dogtag-/pki-}"
+            echo -ne "${YELLOW}starting PKI server${NC} "
+            run_rootful podman exec "$est_container" bash -c "
+                if [ -d /var/lib/pki/$inst ]; then
+                    pgrep -f 'catalina' > /dev/null 2>&1 || nohup pki-server run $inst > /var/log/pki/$inst/startup.log 2>&1 &
+                fi
+            " 2>/dev/null
+            local elapsed2=0
+            while [ $elapsed2 -lt 60 ]; do
+                sleep $WAIT_RETRY; elapsed2=$((elapsed2 + WAIT_RETRY))
+                if curl -sk "${est_url}/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
+                    check_fixed "PKI server started"; add_fixed "$est_container"; ca_up=true; break
+                fi
+            done
+            [ "$ca_up" != true ] && { check_fail "PKI server not responding"; est_ok=false; add_failed "$est_container"; }
+        else
+            check_fail "CA not responding on port $est_port"; est_ok=false
+        fi
+    else
+        local st
+        st=$(rootful_status "$est_container")
+        if [ "$st" = "missing" ]; then
+            check_skip "EST CA not deployed"
+            return 1
+        fi
+        if [ "$AUTO_FIX" = true ]; then
+            echo -ne "${YELLOW}restarting${NC} "
+            run_rootful podman start "$est_container" &>/dev/null
+            sleep 10
+            is_rootful_running "$est_container" && { check_fixed "Restarted (CA may need time)"; add_fixed "$est_container"; } || { check_fail "Restart failed"; est_ok=false; }
+        else
+            check_fail "Not running ($st)"; est_ok=false
+        fi
+    fi
+
+    # EST CA certificate chain
+    local est_cert="${cert_dir}/est-ca.crt"
+    local chain_cert="${cert_dir}/ca-chain.crt"
+    if [ -f "$est_cert" ] && [ -f "$chain_cert" ]; then
+        check_start "T4" "$pki_label EST CA chain: Intermediate -> EST ..."
+        if openssl verify -CAfile "$chain_cert" "$est_cert" &>/dev/null; then
+            check_pass
+        else
+            check_fail "Chain verification failed"; est_ok=false
+        fi
+    elif [ -f "$est_cert" ]; then
+        check_start "T4" "$pki_label EST CA certificate ..."
+        check_pass
+        echo -e "         ${DIM}$(openssl x509 -in "$est_cert" -noout -subject 2>/dev/null)${NC}"
+    fi
+
+    # EST endpoint
+    check_start "T4" "$pki_label EST endpoint (port $est_port) ..."
+    if curl -sk "${est_url}/.well-known/est/cacerts" 2>/dev/null | head -1 | grep -q "BEGIN\|MIIB\|MIIC\|MIID"; then
+        check_pass
+    else
+        check_skip "EST responder not active (may need configuration)"
+    fi
+
+    [ "$est_ok" = true ] && return 0 || return 1
+}
+
 validate_est_endpoint() {
     local pki_label="$1"
-    local iot_port="$2"
+    local est_port="$2"
+    local est_ca_name="$3"  # e.g., dogtag-est-ca, dogtag-ecc-est-ca
+    local est_hostname="${est_ca_name#dogtag-}.${LAB_DOMAIN:-cert-lab.local}"
 
-    check_start "T4" "$pki_label EST endpoint (port $iot_port) ..."
-    if curl -sk "https://localhost:${iot_port}/.well-known/est/cacerts" 2>/dev/null | head -1 | grep -q "BEGIN\|MIIB\|MIIC\|MIID"; then
+    check_start "T4" "$pki_label EST endpoint (port $est_port) ..."
+    if curl -sk "https://${est_hostname}:${est_port}/.well-known/est/cacerts" 2>/dev/null | head -1 | grep -q "BEGIN\|MIIB\|MIIC\|MIID"; then
         check_pass
     else
         check_skip "EST not enabled (optional)"
@@ -988,20 +1122,32 @@ tier_4_pki() {
 
     if [ "$RSA_PKI_DEPLOYED" = true ]; then
         validate_single_pki rsa "ds-" "dogtag-" 8443 8444 8445 "data/certs" "RSA-4096" || ok=false
+        # EST CA (subordinate to RSA Intermediate CA)
+        if [ "$(rootful_status dogtag-est-ca)" != "missing" ]; then
+            validate_est_ca "RSA-4096" "dogtag-est-ca" 8447 "data/certs" || ok=false
+        else
+            validate_est_endpoint "RSA-4096" 8447 "dogtag-est-ca"
+        fi
         # ACME CA (subordinate to RSA Intermediate CA)
         if [ "$(rootful_status dogtag-acme-ca)" != "missing" ]; then
             validate_acme_ca "data/certs" || ok=false
         fi
-        # EST on RSA IoT CA
-        validate_est_endpoint "RSA-4096" 8445
     fi
     if [ "$ECC_PKI_DEPLOYED" = true ]; then
         validate_single_pki ecc "ds-ecc-" "dogtag-ecc-" 8463 8464 8465 "data/certs/ecc" "ECC P-384" || ok=false
-        validate_est_endpoint "ECC P-384" 8465
+        if [ "$(rootful_status dogtag-ecc-est-ca)" != "missing" ]; then
+            validate_est_ca "ECC P-384" "dogtag-ecc-est-ca" 8466 "data/certs/ecc" || ok=false
+        else
+            validate_est_endpoint "ECC P-384" 8466 "dogtag-ecc-est-ca"
+        fi
     fi
     if [ "$PQ_PKI_DEPLOYED" = true ]; then
         validate_single_pki pq "ds-pq-" "dogtag-pq-" 8453 8454 8455 "data/certs/pq" "ML-DSA-87" || ok=false
-        validate_est_endpoint "ML-DSA-87" 8455
+        if [ "$(rootful_status dogtag-pq-est-ca)" != "missing" ]; then
+            validate_est_ca "ML-DSA-87" "dogtag-pq-est-ca" 8456 "data/certs/pq" || ok=false
+        else
+            validate_est_endpoint "ML-DSA-87" 8456 "dogtag-pq-est-ca"
+        fi
     fi
 
     [ "$ok" = true ] && set_tier_status 4 pass || set_tier_status 4 fail
@@ -1052,7 +1198,7 @@ tier_5_freeipa() {
         local code
         code=$(curl -sk -o /dev/null -w "%{http_code}" \
             -H "Host: ipa.cert-lab.local" \
-            --connect-timeout 5 "https://localhost:4443/ipa/config/ca.crt" 2>/dev/null)
+            --connect-timeout 5 "https://ipa.cert-lab.local:4443/ipa/config/ca.crt" 2>/dev/null)
         if [ "$code" = "200" ]; then
             ipa_ready=true
             break
@@ -1087,7 +1233,7 @@ tier_5_freeipa() {
         else
             local enc_pass cookie="/tmp/pdv_ipa_$$"
             enc_pass=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${pass}', safe=''))" 2>/dev/null)
-            curl -sk -X POST "https://localhost:4443/ipa/session/login_password" \
+            curl -sk -X POST "https://ipa.cert-lab.local:4443/ipa/session/login_password" \
                 -H "Host: ipa.cert-lab.local" \
                 -H "Content-Type: application/x-www-form-urlencoded" \
                 -H "Referer: https://ipa.cert-lab.local/ipa" \
@@ -1099,7 +1245,7 @@ tier_5_freeipa() {
 
                 check_start "T5" "FreeIPA API ping ..."
                 local ping
-                ping=$(curl -sk -X POST "https://localhost:4443/ipa/session/json" \
+                ping=$(curl -sk -X POST "https://ipa.cert-lab.local:4443/ipa/session/json" \
                     -H "Host: ipa.cert-lab.local" \
                     -H "Content-Type: application/json" \
                     -H "Referer: https://ipa.cert-lab.local/ipa" \

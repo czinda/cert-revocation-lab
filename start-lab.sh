@@ -273,12 +273,18 @@ setup_volumes() {
         "ds-root-data"
         "ds-intermediate-data"
         "ds-iot-data"
+        "ds-acme-data"
+        "ds-est-data"
         "pki-root-data"
         "pki-root-logs"
         "pki-intermediate-data"
         "pki-intermediate-logs"
         "pki-iot-data"
         "pki-iot-logs"
+        "pki-acme-data"
+        "pki-acme-logs"
+        "pki-est-data"
+        "pki-est-logs"
     )
 
     # Check/create rootless volumes
@@ -333,24 +339,15 @@ setup_hosts() {
         log_info "Adding DNS entries to /etc/hosts (requires sudo)..."
         sudo tee -a /etc/hosts > /dev/null << 'EOF'
 
-# Certificate Revocation Lab
-172.20.0.10 ipa.cert-lab.local ipa freeipa
-172.20.0.11 intermediate-ca.cert-lab.local intermediate-ca
-172.20.0.12 root-ca.cert-lab.local root-ca
-172.20.0.13 iot-ca.cert-lab.local iot-ca
-172.20.0.14 ds-root.cert-lab.local ds-root
-172.20.0.15 ds-intermediate.cert-lab.local ds-intermediate
-172.20.0.16 ds-iot.cert-lab.local ds-iot
-172.20.0.20 postgres.cert-lab.local postgres
-172.20.0.21 redis.cert-lab.local redis
-172.20.0.22 awx.cert-lab.local awx
-172.20.0.23 awx-task.cert-lab.local awx-task
-172.20.0.30 zookeeper.cert-lab.local zookeeper
-172.20.0.31 kafka.cert-lab.local kafka
-172.20.0.40 eda.cert-lab.local eda
-172.20.0.50 edr.cert-lab.local edr
-172.20.0.51 siem.cert-lab.local siem
-172.20.0.60 jupyter.cert-lab.local jupyter
+# Certificate Revocation Lab - PKI CAs (rootful podman, accessed via host port mappings)
+127.0.0.1 root-ca.cert-lab.local intermediate-ca.cert-lab.local iot-ca.cert-lab.local acme-ca.cert-lab.local est-ca.cert-lab.local
+127.0.0.1 ecc-root-ca.cert-lab.local ecc-intermediate-ca.cert-lab.local ecc-iot-ca.cert-lab.local ecc-est-ca.cert-lab.local
+127.0.0.1 pq-root-ca.cert-lab.local pq-intermediate-ca.cert-lab.local pq-iot-ca.cert-lab.local pq-est-ca.cert-lab.local
+
+# Certificate Revocation Lab - Services (rootless podman, accessed via host port mappings)
+127.0.0.1 ipa.cert-lab.local kafka.cert-lab.local eda.cert-lab.local
+127.0.0.1 awx.cert-lab.local postgres.cert-lab.local redis.cert-lab.local
+127.0.0.1 edr.cert-lab.local siem.cert-lab.local jupyter.cert-lab.local
 EOF
         log_success "DNS entries added"
     else
@@ -539,7 +536,7 @@ start_pki_hierarchy() {
 
     # Check if all PKI containers are already running
     local all_running=true
-    for ctr in ds-root ds-intermediate ds-iot dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca; do
+    for ctr in ds-root ds-intermediate ds-iot ds-acme ds-est dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-acme-ca dogtag-est-ca; do
         if is_rootful_running "$ctr"; then
             log_success "$ctr is already running"
         else
@@ -564,7 +561,7 @@ start_pki_hierarchy() {
 
     # Wait for all containers to be running
     log_info "Waiting for PKI containers to start..."
-    for ctr in ds-root ds-intermediate ds-iot dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca; do
+    for ctr in ds-root ds-intermediate ds-iot ds-acme ds-est dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-acme-ca dogtag-est-ca; do
         local elapsed=0
         while [ $elapsed -lt 60 ]; do
             local status=""
@@ -587,7 +584,7 @@ start_pki_hierarchy() {
 
     # Wait for 389DS to be healthy (able to respond to LDAP queries)
     log_info "Waiting for Directory Servers to be ready..."
-    for ds in ds-root ds-intermediate ds-iot; do
+    for ds in ds-root ds-intermediate ds-iot ds-acme ds-est; do
         local elapsed=0
         while [ $elapsed -lt 120 ]; do
             if is_running_as_root; then
@@ -679,7 +676,7 @@ start_pq_pki_hierarchy() {
 
     # Check if all PQ PKI containers are already running
     local all_running=true
-    for ctr in ds-pq-root ds-pq-intermediate ds-pq-iot dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca; do
+    for ctr in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-est dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-est-ca; do
         if is_rootful_running "$ctr"; then
             log_success "$ctr is already running"
         else
@@ -702,7 +699,7 @@ start_pq_pki_hierarchy() {
 
     # Wait for all PQ containers to be running
     log_info "Waiting for PQ PKI containers to start..."
-    for ctr in ds-pq-root ds-pq-intermediate ds-pq-iot dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca; do
+    for ctr in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-est dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-est-ca; do
         local elapsed=0
         while [ $elapsed -lt 60 ]; do
             local status=""
@@ -725,7 +722,7 @@ start_pq_pki_hierarchy() {
 
     # Wait for PQ 389DS to be healthy
     log_info "Waiting for PQ Directory Servers to be ready..."
-    for ds in ds-pq-root ds-pq-intermediate ds-pq-iot; do
+    for ds in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-est; do
         local elapsed=0
         while [ $elapsed -lt 120 ]; do
             if is_running_as_root; then
@@ -767,7 +764,7 @@ start_ecc_pki_hierarchy() {
 
     # Check if all ECC PKI containers are already running
     local all_running=true
-    for ctr in ds-ecc-root ds-ecc-intermediate ds-ecc-iot dogtag-ecc-root-ca dogtag-ecc-intermediate-ca dogtag-ecc-iot-ca; do
+    for ctr in ds-ecc-root ds-ecc-intermediate ds-ecc-iot ds-ecc-est dogtag-ecc-root-ca dogtag-ecc-intermediate-ca dogtag-ecc-iot-ca dogtag-ecc-est-ca; do
         if is_rootful_running "$ctr"; then
             log_success "$ctr is already running"
         else
@@ -790,7 +787,7 @@ start_ecc_pki_hierarchy() {
 
     # Wait for all ECC containers to be running
     log_info "Waiting for ECC PKI containers to start..."
-    for ctr in ds-ecc-root ds-ecc-intermediate ds-ecc-iot dogtag-ecc-root-ca dogtag-ecc-intermediate-ca dogtag-ecc-iot-ca; do
+    for ctr in ds-ecc-root ds-ecc-intermediate ds-ecc-iot ds-ecc-est dogtag-ecc-root-ca dogtag-ecc-intermediate-ca dogtag-ecc-iot-ca dogtag-ecc-est-ca; do
         local elapsed=0
         while [ $elapsed -lt 60 ]; do
             local status=""
@@ -813,7 +810,7 @@ start_ecc_pki_hierarchy() {
 
     # Wait for ECC 389DS to be healthy
     log_info "Waiting for ECC Directory Servers to be ready..."
-    for ds in ds-ecc-root ds-ecc-intermediate ds-ecc-iot; do
+    for ds in ds-ecc-root ds-ecc-intermediate ds-ecc-iot ds-ecc-est; do
         local elapsed=0
         while [ $elapsed -lt 120 ]; do
             if is_running_as_root; then
@@ -864,7 +861,7 @@ start_freeipa() {
 
         log_info "FreeIPA installation is running in the background."
         log_info "Monitor progress with: sudo podman logs -f freeipa"
-        log_info "FreeIPA will be available at https://localhost:4443/ipa/ui once ready."
+        log_info "FreeIPA will be available at https://ipa.cert-lab.local:4443/ipa/ui once ready."
         log_success "FreeIPA container started"
     elif sudo -n true 2>/dev/null; then
         log_info "Starting FreeIPA with sudo..."
@@ -872,7 +869,7 @@ start_freeipa() {
 
         log_info "FreeIPA installation is running in the background."
         log_info "Monitor progress with: sudo podman logs -f freeipa"
-        log_info "FreeIPA will be available at https://localhost:4443/ipa/ui once ready."
+        log_info "FreeIPA will be available at https://ipa.cert-lab.local:4443/ipa/ui once ready."
         log_success "FreeIPA container started"
     else
         log_warn "FreeIPA requires systemd support and must run with rootful podman."
@@ -1024,26 +1021,30 @@ print_summary() {
     echo "PKI Service URLs:"
     if [ "$START_RSA_PKI" = true ]; then
         echo "  RSA-4096 PKI:"
-        echo "    Root CA:         https://localhost:8443/ca"
-        echo "    Intermediate CA: https://localhost:8444/ca"
-        echo "    IoT CA:          https://localhost:8445/ca"
+        echo "    Root CA:         https://root-ca.cert-lab.local:8443/ca"
+        echo "    Intermediate CA: https://intermediate-ca.cert-lab.local:8444/ca"
+        echo "    IoT CA:          https://iot-ca.cert-lab.local:8445/ca"
+        echo "    EST CA:          https://est-ca.cert-lab.local:8447/ca"
+        echo "    ACME CA:         https://acme-ca.cert-lab.local:8446/ca"
     fi
     if [ "$START_ECC_PKI" = true ]; then
         echo "  ECC P-384 PKI:"
-        echo "    Root CA:         https://localhost:8463/ca"
-        echo "    Intermediate CA: https://localhost:8464/ca"
-        echo "    IoT CA:          https://localhost:8465/ca"
+        echo "    Root CA:         https://ecc-root-ca.cert-lab.local:8463/ca"
+        echo "    Intermediate CA: https://ecc-intermediate-ca.cert-lab.local:8464/ca"
+        echo "    IoT CA:          https://ecc-iot-ca.cert-lab.local:8465/ca"
+        echo "    EST CA:          https://ecc-est-ca.cert-lab.local:8466/ca"
     fi
     if [ "$START_PQ_PKI" = true ]; then
         echo "  ML-DSA-87 (Post-Quantum) PKI:"
-        echo "    Root CA:         https://localhost:8453/ca"
-        echo "    Intermediate CA: https://localhost:8454/ca"
-        echo "    IoT CA:          https://localhost:8455/ca"
+        echo "    Root CA:         https://pq-root-ca.cert-lab.local:8453/ca"
+        echo "    Intermediate CA: https://pq-intermediate-ca.cert-lab.local:8454/ca"
+        echo "    IoT CA:          https://pq-iot-ca.cert-lab.local:8455/ca"
+        echo "    EST CA:          https://pq-est-ca.cert-lab.local:8456/ca"
     fi
     echo ""
 
     echo "Other Services:"
-    echo "  FreeIPA:         https://localhost:4443/ipa/ui"
+    echo "  FreeIPA:         https://ipa.cert-lab.local:4443/ipa/ui"
     echo "  AWX:             http://localhost:8084"
     echo "  Mock EDR:        http://localhost:8082"
     echo "  Mock SIEM:       http://localhost:8083"
@@ -1060,15 +1061,15 @@ print_summary() {
 
     echo "PKI Hierarchies Initialized:"
     if [ "$START_RSA_PKI" = true ]; then
-        echo "  RSA-4096:    Root CA -> Intermediate CA -> IoT Sub-CA"
+        echo "  RSA-4096:    Root CA -> Intermediate CA -> IoT Sub-CA / EST Sub-CA / ACME Sub-CA"
         echo "               Certs: data/certs/rsa/"
     fi
     if [ "$START_ECC_PKI" = true ]; then
-        echo "  ECC P-384:   Root CA -> Intermediate CA -> IoT Sub-CA"
+        echo "  ECC P-384:   Root CA -> Intermediate CA -> IoT Sub-CA / EST Sub-CA"
         echo "               Certs: data/certs/ecc/"
     fi
     if [ "$START_PQ_PKI" = true ]; then
-        echo "  ML-DSA-87:   Root CA -> Intermediate CA -> IoT Sub-CA"
+        echo "  ML-DSA-87:   Root CA -> Intermediate CA -> IoT Sub-CA / EST Sub-CA"
         echo "               Certs: data/certs/pq/"
     fi
     echo ""
@@ -1111,7 +1112,7 @@ quick_start() {
     # Start PKI containers from pki-compose.yml (rootful - has initialized data)
     if [ -f pki-compose.yml ]; then
         local pki_all_running=true
-        for ctr in ds-root ds-intermediate ds-iot dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca; do
+        for ctr in ds-root ds-intermediate ds-iot ds-acme ds-est dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-acme-ca dogtag-est-ca; do
             if is_rootful_running "$ctr"; then
                 log_success "$ctr is already running"
             else
@@ -1135,7 +1136,7 @@ quick_start() {
 
             # Start the PKI servers inside containers
             sleep 5
-            for ca in dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca; do
+            for ca in dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-acme-ca dogtag-est-ca; do
                 instance=$(echo $ca | sed 's/dogtag-/pki-/')
                 log_info "Starting PKI server in $ca..."
                 if [ "$RUNNING_AS_ROOT" = true ]; then
@@ -1204,9 +1205,9 @@ quick_start() {
     # Show status
     echo ""
     log_info "Checking PKI status..."
-    curl -sk https://localhost:8443/ca/admin/ca/getStatus 2>/dev/null | grep -q "running" && echo "  Root CA: running" || echo "  Root CA: not responding"
-    curl -sk https://localhost:8444/ca/admin/ca/getStatus 2>/dev/null | grep -q "running" && echo "  Intermediate CA: running" || echo "  Intermediate CA: not responding"
-    curl -sk https://localhost:8445/ca/admin/ca/getStatus 2>/dev/null | grep -q "running" && echo "  IoT CA: running" || echo "  IoT CA: not responding"
+    curl -sk https://root-ca.cert-lab.local:8443/ca/admin/ca/getStatus 2>/dev/null | grep -q "running" && echo "  Root CA: running" || echo "  Root CA: not responding"
+    curl -sk https://intermediate-ca.cert-lab.local:8444/ca/admin/ca/getStatus 2>/dev/null | grep -q "running" && echo "  Intermediate CA: running" || echo "  Intermediate CA: not responding"
+    curl -sk https://iot-ca.cert-lab.local:8445/ca/admin/ca/getStatus 2>/dev/null | grep -q "running" && echo "  IoT CA: running" || echo "  IoT CA: not responding"
 
     echo ""
     log_info "Running containers (rootless):"

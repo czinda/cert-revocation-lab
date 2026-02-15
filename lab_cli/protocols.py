@@ -23,10 +23,9 @@ class ProtocolResult:
     details: Optional[dict] = None
 
 
-# ACME CA endpoint configuration
-# Use localhost with mapped ports for host access
+# ACME CA endpoint configuration (host access via port mappings)
 ACME_ENDPOINTS = {
-    PKIType.RSA: "https://localhost:8446/acme",
+    PKIType.RSA: "https://acme-ca.cert-lab.local:8446/acme",
 }
 
 # Internal container hostnames (for container-to-container communication)
@@ -34,19 +33,18 @@ ACME_INTERNAL_ENDPOINTS = {
     PKIType.RSA: "https://acme-ca.cert-lab.local:8443/acme",
 }
 
-# EST endpoint configuration (EST runs on IoT CAs)
-# Use localhost with mapped ports for host access
+# EST endpoint configuration (EST runs on dedicated EST CAs, host access via port mappings)
 EST_ENDPOINTS = {
-    PKIType.RSA: "https://localhost:8445/.well-known/est",
-    PKIType.ECC: "https://localhost:8465/.well-known/est",
-    PKIType.PQC: "https://localhost:8455/.well-known/est",
+    PKIType.RSA: "https://est-ca.cert-lab.local:8447/.well-known/est",
+    PKIType.ECC: "https://ecc-est-ca.cert-lab.local:8466/.well-known/est",
+    PKIType.PQC: "https://pq-est-ca.cert-lab.local:8456/.well-known/est",
 }
 
 # Internal container hostnames (for container-to-container communication)
 EST_INTERNAL_ENDPOINTS = {
-    PKIType.RSA: "https://iot-ca.cert-lab.local:8443/.well-known/est",
-    PKIType.ECC: "https://ecc-iot-ca.cert-lab.local:8443/.well-known/est",
-    PKIType.PQC: "https://pq-iot-ca.cert-lab.local:8443/.well-known/est",
+    PKIType.RSA: "https://est-ca.cert-lab.local:8443/.well-known/est",
+    PKIType.ECC: "https://ecc-est-ca.cert-lab.local:8443/.well-known/est",
+    PKIType.PQC: "https://pq-est-ca.cert-lab.local:8443/.well-known/est",
 }
 
 
@@ -331,7 +329,7 @@ def est_get_cacerts(est_url: str) -> ProtocolResult:
             message=f"Failed to connect to EST endpoint: {error_msg}",
             details={
                 "url": est_url,
-                "hint": "Ensure IoT CA is running and EST is enabled: sudo podman exec -it dogtag-iot-ca /scripts/enable-est.sh"
+                "hint": "Ensure EST CA is running and EST is enabled"
             }
         )
 
@@ -343,7 +341,7 @@ def est_get_cacerts(est_url: str) -> ProtocolResult:
             message="EST endpoint returned empty response - EST may not be enabled",
             details={
                 "url": est_url,
-                "hint": "Enable EST on IoT CA: sudo podman exec -it dogtag-iot-ca /scripts/enable-est.sh"
+                "hint": "Ensure EST CA is running and EST is enabled"
             }
         )
 
@@ -363,7 +361,7 @@ def est_get_cacerts(est_url: str) -> ProtocolResult:
             message="EST endpoint not deployed - received HTTP error page",
             details={
                 "url": est_url,
-                "hint": "Enable EST on IoT CA: sudo podman exec -it dogtag-iot-ca /scripts/enable-est.sh"
+                "hint": "Ensure EST CA is running and EST is enabled"
             }
         )
 

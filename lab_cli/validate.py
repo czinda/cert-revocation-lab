@@ -866,8 +866,9 @@ def tier_4_pki(config: LabConfig, auto_fix: bool = False) -> TestCategory:
         for ca_container, port in pki["ca_containers"]:
             status = get_container_status(ca_container, rootful=True)
             if status == "running":
-                # Check if CA is responding
-                url = f"https://localhost:{port}/ca/admin/ca/getStatus"
+                # Check if CA is responding (hostname derived from container name)
+                ca_hostname = ca_container.replace("dogtag-", "") + ".cert-lab.local"
+                url = f"https://{ca_hostname}:{port}/ca/admin/ca/getStatus"
                 success, _, body = check_http_endpoint(url, timeout=10.0, verify_ssl=False)
                 if success and "running" in body.lower():
                     category.tests.append(TestCase(
@@ -997,7 +998,7 @@ def tier_5_freeipa(config: LabConfig, auto_fix: bool = False) -> TestCategory:
     ))
 
     # Check if FreeIPA is responding (this can take a while)
-    url = "https://localhost:4443/ipa/config/ca.crt"
+    url = "https://ipa.cert-lab.local:4443/ipa/config/ca.crt"
     headers = {"Host": "ipa.cert-lab.local"}
 
     freeipa_ready = False
