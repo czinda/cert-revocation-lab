@@ -360,7 +360,7 @@ def tier_0_prerequisites(auto_fix: bool = False) -> TestCategory:
             ))
 
     # Podman rootless access
-    rc, stdout, _ = run_as_user(["podman", "info", "--format", "{{.Host.Os}}"])
+    rc, stdout, _ = run_as_user(["podman", "info", "--format", "{{.Host.OS}}"])
     if rc == 0:
         category.tests.append(TestCase(
             name="podman rootless",
@@ -376,7 +376,7 @@ def tier_0_prerequisites(auto_fix: bool = False) -> TestCategory:
         ))
 
     # Rootful podman (for PKI)
-    rc, _, _ = run_rootful(["podman", "info", "--format", "{{.Host.Os}}"])
+    rc, _, _ = run_rootful(["podman", "info", "--format", "{{.Host.OS}}"])
     if rc == 0:
         category.tests.append(TestCase(
             name="podman rootful",
