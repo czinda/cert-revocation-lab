@@ -1,20 +1,19 @@
 #!/bin/bash
 #
-# enable-est.sh - Enable EST (Enrollment over Secure Transport) on IoT CA
+# enable-est.sh - Enable EST (Enrollment over Secure Transport) subsystem
 # EST allows certificate enrollment via RFC 7030 protocol
 #
 set -e
 
 # Configuration
 PKI_INSTANCE="${PKI_INSTANCE_NAME:-pki-iot-ca}"
-EST_REALM="${EST_REALM:-EST Realm}"
 
 # Source common functions
 source "$(dirname "$0")/lib-pki-common.sh"
 
 print_header "Enabling EST Subsystem"
 
-# Check if IoT CA is running
+# Check if CA is running
 if ! curl -sk "https://localhost:8443/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
     log_error "CA is not running. Initialize the CA first."
     exit 1
@@ -34,37 +33,26 @@ log_info "Configuring EST subsystem..."
 # Create EST configuration directory
 mkdir -p "/var/lib/pki/${PKI_INSTANCE}/conf/est"
 
-# Configure EST backend - points to this CA (IoT CA) for certificate issuance
-cat > "/var/lib/pki/${PKI_INSTANCE}/conf/est/backend.conf" << 'EOF'
-# EST Backend Configuration
-# Uses the local CA (IoT CA) for certificate enrollment
-class=org.dogtagpki.est.backend.DogtagCABackend
+# Configure EST backend - points to this CA for certificate issuance
+EST_PASSWORD="${PKI_ADMIN_PASSWORD:-${ADMIN_PASSWORD:-RedHat123}}"
+cat > "/var/lib/pki/${PKI_INSTANCE}/conf/est/backend.conf" << EOF
+class=org.dogtagpki.est.DogtagRABackend
 url=https://localhost:8443
-profile=estServerCert
+profile=caServerCert
 username=admin
-password=RedHat123
+password=${EST_PASSWORD}
 EOF
 
-# Configure EST authentication
-cat > "/var/lib/pki/${PKI_INSTANCE}/conf/est/realm.conf" << EOF
-# EST Authentication Realm
-class=org.dogtagpki.est.realm.DogtagRealm
-url=https://localhost:8443
-authType=BasicAuth
+# Configure EST authentication realm
+cat > "/var/lib/pki/${PKI_INSTANCE}/conf/est/realm.conf" << 'EOF'
+class=com.netscape.cms.realm.PKIInMemoryRealm
 EOF
 
 # Configure EST authorization
 cat > "/var/lib/pki/${PKI_INSTANCE}/conf/est/authorizer.conf" << 'EOF'
-# EST Authorization Configuration
-# Allow all authenticated users to enroll
-class=org.dogtagpki.est.authorizer.ACLAuthorizer
+class=org.dogtagpki.est.ExternalProcessRequestAuthorizer
+executable=/usr/share/pki/est/bin/estauthz
 EOF
-
-# Create EST server certificate profile if not exists
-log_info "Checking EST certificate profile..."
-
-# The estServerCert profile should already exist in Dogtag
-# If not, we create a basic server cert profile for EST
 
 # Deploy EST webapp
 log_info "Deploying EST webapp..."

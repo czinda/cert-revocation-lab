@@ -83,23 +83,33 @@ deploy_acme_responder() {
     pki-server ca-config-set enabled true -i "$PKI_INSTANCE" 2>/dev/null || true
 
     # Configure ACME database (uses same LDAP as CA)
-    cat > /var/lib/pki/${PKI_INSTANCE}/conf/acme/database.conf << 'ACME_DB'
+    cat > /var/lib/pki/${PKI_INSTANCE}/conf/acme/database.conf << ACME_DB
 class=org.dogtagpki.acme.database.LDAPDatabase
-url=ldap://ds-acme.cert-lab.local:3389
+url=ldap://${DS_HOST}:${DS_PORT}
 authType=BasicAuth
 bindDN=cn=Directory Manager
-bindPassword=RedHat123
+bindPassword=${DS_PASSWORD}
 baseDN=dc=acme
 ACME_DB
 
     # Configure ACME issuer (points to this CA)
-    cat > /var/lib/pki/${PKI_INSTANCE}/conf/acme/issuer.conf << 'ACME_ISSUER'
+    cat > /var/lib/pki/${PKI_INSTANCE}/conf/acme/issuer.conf << ACME_ISSUER
 class=org.dogtagpki.acme.issuer.PKIIssuer
 url=https://localhost:8443
 profile=acmeServerCert
 username=admin
-password=RedHat123
+password=${PKI_PASSWORD}
 ACME_ISSUER
+
+    # Configure ACME authentication realm
+    cat > /var/lib/pki/${PKI_INSTANCE}/conf/acme/realm.conf << 'ACME_REALM'
+class=org.dogtagpki.acme.realm.InMemoryRealm
+ACME_REALM
+
+    # Enable ACME engine
+    cat > /var/lib/pki/${PKI_INSTANCE}/conf/acme/engine.conf << 'ACME_ENGINE'
+enabled=true
+ACME_ENGINE
 
     # Deploy ACME application
     if [ -d /var/lib/pki/${PKI_INSTANCE}/webapps ]; then
