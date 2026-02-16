@@ -114,8 +114,8 @@ phase2_install_cert() {
     # Configure caServerCert profile for non-RSA key types (ECC, PQ)
     configure_server_cert_profile "$PKI_INSTANCE" "$PKI_TYPE"
 
-    # Note: EST is served by the separate EST Sub-CA (${CA_PREFIX}est-ca)
-    log_info "Note: EST is served by the separate ${CA_PREFIX}EST Sub-CA"
+    # Note: EST is served by the separate EST Sub-CA
+    log_info "Note: EST is served by the separate ${CONFIG_PREFIX}EST Sub-CA"
 
     print_header "${CA_NAME} Initialization Complete"
     [ -n "$ALGO_DESC" ] && echo "Algorithm:   $ALGO_DESC"

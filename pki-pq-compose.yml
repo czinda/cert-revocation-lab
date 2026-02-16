@@ -117,7 +117,7 @@ services:
         ipv4_address: 172.27.0.12
     ports:
       - "8453:8443"
-      - "8483:8080"
+      - "8490:8080"
     command: ["/bin/bash", "-c", "sleep infinity"]
 
   # Dogtag PQ Intermediate CA - ML-DSA-87

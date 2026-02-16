@@ -28,23 +28,11 @@ ACME_ENDPOINTS = {
     PKIType.RSA: "https://acme-ca.cert-lab.local:8446/acme",
 }
 
-# Internal container hostnames (for container-to-container communication)
-ACME_INTERNAL_ENDPOINTS = {
-    PKIType.RSA: "https://acme-ca.cert-lab.local:8443/acme",
-}
-
 # EST endpoint configuration (EST runs on dedicated EST CAs, host access via port mappings)
 EST_ENDPOINTS = {
     PKIType.RSA: "https://est-ca.cert-lab.local:8447/.well-known/est",
     PKIType.ECC: "https://ecc-est-ca.cert-lab.local:8466/.well-known/est",
     PKIType.PQC: "https://pq-est-ca.cert-lab.local:8456/.well-known/est",
-}
-
-# Internal container hostnames (for container-to-container communication)
-EST_INTERNAL_ENDPOINTS = {
-    PKIType.RSA: "https://est-ca.cert-lab.local:8443/.well-known/est",
-    PKIType.ECC: "https://ecc-est-ca.cert-lab.local:8443/.well-known/est",
-    PKIType.PQC: "https://pq-est-ca.cert-lab.local:8443/.well-known/est",
 }
 
 

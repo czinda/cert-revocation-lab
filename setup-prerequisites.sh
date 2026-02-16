@@ -321,7 +321,7 @@ create_directories() {
     mkdir -p "${SCRIPT_DIR}/scripts/awx"
     mkdir -p "${SCRIPT_DIR}/containers/mock-edr"
     mkdir -p "${SCRIPT_DIR}/containers/mock-siem"
-    mkdir -p "${SCRIPT_DIR}/containers/test-device"
+    mkdir -p "${SCRIPT_DIR}/containers/iot-client"
     mkdir -p "${SCRIPT_DIR}/ansible/playbooks"
     mkdir -p "${SCRIPT_DIR}/ansible/rulebooks"
     mkdir -p "${SCRIPT_DIR}/ansible/inventory/group_vars"

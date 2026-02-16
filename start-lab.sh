@@ -1121,7 +1121,7 @@ print_summary() {
     echo ""
 
     echo "Testing:"
-    echo "  ./test-revocation.sh"
+    echo "  ./lab test --pki-type rsa --scenario 'Certificate Private Key Compromise'"
     echo ""
     echo "View logs:"
     echo "  podman-compose logs -f <service-name>"

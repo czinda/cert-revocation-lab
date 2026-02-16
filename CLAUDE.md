@@ -70,10 +70,7 @@ FreeIPA (172.25.0.10:4443) - Identity Management with internal CA
 # Stop and remove all volumes
 ./stop-lab.sh --clean
 
-# Run end-to-end revocation test (legacy bash)
-./test-revocation.sh
-
-# Run end-to-end revocation test (Python CLI - recommended)
+# Run end-to-end revocation test
 ./lab test --pki-type rsa --scenario "Certificate Private Key Compromise"
 
 # View logs
@@ -366,7 +363,6 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 ├── setup-prerequisites.sh      # Cross-platform setup (RHEL/Ubuntu)
 ├── start-lab.sh               # Phased startup (--rsa, --ecc, --pqc, --all)
 ├── stop-lab.sh                # Shutdown script
-├── test-revocation.sh         # End-to-end test
 ├── .env                       # Environment configuration
 │
 ├── configs/pki/               # pkispawn configurations
@@ -385,6 +381,8 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 │   ├── pq-intermediate-ca-step2.cfg     # PQ Intermediate (install)
 │   ├── pq-iot-ca-step1.cfg              # PQ IoT (CSR)
 │   ├── pq-iot-ca-step2.cfg              # PQ IoT (install)
+│   ├── acme-ca-step1.cfg                # RSA ACME (CSR)
+│   ├── acme-ca-step2.cfg                # RSA ACME (install)
 │   ├── est-ca-step1.cfg                 # RSA EST (CSR)
 │   ├── est-ca-step2.cfg                 # RSA EST (install)
 │   ├── ecc-est-ca-step1.cfg             # ECC EST (CSR)
@@ -746,15 +744,12 @@ The `ansible/rulebooks/security-events.yml` routes events based on:
 
 ```bash
 # Test with specific PKI type
-./test-revocation.sh -s "IoT Device Cloning Detected" --pki-type ecc
-./test-revocation.sh -a iot --pki-type pqc
-./test-revocation.sh --siem-scenario key_compromise --pki-type rsa
-
-# Interactive mode with PKI selection
-./test-revocation.sh -i
+./lab test --pki-type ecc --scenario "IoT Device Cloning Detected"
+./lab test --pki-type pqc --ca-level iot
+./lab test --pki-type rsa --scenario "Certificate Private Key Compromise"
 
 # List all scenarios
-./test-revocation.sh -l
+./lab scenarios
 ```
 
 ### Manual Dogtag Operations

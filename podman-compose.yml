@@ -406,14 +406,17 @@ services:
       - "intermediate-ca.cert-lab.local:host-gateway"
       - "iot-ca.cert-lab.local:host-gateway"
       - "acme-ca.cert-lab.local:host-gateway"
-      # ECC PKI (ports 8463-8465)
+      - "est-ca.cert-lab.local:host-gateway"
+      # ECC PKI (ports 8463-8466)
       - "ecc-root-ca.cert-lab.local:host-gateway"
       - "ecc-intermediate-ca.cert-lab.local:host-gateway"
       - "ecc-iot-ca.cert-lab.local:host-gateway"
-      # PQ PKI (ports 8453-8455)
+      - "ecc-est-ca.cert-lab.local:host-gateway"
+      # PQ PKI (ports 8453-8456)
       - "pq-root-ca.cert-lab.local:host-gateway"
       - "pq-intermediate-ca.cert-lab.local:host-gateway"
       - "pq-iot-ca.cert-lab.local:host-gateway"
+      - "pq-est-ca.cert-lab.local:host-gateway"
     volumes:
       - ./ansible/rulebooks:/rulebooks:ro
       - ./ansible/playbooks:/playbooks:ro
@@ -606,12 +609,16 @@ services:
       - "root-ca.cert-lab.local:host-gateway"
       - "intermediate-ca.cert-lab.local:host-gateway"
       - "iot-ca.cert-lab.local:host-gateway"
+      - "acme-ca.cert-lab.local:host-gateway"
+      - "est-ca.cert-lab.local:host-gateway"
       - "ecc-root-ca.cert-lab.local:host-gateway"
       - "ecc-intermediate-ca.cert-lab.local:host-gateway"
       - "ecc-iot-ca.cert-lab.local:host-gateway"
+      - "ecc-est-ca.cert-lab.local:host-gateway"
       - "pq-root-ca.cert-lab.local:host-gateway"
       - "pq-intermediate-ca.cert-lab.local:host-gateway"
       - "pq-iot-ca.cert-lab.local:host-gateway"
+      - "pq-est-ca.cert-lab.local:host-gateway"
     volumes:
       - ./data/perf-metrics:/data/perf-metrics:ro
     networks:
