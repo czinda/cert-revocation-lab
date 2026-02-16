@@ -127,6 +127,7 @@ pip install -e .
 - `lab acme-issue` - Issue certificate via ACME protocol (RFC 8555)
 - `lab est-enroll` - Enroll for certificate via EST protocol (RFC 7030)
 - `lab est-cacerts` - Get CA certificates from EST endpoint
+- `lab perf-test` - Run bulk PKI performance test (issuance + revocation)
 
 ### Lab Validate Command
 
@@ -309,6 +310,9 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 | 172.20.0.51 | Mock SIEM | 8083:8000 |
 | 172.20.0.52 | IoT Client | 8085:8000 |
 | 172.20.0.60 | Jupyter | 8888 |
+| 172.20.0.70 | Prometheus | 9090 |
+| 172.20.0.71 | Grafana | 3000 |
+| 172.20.0.72 | PKI Exporter | 9091 |
 
 **RSA-4096 PKI Network (172.26.0.0/24)** - rootful podman:
 
@@ -388,6 +392,14 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 │   ├── pq-est-ca-step1.cfg              # PQ EST (CSR)
 │   └── pq-est-ca-step2.cfg              # PQ EST (install)
 │
+├── configs/prometheus/        # Prometheus scrape configuration
+│   └── prometheus.yml
+├── configs/grafana/           # Grafana provisioning and dashboards
+│   ├── provisioning/datasources/prometheus.yml
+│   ├── provisioning/dashboards/dashboard.yml
+│   └── dashboards/pki-metrics.json      # Pre-built PKI dashboard
+│
+├── scripts/perf-test.py       # Bulk PKI performance test orchestrator
 ├── scripts/pki/               # PKI initialization scripts
 │   ├── lib-pki-common.sh              # Shared functions
 │   ├── init-root-ca.sh                # RSA Root CA
@@ -413,6 +425,7 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 ├── containers/
 │   ├── mock-edr/              # FastAPI EDR simulator
 │   ├── mock-siem/             # FastAPI SIEM simulator
+│   ├── pki-exporter/          # Prometheus metrics exporter for PKI
 │   └── dogtag-pq/             # Custom Dogtag build with ML-DSA support
 │
 ├── ansible/
@@ -438,6 +451,7 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
     │   ├── rsa/               # RSA-4096 certificates
     │   ├── ecc/               # ECC P-384 certificates
     │   └── pq/                # ML-DSA-87 certificates
+    ├── perf-metrics/          # Performance test results (JSON)
     └── pki/                   # PKI data volumes
 ```
 
@@ -449,7 +463,9 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 - **Kafka**: Event streaming for security events
 - **Event-Driven Ansible**: Rulebook engine consuming Kafka events
 - **AWX**: Ansible automation platform
-- **FastAPI**: Mock EDR/SIEM implementations
+- **FastAPI**: Mock EDR/SIEM implementations and PKI metrics exporter
+- **Prometheus**: Metrics collection from PKI exporter (15s scrape interval)
+- **Grafana**: PKI performance dashboard with auto-provisioned datasource
 
 ## PKI Algorithm Configurations
 
@@ -868,3 +884,126 @@ curl --cacert ca-chain.crt --cert client.crt --key client.key \
 | 172.26.0.18 | dogtag-acme-ca | 8446:8443 | ACME Sub-CA + Responder |
 | 172.26.0.19 | ds-est | 3389 | 389DS for EST CA |
 | 172.26.0.20 | dogtag-est-ca | 8447:8443 | EST Sub-CA + EST Subsystem |
+
+## Monitoring Stack (Prometheus + Grafana)
+
+The lab includes a monitoring pipeline for PKI performance metrics, started automatically as Phase 10 of `start-lab.sh`.
+
+### Architecture
+
+```
+Dogtag CAs (9 targets) → PKI Exporter (:9091/metrics) → Prometheus (:9090) → Grafana (:3000)
+                                ↑
+                    data/perf-metrics/latest.json ← scripts/perf-test.py
+```
+
+### Services
+
+| Service | URL | Purpose |
+|---------|-----|---------|
+| Grafana | http://localhost:3000 | Dashboard UI (admin / see .env) |
+| Prometheus | http://localhost:9090 | Metrics storage and queries |
+| PKI Exporter | http://localhost:9091/metrics | Scrapes all CAs, exports Prometheus metrics |
+
+### PKI Exporter Metrics
+
+The exporter (`containers/pki-exporter/app.py`) scrapes all 9 Dogtag CAs across RSA/ECC/PQ hierarchies:
+
+| Metric | Labels | Source |
+|--------|--------|--------|
+| `pki_ca_up` | pki_type, ca_level | `GET /ca/admin/ca/getStatus` |
+| `pki_certificates_total` | pki_type, ca_level, status | `GET /ca/rest/certs?size=1&status=VALID` |
+| `pki_ocsp_response_seconds` | pki_type, ca_level | HTTP probe to `/ca/ocsp` |
+| `pki_crl_last_update_timestamp` | pki_type, ca_level | `GET /ca/ee/ca/getCRL` |
+| `pki_crl_next_update_timestamp` | pki_type, ca_level | `GET /ca/ee/ca/getCRL` |
+| `pki_crl_entries_total` | pki_type, ca_level | `GET /ca/ee/ca/getCRL` |
+| `pki_issuance_total` | pki_type | `data/perf-metrics/latest.json` |
+| `pki_revocation_total` | pki_type | `data/perf-metrics/latest.json` |
+| `pki_issuance_rate` | pki_type | `data/perf-metrics/latest.json` |
+| `pki_revocation_rate` | pki_type | `data/perf-metrics/latest.json` |
+| `pki_issuance_duration_seconds` | pki_type, quantile | `data/perf-metrics/latest.json` |
+
+The exporter uses `extra_hosts` with `host-gateway` to reach rootful PKI containers via their host-mapped ports (same pattern as EDA server and IoT client).
+
+### Grafana Dashboard
+
+The pre-built dashboard (`configs/grafana/dashboards/pki-metrics.json`, uid: `pki-metrics`) is auto-provisioned and contains 4 rows:
+
+1. **Overview** - CA health status indicators, certificate inventory stats, cert distribution by PKI type (pie chart)
+2. **Performance** - Issuance throughput time series, revocation throughput time series
+3. **OCSP & CRL** - OCSP response time gauges (green/yellow/red thresholds at 200ms/500ms), CRL status table
+4. **Latency** - Issuance latency percentiles (p50/p95/p99 bar chart), OCSP response time comparison across PKI types
+
+Dashboard auto-refreshes every 15 seconds.
+
+### Environment Variables
+
+```
+IP_PROMETHEUS=172.20.0.70
+IP_GRAFANA=172.20.0.71
+IP_PKI_EXPORTER=172.20.0.72
+PROMETHEUS_VERSION=latest
+GRAFANA_VERSION=latest
+```
+
+## PKI Performance Testing
+
+### Bulk Performance Test (`scripts/perf-test.py`)
+
+Orchestrates high-volume certificate issuance and revocation across all PKI types. Uses an in-container batch execution strategy to avoid per-operation `podman exec` overhead:
+
+1. Generates a shell script with all operations (issue + revoke + CRL)
+2. Copies it into the CA container via `sudo podman cp`
+3. Runs it with a single `sudo podman exec` call
+4. Parses structured timing data from stdout
+
+### Usage
+
+```bash
+# Quick test (100 certs, RSA only)
+./scripts/perf-test.py --count 100 --pki-types rsa
+
+# Full test (10K certs across all PKI types, 10% revocation)
+./scripts/perf-test.py --count 10000 --revoke-pct 10 --pki-types rsa,ecc,pqc
+
+# Sequential execution (one PKI at a time)
+./scripts/perf-test.py --count 1000 --pki-types rsa,ecc --sequential
+
+# Via lab CLI
+./lab perf-test --count 10000 --revoke-pct 10 --pki-types rsa,ecc,pqc
+```
+
+### Certificate Distribution
+
+When multiple PKI types are specified, certificates are distributed:
+
+| PKI Type | Default Share |
+|----------|--------------|
+| RSA-4096 | 40% |
+| ECC P-384 | 30% |
+| ML-DSA-87 | 30% |
+
+All PKI types run in parallel by default (separate containers, separate networks).
+
+### Batch Script Flow (inside container)
+
+1. Sets up client NSS database with admin P12 credentials
+2. Issues certificates: `openssl req` (CSR) -> `pki ca-cert-request-submit` -> `pki ca-cert-request-approve`
+3. Revokes a subset: `pki ca-cert-revoke --reason Key_Compromise`
+4. Forces CRL generation: `pki ca-crl-issue --force`
+5. Outputs structured timing data: `ISSUED|<serial>|<elapsed_ms>|<CN>`, `REVOKED|<serial>|<elapsed_ms>`
+
+### Metrics Output
+
+Results are written to `data/perf-metrics/latest.json` (and a timestamped copy). The PKI exporter reads this file and exposes the data as Prometheus metrics, which appear in the Grafana dashboard.
+
+```bash
+# Check raw metrics
+cat data/perf-metrics/latest.json
+
+# Check via exporter
+curl http://localhost:9091/metrics | grep pki_issuance
+
+# View in Grafana
+open http://localhost:3000/d/pki-metrics
+```
