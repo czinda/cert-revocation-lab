@@ -11,6 +11,7 @@ Usage:
     lab acme-issue DOMAIN        Issue certificate via ACME protocol
     lab est-enroll [OPTIONS]     Enroll for certificate via EST protocol
     lab est-cacerts [OPTIONS]    Get CA certificates from EST endpoint
+    lab perf-test [OPTIONS]      Run bulk PKI performance test
 """
 
 import random
@@ -765,6 +766,75 @@ def test(
         raise typer.Exit(1)
 
     console.print("=" * 70 + "\n")
+
+
+@app.command("perf-test")
+def perf_test(
+    count: int = typer.Option(
+        100,
+        "--count", "-n",
+        help="Total number of certificates to issue"
+    ),
+    revoke_pct: int = typer.Option(
+        10,
+        "--revoke-pct", "-r",
+        help="Percentage of issued certs to revoke (0-100)"
+    ),
+    pki_types: str = typer.Option(
+        "rsa",
+        "--pki-types", "-p",
+        help="Comma-separated PKI types: rsa,ecc,pqc"
+    ),
+    parallel: bool = typer.Option(
+        True,
+        "--parallel/--sequential",
+        help="Run PKI types in parallel or sequentially"
+    ),
+):
+    """
+    Run PKI performance test - bulk certificate issuance and revocation.
+
+    Issues certificates across the specified PKI types, revokes a subset,
+    and generates CRLs. Results are written to data/perf-metrics/ for the
+    Prometheus exporter to pick up and display in Grafana.
+
+    Examples:
+        lab perf-test --count 100 --pki-types rsa
+        lab perf-test --count 10000 --revoke-pct 10 --pki-types rsa,ecc,pqc
+    """
+    import subprocess
+
+    config = LabConfig.load()
+    script = config.project_dir / "scripts" / "perf-test.py"
+
+    if not script.exists():
+        console.print(f"[red]Error: {script} not found[/red]")
+        raise typer.Exit(1)
+
+    console.print("\n[bold cyan]PKI Performance Test[/bold cyan]\n")
+    console.print(f"  Certificates: {count:,}")
+    console.print(f"  Revoke:       {revoke_pct}%")
+    console.print(f"  PKI Types:    {pki_types}")
+    console.print(f"  Mode:         {'parallel' if parallel else 'sequential'}")
+    console.print()
+
+    cmd = [
+        sys.executable, str(script),
+        "--count", str(count),
+        "--revoke-pct", str(revoke_pct),
+        "--pki-types", pki_types,
+    ]
+    if not parallel:
+        cmd.append("--sequential")
+
+    try:
+        result = subprocess.run(cmd, cwd=str(config.project_dir))
+        if result.returncode != 0:
+            console.print(f"\n[red]Performance test exited with code {result.returncode}[/red]")
+            raise typer.Exit(result.returncode)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Test interrupted[/yellow]")
+        raise typer.Exit(130)
 
 
 @app.command()

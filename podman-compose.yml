@@ -542,6 +542,91 @@ services:
       start_period: 30s
 
   # ===========================================================================
+  # Monitoring Stack (Prometheus + Grafana + PKI Exporter)
+  # ===========================================================================
+
+  prometheus:
+    image: prom/prometheus:${PROMETHEUS_VERSION:-latest}
+    container_name: prometheus
+    hostname: prometheus.${LAB_DOMAIN:-cert-lab.local}
+    volumes:
+      - ./configs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      lab-network:
+        ipv4_address: ${IP_PROMETHEUS:-172.20.0.70}
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  grafana:
+    image: grafana/grafana:${GRAFANA_VERSION:-latest}
+    container_name: grafana
+    hostname: grafana.${LAB_DOMAIN:-cert-lab.local}
+    depends_on:
+      prometheus:
+        condition: service_started
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD required}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./configs/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./configs/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      lab-network:
+        ipv4_address: ${IP_GRAFANA:-172.20.0.71}
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  pki-exporter:
+    build:
+      context: ./containers/pki-exporter
+      dockerfile: Containerfile
+    container_name: pki-exporter
+    hostname: pki-exporter.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      PERF_METRICS_DIR: /data/perf-metrics
+    extra_hosts:
+      # PKI CA hostnames - use host-gateway to reach rootful PKI via host ports
+      - "root-ca.cert-lab.local:host-gateway"
+      - "intermediate-ca.cert-lab.local:host-gateway"
+      - "iot-ca.cert-lab.local:host-gateway"
+      - "ecc-root-ca.cert-lab.local:host-gateway"
+      - "ecc-intermediate-ca.cert-lab.local:host-gateway"
+      - "ecc-iot-ca.cert-lab.local:host-gateway"
+      - "pq-root-ca.cert-lab.local:host-gateway"
+      - "pq-intermediate-ca.cert-lab.local:host-gateway"
+      - "pq-iot-ca.cert-lab.local:host-gateway"
+    volumes:
+      - ./data/perf-metrics:/data/perf-metrics:ro
+    networks:
+      lab-network:
+        ipv4_address: ${IP_PKI_EXPORTER:-172.20.0.72}
+    ports:
+      - "9091:9091"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import httpx; httpx.get('http://localhost:9091/health', timeout=5)\" || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ===========================================================================
   # Jupyter Lab (Documentation, Demos, and Dashboard)
   # ===========================================================================
 
@@ -611,3 +696,7 @@ volumes:
   postgres-data:
   redis-data:
   awx-projects:
+
+  # Monitoring volumes
+  prometheus-data:
+  grafana-data:

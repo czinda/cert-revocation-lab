@@ -114,6 +114,7 @@ setup_directories() {
     mkdir -p scripts/pki
     mkdir -p scripts/kafka
     mkdir -p scripts/awx
+    mkdir -p data/perf-metrics
     mkdir -p containers/mock-edr
     mkdir -p containers/mock-siem
     mkdir -p ansible/playbooks
@@ -1013,6 +1014,42 @@ start_jupyter() {
     log_info "Jupyter URL: http://localhost:8888 (Token: (see .env))"
 }
 
+# Phase 10: Start Monitoring Stack
+start_monitoring() {
+    log_phase "Phase 10: Starting Monitoring Stack (Prometheus + Grafana)"
+
+    local to_start=()
+    for svc in prometheus grafana pki-exporter; do
+        if is_rootless_running "$svc"; then
+            log_success "$svc is already running"
+        else
+            to_start+=("$svc")
+        fi
+    done
+
+    if [ ${#to_start[@]} -eq 0 ]; then
+        log_success "Monitoring stack already running"
+        return
+    fi
+
+    # Build pki-exporter if needed
+    if [[ " ${to_start[*]} " == *" pki-exporter "* ]]; then
+        log_info "Building pki-exporter container..."
+        run_as_user podman-compose build pki-exporter 2>/dev/null || true
+    fi
+
+    # Create perf-metrics directory
+    mkdir -p data/perf-metrics
+
+    run_as_user podman-compose up -d "${to_start[@]}"
+    sleep 5
+
+    log_success "Monitoring stack started"
+    log_info "Grafana:    http://localhost:3000 (admin / see .env)"
+    log_info "Prometheus: http://localhost:9090"
+    log_info "Exporter:   http://localhost:9091/metrics"
+}
+
 # Print summary
 print_summary() {
     echo ""
@@ -1053,6 +1090,12 @@ print_summary() {
     echo "  Mock SIEM:       http://localhost:8083"
     echo "  IoT Client:      http://localhost:8085"
     echo "  Jupyter:         http://localhost:8888"
+    echo ""
+
+    echo "Monitoring:"
+    echo "  Grafana:         http://localhost:3000 (admin / see .env)"
+    echo "  Prometheus:      http://localhost:9090"
+    echo "  PKI Exporter:    http://localhost:9091/metrics"
     echo ""
 
     echo "Default Credentials:"
@@ -1175,7 +1218,7 @@ quick_start() {
 
     # Start other containers (rootless) - exclude PKI/DS services
     local rootless_to_start=()
-    for svc in postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem iot-client jupyter; do
+    for svc in postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem iot-client jupyter prometheus grafana pki-exporter; do
         if is_rootless_running "$svc"; then
             log_success "$svc is already running"
         else
@@ -1358,6 +1401,7 @@ main() {
     start_eda
     start_security_tools
     start_jupyter
+    start_monitoring
     print_summary
 }
 
