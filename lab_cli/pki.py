@@ -230,13 +230,12 @@ def generate_csr(
 
 
 def _default_profile(pki_type: PKIType) -> str:
-    """Return the default certificate profile for the given PKI type."""
-    profiles = {
-        PKIType.RSA: "caServerCert",
-        PKIType.ECC: "caECUserCert",
-        PKIType.PQC: "caMLDSAUserCert",
-    }
-    return profiles.get(pki_type, "caServerCert")
+    """Return the default certificate profile for the given PKI type.
+
+    Uses caServerCert for all types - the profile must be configured on each CA
+    to accept the appropriate key types (RSA, EC, ML-DSA).
+    """
+    return "caServerCert"
 
 
 def issue_certificate(

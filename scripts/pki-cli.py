@@ -427,13 +427,12 @@ rm -rf $CLIENT_DB
         return True
 
     def _default_profile(self) -> str:
-        """Return the default certificate profile for this PKI type."""
-        profiles = {
-            "rsa": "caServerCert",
-            "ecc": "caECUserCert",
-            "pqc": "caMLDSAUserCert",
-        }
-        return profiles.get(self.pki_type, "caServerCert")
+        """Return the default certificate profile for this PKI type.
+
+        Uses caServerCert for all types - the profile must be configured on each CA
+        to accept the appropriate key types (RSA, EC, ML-DSA).
+        """
+        return "caServerCert"
 
     def issue_cert(self, cn: str, profile: str = None) -> Optional[str]:
         """Issue a certificate using pki CLI via podman exec. Returns serial number."""
