@@ -1779,7 +1779,7 @@ print_summary() {
         echo -e "  ${GREEN}|   ALL CHECKS PASSED - LAB IS FULLY OPERATIONAL        |${NC}"
         echo -e "  ${GREEN}+======================================================+${NC}"
         echo ""
-        echo -e "  ${DIM}Next: ./test-revocation.sh -i${NC}"
+        echo -e "  ${DIM}Next: ./lab test --pki-type rsa${NC}"
         return 0
     elif [ $TOTAL_FAIL -le 3 ] && [ "$(get_tier_status 3)" != "fail" ]; then
         echo -e "  ${YELLOW}+======================================================+${NC}"
