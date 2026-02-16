@@ -235,12 +235,12 @@ async def measure_ocsp_time(host: str, port: int) -> Optional[float]:
 def load_perf_metrics() -> dict:
     """Load performance test metrics from shared volume."""
     metrics_file = PERF_METRICS_DIR / "latest.json"
-    if metrics_file.exists():
-        try:
+    try:
+        if metrics_file.exists():
             with open(metrics_file) as f:
                 return json.load(f)
-        except Exception as e:
-            logger.debug(f"Failed to load perf metrics: {e}")
+    except Exception as e:
+        logger.debug(f"Failed to load perf metrics: {e}")
     return {}
 
 
