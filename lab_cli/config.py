@@ -47,8 +47,17 @@ class CAConfig:
 
     @property
     def host_url(self) -> str:
-        """URL for accessing this CA from the host machine."""
-        return f"https://{self.hostname}:{self.host_port}"
+        """URL for accessing this CA from the host machine.
+
+        Uses the CA hostname if it resolves, otherwise falls back to
+        localhost (needed for Lima VM or other port-forwarding setups).
+        """
+        import socket
+        try:
+            socket.getaddrinfo(self.hostname, self.host_port, socket.AF_INET, socket.SOCK_STREAM)
+            return f"https://{self.hostname}:{self.host_port}"
+        except socket.gaierror:
+            return f"https://localhost:{self.host_port}"
 
 
 # CA configurations by PKI type and level
