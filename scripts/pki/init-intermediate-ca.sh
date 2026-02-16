@@ -107,6 +107,9 @@ phase2_install_cert() {
     # Export admin credentials for REST API authentication
     export_admin_creds "$PKI_INSTANCE" "$ADMIN_PREFIX"
 
+    # Configure caServerCert profile for non-RSA key types (ECC, PQ)
+    configure_server_cert_profile "$PKI_INSTANCE" "$PKI_TYPE"
+
     print_header "${CA_NAME} Initialization Complete"
     [ -n "$ALGO_DESC" ] && echo "Algorithm:   $ALGO_DESC"
     echo "Certificate: $CA_CERT"

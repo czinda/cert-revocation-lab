@@ -524,3 +524,39 @@ export_admin_creds() {
     log_warn "Could not export admin credentials (non-fatal)"
     return 0
 }
+
+# Configure the caServerCert profile to accept non-RSA key types.
+# By default, Dogtag's caServerCert profile only accepts RSA keys (keyType=RSA,
+# keyParameters=1024,2048,3072,4096). ECC and PQ CAs need this widened so that
+# certificates can be issued for EC or ML-DSA keys.
+# Usage: configure_server_cert_profile <instance> <pki_type>
+configure_server_cert_profile() {
+    local instance="${1:?Instance required}"
+    local pki_type="${2:-rsa}"
+
+    # RSA CAs use the default profile — no changes needed
+    [ "$pki_type" = "rsa" ] && return 0
+
+    local profile="/var/lib/pki/${instance}/conf/ca/profiles/ca/caServerCert.cfg"
+    if [ ! -f "$profile" ]; then
+        log_warn "caServerCert profile not found at $profile, skipping"
+        return 0
+    fi
+
+    # Check if already modified (keyType=- means any type accepted)
+    if grep -q 'keyType=-' "$profile" 2>/dev/null; then
+        log_info "caServerCert profile already configured for multi-algorithm keys"
+        return 0
+    fi
+
+    log_info "Configuring caServerCert profile to accept ${pki_type^^} keys..."
+
+    # Accept any key type (- means no restriction)
+    sed -i 's/keyType=RSA/keyType=-/' "$profile"
+
+    # Add EC and ML-DSA key sizes to accepted parameters
+    sed -i 's/keyParameters=1024,2048,3072,4096/keyParameters=1024,2048,3072,4096,nistp256,nistp384,nistp521,87/' "$profile"
+
+    log_info "caServerCert profile updated (keyType=-, added EC and ML-DSA parameters)"
+    return 0
+}

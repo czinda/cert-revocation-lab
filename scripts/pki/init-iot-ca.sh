@@ -111,6 +111,9 @@ phase2_install_cert() {
     # Export admin credentials for REST API authentication (used by EDA)
     export_admin_creds "$PKI_INSTANCE" "$ADMIN_PREFIX"
 
+    # Configure caServerCert profile for non-RSA key types (ECC, PQ)
+    configure_server_cert_profile "$PKI_INSTANCE" "$PKI_TYPE"
+
     # Note: EST is served by the separate EST Sub-CA (${CA_PREFIX}est-ca)
     log_info "Note: EST is served by the separate ${CA_PREFIX}EST Sub-CA"
 
