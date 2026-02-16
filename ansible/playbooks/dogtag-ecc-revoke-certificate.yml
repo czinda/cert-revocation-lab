@@ -1,6 +1,6 @@
 ---
 # Dogtag ECC P-384 PKI - Certificate Revocation Playbook
-# Revokes certificates using the Dogtag REST API (no podman access required)
+# Revokes certificates via SSH to lab host using pki-cli.py
 #
 # Expected variables from EDA:
 #   event.device_fqdn - Device FQDN whose certificate should be revoked
@@ -10,7 +10,7 @@
 #   event.event_id - Unique event identifier
 #   event.description - Event description
 
-- name: Revoke Certificate - ECC P-384 PKI (REST API)
+- name: Revoke Certificate - ECC P-384 PKI (SSH)
   hosts: localhost
   gather_facts: false
   vars:
@@ -19,28 +19,18 @@
     pki_name: "ECC P-384"
 
     # CA selection (root, intermediate, iot)
-    target_ca: "{{ event.ca_level | default(ca_level) | default('iot') }}"
+    target_ca: "{{ ca_level | default(event.ca_level | default('iot', true), true) }}"
 
     # Event data (passed from EDA)
-    device_fqdn: "{{ event.device_fqdn | default('unknown.cert-lab.local') }}"
-    certificate_cn: "{{ event.certificate_cn | default(device_fqdn) }}"
-    certificate_serial: "{{ event.certificate_serial | default('') }}"
-    event_severity: "{{ event.severity | default('high') }}"
-    event_id: "{{ event.event_id | default('manual') }}"
-    event_description: "{{ event.description | default('Security incident') }}"
+    device_fqdn: "{{ event.device_fqdn | default('unknown.cert-lab.local', true) }}"
+    certificate_cn: "{{ event.certificate_cn | default(device_fqdn, true) }}"
+    certificate_serial: "{{ event.certificate_serial | default('', true) }}"
+    event_severity: "{{ event.severity | default('high', true) }}"
+    event_id: "{{ event.event_id | default('manual', true) }}"
+    event_description: "{{ event.description | default('Security incident', true) }}"
 
     # Revocation settings
-    # CRL reason codes and their string values for Dogtag REST API:
-    #   0 = UNSPECIFIED
-    #   1 = KEY_COMPROMISE
-    #   2 = CA_COMPROMISE
-    #   3 = AFFILIATION_CHANGED
-    #   4 = SUPERSEDED
-    #   5 = CESSATION_OF_OPERATION
-    #   6 = CERTIFICATE_HOLD
-    #   9 = PRIVILEGE_WITHDRAWN
     revocation_reason_code: "{{ reason | default(1) }}"
-    # Map reason codes to Dogtag REST API string values
     reason_map:
       0: "UNSPECIFIED"
       1: "KEY_COMPROMISE"
@@ -54,29 +44,28 @@
     log_file: "{{ lookup('env', 'LAB_LOG_DIR') | default('/opt/cert-lab/logs', true) }}/dogtag-revocation.log"
 
     # Certificate paths (mounted from host via compose)
-    # ECC certs are in /certs/ecc/ since ECC containers mount ./data/certs/ecc:/certs
-    # but EDA mounts ./data/certs:/certs - so ECC admin creds are at /certs/ecc/admin/
     certs_dir: "/certs"
     admin_creds_dir: "{{ certs_dir }}/ecc/admin"
 
-    # ECC PKI configuration - REST API URLs
-    # Note: Use external host ports since EDA runs on separate network
-    #   ECC Root CA: 8463, Intermediate CA: 8464, IoT CA: 8465
+    # ECC PKI configuration
     ca_configs:
       root:
         name: "ECC Root CA"
+        container: "dogtag-ecc-root-ca"
         url: "https://ecc-root-ca.cert-lab.local:8463"
         admin_cert: "{{ admin_creds_dir }}/ecc-root-admin-cert.pem"
         admin_key: "{{ admin_creds_dir }}/ecc-root-admin-key.pem"
         ca_cert: "{{ certs_dir }}/ecc/root-ca.crt"
       intermediate:
         name: "ECC Intermediate CA"
+        container: "dogtag-ecc-intermediate-ca"
         url: "https://ecc-intermediate-ca.cert-lab.local:8464"
         admin_cert: "{{ admin_creds_dir }}/ecc-intermediate-admin-cert.pem"
         admin_key: "{{ admin_creds_dir }}/ecc-intermediate-admin-key.pem"
         ca_cert: "{{ certs_dir }}/ecc/ca-chain.crt"
       iot:
         name: "ECC IoT CA"
+        container: "dogtag-ecc-iot-ca"
         url: "https://ecc-iot-ca.cert-lab.local:8465"
         admin_cert: "{{ admin_creds_dir }}/ecc-iot-admin-cert.pem"
         admin_key: "{{ admin_creds_dir }}/ecc-iot-admin-key.pem"
@@ -91,7 +80,7 @@
       ansible.builtin.debug:
         msg: |
           ============================================================
-          DOGTAG {{ pki_name }} - CERTIFICATE REVOCATION (REST API)
+          DOGTAG {{ pki_name }} - CERTIFICATE REVOCATION (SSH)
           ============================================================
           Event ID:      {{ event_id }}
           Device:        {{ device_fqdn }}
@@ -124,47 +113,36 @@
         msg: |
           Admin credentials not found: {{ ca_config.admin_cert }}
           Run the PKI init script to export admin credentials:
-            sudo podman exec dogtag-ecc-{{ target_ca }}-ca /scripts/export-admin-creds.sh {{ target_ca }}
+            sudo podman exec {{ ca_config.container }} /scripts/export-admin-creds.sh {{ target_ca }}
       when: not admin_cert_stat.stat.exists
       tags: [validation]
 
-    - name: Block for Dogtag REST API operations
+    # All operations via SSH to lab host (EDA runs in rootless podman,
+    # PKI containers run in rootful podman - SSH bridges this gap)
+    - name: Block for Dogtag PKI CLI operations via SSH
       block:
-        - name: Search for certificate by subject (if serial not provided)
-          ansible.builtin.uri:
-            url: "{{ ca_config.url }}/ca/rest/certs"
-            method: GET
-            headers:
-              Accept: "application/json"
-            url_username: ""
-            url_password: ""
-            client_cert: "{{ ca_config.admin_cert }}"
-            client_key: "{{ ca_config.admin_key }}"
-            validate_certs: false
-            return_content: true
-            status_code: [200]
-          register: cert_search
-          when: certificate_serial == ''
-          tags: [lookup]
-
-        - name: Find matching certificate from search results
-          ansible.builtin.set_fact:
-            cert_serial: >-
-              {{
-                cert_search.json.entries
-                | selectattr('SubjectDN', 'search', certificate_cn, ignorecase=True)
-                | selectattr('Status', 'equalto', 'VALID')
-                | map(attribute='id')
-                | first
-                | default('')
-              }}
-          when: certificate_serial == '' and cert_search is defined and cert_search.json is defined
-          tags: [lookup]
-
         - name: Use provided certificate serial
           ansible.builtin.set_fact:
             cert_serial: "{{ certificate_serial | regex_replace('^0x', '') }}"
           when: certificate_serial != ''
+          tags: [lookup]
+
+        - name: Search for certificate by subject via SSH (if serial not provided)
+          ansible.builtin.shell:
+            cmd: |
+              cd {{ hostvars['lab-host'].lab_root_dir | default('/home/czinda/cert-revocation-lab') }}
+              sudo podman exec {{ ca_config.container }} pki -d /root/.dogtag/nssdb -c '' \
+                ca-cert-find --name "{{ certificate_cn }}" --status VALID 2>/dev/null \
+                | grep "Serial Number:" | head -1 | awk '{print $3}' | sed 's/^0x//'
+          delegate_to: lab-host
+          register: cert_search_result
+          when: certificate_serial == ''
+          tags: [lookup]
+
+        - name: Set certificate serial from search
+          ansible.builtin.set_fact:
+            cert_serial: "{{ cert_search_result.stdout | trim }}"
+          when: certificate_serial == '' and cert_search_result.stdout | default('') | trim != ''
           tags: [lookup]
 
         - name: Verify certificate serial found
@@ -175,57 +153,15 @@
 
         - name: Display certificate to revoke
           ansible.builtin.debug:
-            msg: "Found certificate serial: {{ cert_serial }}"
+            msg: "Found certificate serial: 0x{{ cert_serial }}"
           tags: [lookup]
 
-        - name: Get certificate details before revocation
-          ansible.builtin.uri:
-            url: "{{ ca_config.url }}/ca/rest/certs/0x{{ cert_serial }}"
-            method: GET
-            headers:
-              Accept: "application/json"
-            client_cert: "{{ ca_config.admin_cert }}"
-            client_key: "{{ ca_config.admin_key }}"
-            validate_certs: false
-            return_content: true
-            status_code: [200]
-          register: cert_details
-          tags: [lookup]
-
-        - name: Display certificate details
-          ansible.builtin.debug:
-            msg: |
-              Certificate Details:
-                Serial:    {{ cert_details.json.id | default('N/A') }}
-                Subject:   {{ cert_details.json.SubjectDN | default('N/A') }}
-                Issuer:    {{ cert_details.json.IssuerDN | default('N/A') }}
-                Status:    {{ cert_details.json.Status | default('N/A') }}
-                NotBefore: {{ cert_details.json.NotValidBefore | default('N/A') }}
-                NotAfter:  {{ cert_details.json.NotValidAfter | default('N/A') }}
-          when: cert_details.json is defined
-          tags: [lookup]
-
-        - name: Revoke certificate via pki CLI
-          ansible.builtin.shell: |
-            podman exec dogtag-ecc-{{ target_ca }}-ca bash -c '
-            set -e
-            CLIENT_DB=/root/.dogtag/nssdb
-            CA_URL=https://localhost:8443
-
-            # Find admin cert nickname
-            ADMIN_NICK=$(certutil -L -d $CLIENT_DB 2>/dev/null | grep -i admin | head -1 | awk "{for(i=1;i<=NF-1;i++) printf \$i\" \"; print \"\"}" | sed "s/ *$//")
-            if [ -z "$ADMIN_NICK" ]; then
-                echo "ERROR: Admin certificate not found in NSS database"
-                exit 1
-            fi
-
-            echo "Using admin cert: $ADMIN_NICK"
-
-            # Revoke the certificate
-            pki -d $CLIENT_DB -c "" -n "$ADMIN_NICK" -U "$CA_URL" \
-                --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \
-                ca-cert-revoke 0x{{ cert_serial }} --reason Key_Compromise --force
-            '
+        - name: Revoke certificate via SSH to lab host
+          ansible.builtin.shell:
+            cmd: |
+              cd {{ hostvars['lab-host'].lab_root_dir | default('/home/czinda/cert-revocation-lab') }}
+              ./scripts/pki-cli.py revoke 0x{{ cert_serial }} --ca {{ target_ca }} --pki ecc --reason key_compromise
+          delegate_to: lab-host
           register: revoke_result
           tags: [revoke]
 
@@ -239,26 +175,22 @@
             seconds: 2
           tags: [verify]
 
-        - name: Verify revocation status
-          ansible.builtin.uri:
-            url: "{{ ca_config.url }}/ca/rest/certs/0x{{ cert_serial }}"
-            method: GET
-            headers:
-              Accept: "application/json"
-            client_cert: "{{ ca_config.admin_cert }}"
-            client_key: "{{ ca_config.admin_key }}"
-            validate_certs: false
-            return_content: true
-            status_code: [200]
+        - name: Verify revocation status via SSH
+          ansible.builtin.shell:
+            cmd: |
+              cd {{ hostvars['lab-host'].lab_root_dir | default('/home/czinda/cert-revocation-lab') }}
+              sudo podman exec {{ ca_config.container }} pki -d /root/.dogtag/nssdb -c '' \
+                ca-cert-show 0x{{ cert_serial }} 2>/dev/null | grep "Status:" | awk '{print $2}'
+          delegate_to: lab-host
           register: verify_status
           tags: [verify]
 
         - name: Confirm revocation
           ansible.builtin.assert:
             that:
-              - verify_status.json.Status == 'REVOKED'
-            success_msg: "Certificate {{ cert_serial }} successfully revoked"
-            fail_msg: "Certificate revocation verification failed - Status: {{ verify_status.json.Status | default('unknown') }}"
+              - verify_status.stdout | trim == 'REVOKED'
+            success_msg: "Certificate 0x{{ cert_serial }} successfully revoked"
+            fail_msg: "Certificate revocation verification failed - Status: {{ verify_status.stdout | default('unknown') }}"
           tags: [verify]
 
         - name: Log revocation to file
