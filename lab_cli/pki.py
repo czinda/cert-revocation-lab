@@ -229,12 +229,22 @@ def generate_csr(
     return key_path, csr_path
 
 
+def _default_profile(pki_type: PKIType) -> str:
+    """Return the default certificate profile for the given PKI type."""
+    profiles = {
+        PKIType.RSA: "caServerCert",
+        PKIType.ECC: "caECUserCert",
+        PKIType.PQC: "caMLDSAUserCert",
+    }
+    return profiles.get(pki_type, "caServerCert")
+
+
 def issue_certificate(
     config: LabConfig,
     device_fqdn: str,
     pki_type: Optional[PKIType] = None,
     ca_level: Optional[CALevel] = None,
-    profile: str = "caServerCert",
+    profile: Optional[str] = None,
 ) -> CertificateResult:
     """
     Issue a certificate from Dogtag PKI.
@@ -252,6 +262,7 @@ def issue_certificate(
     pki_type = pki_type or config.pki_type
     ca_level = ca_level or config.ca_level
     ca_config = config.get_ca_config(pki_type, ca_level)
+    profile = profile or _default_profile(pki_type)
 
     # Generate CSR
     with tempfile.TemporaryDirectory(prefix="cert-lab-") as tmpdir:

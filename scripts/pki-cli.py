@@ -426,8 +426,18 @@ rm -rf $CLIENT_DB
 
         return True
 
-    def issue_cert(self, cn: str, profile: str = "caServerCert") -> Optional[str]:
+    def _default_profile(self) -> str:
+        """Return the default certificate profile for this PKI type."""
+        profiles = {
+            "rsa": "caServerCert",
+            "ecc": "caECUserCert",
+            "pqc": "caMLDSAUserCert",
+        }
+        return profiles.get(self.pki_type, "caServerCert")
+
+    def issue_cert(self, cn: str, profile: str = None) -> Optional[str]:
         """Issue a certificate using pki CLI via podman exec. Returns serial number."""
+        profile = profile or self._default_profile()
         if not self.container or not self.instance:
             print(f"Unknown PKI type/CA level: {self.pki_type}/{self.ca_level}")
             return None
@@ -441,11 +451,12 @@ rm -rf $CLIENT_DB
             key_file = Path(tmpdir) / "key.pem"
             csr_file = Path(tmpdir) / "csr.pem"
 
-            # Generate RSA key
-            result = subprocess.run(
-                ["openssl", "genrsa", "-out", str(key_file), "2048"],
-                capture_output=True, text=True
-            )
+            # Generate key based on PKI type
+            if self.pki_type == "ecc":
+                key_cmd = ["openssl", "ecparam", "-genkey", "-name", "secp384r1", "-out", str(key_file)]
+            else:
+                key_cmd = ["openssl", "genrsa", "-out", str(key_file), "2048"]
+            result = subprocess.run(key_cmd, capture_output=True, text=True)
             if result.returncode != 0:
                 print(f"Error generating key: {result.stderr}")
                 return None
@@ -541,31 +552,47 @@ rm -rf $CLIENT_DB
             print(f"stdout: {result.stdout}")
             return None
 
-        # Parse request ID from output
+        # Parse request ID and status from output
         request_id = None
+        request_status = None
         for line in result.stdout.split("\n"):
             if "Request ID:" in line:
                 request_id = line.split(":")[-1].strip()
-                break
+            elif "Request Status:" in line:
+                request_status = line.split(":")[-1].strip().lower()
 
         if not request_id:
             print(f"Could not find request ID in output:\n{result.stdout}")
             return None
 
         print(f"  Request ID: {request_id}")
+        print(f"  Request Status: {request_status}")
 
-        # Approve the request
-        print(f"  Approving request...")
-        result = subprocess.run(
-            ["sudo", "podman", "exec", self.container,
-             "pki", "-d", client_nssdb, "-c", "", "-n", admin_nickname,
-             "--ignore-cert-status", "UNTRUSTED_ISSUER", "--ignore-cert-status", "UNKNOWN_ISSUER",
-             "ca-cert-request-approve", request_id, "--force"],
-            capture_output=True, text=True
-        )
+        if request_status == "rejected":
+            # Extract reason
+            for line in result.stdout.split("\n"):
+                if "Reason:" in line:
+                    print(f"  Rejection reason: {line.split(':', 1)[-1].strip()}")
+            return None
 
-        if result.returncode != 0:
-            print(f"Error approving request: {result.stderr}")
+        if request_status == "pending":
+            # Need explicit approval
+            print(f"  Approving request...")
+            result = subprocess.run(
+                ["sudo", "podman", "exec", self.container,
+                 "pki", "-d", client_nssdb, "-c", "", "-n", admin_nickname,
+                 "--ignore-cert-status", "UNTRUSTED_ISSUER", "--ignore-cert-status", "UNKNOWN_ISSUER",
+                 "ca-cert-request-approve", request_id, "--force"],
+                capture_output=True, text=True
+            )
+
+            if result.returncode != 0:
+                print(f"Error approving request: {result.stderr}")
+                return None
+        elif request_status == "complete":
+            print(f"  Request auto-approved")
+        else:
+            print(f"Unexpected request status: {request_status}")
             return None
 
         # Get certificate ID from request
