@@ -575,6 +575,159 @@ def est_cacerts(
         raise typer.Exit(1)
 
 
+def _run_single_test(
+    config: LabConfig,
+    scenario: str,
+    pki_type: PKIType,
+    ca_level: CALevel,
+    source: EventSource,
+    wait_time: int,
+    device: Optional[str] = None,
+    skip_issue: bool = False,
+    cert_serial: Optional[str] = None,
+) -> bool:
+    """Run a single certificate revocation test. Returns True if passed."""
+    # Generate device name if not provided
+    if not device:
+        device = f"testdevice-{random.randint(1000000000, 9999999999)}"
+
+    device_fqdn = f"{device}.{config.lab_domain}"
+
+    console.print("\n" + "=" * 70)
+    console.print("[bold cyan]Certificate Revocation Test[/bold cyan]")
+    console.print("=" * 70)
+    console.print(f"\n  Device:   {device_fqdn}")
+    console.print(f"  PKI:      {pki_type.value.upper()}")
+    console.print(f"  CA:       {ca_level.value}")
+    console.print(f"  Scenario: {scenario}")
+    console.print(f"  Source:   {source.value.upper()}\n")
+
+    # Step 1: Check services
+    console.print("[bold]Step 1: Checking Services[/bold]")
+
+    # Check CA is responding
+    ca_health = check_ca_health(pki_type, ca_level)
+    if not ca_health.healthy:
+        console.print(f"  [red]✗ {ca_health.message}[/red]")
+        console.print(f"    [dim]Hint: Start PKI with: sudo podman-compose -f pki-compose.yml up -d[/dim]")
+        return False
+    console.print(f"  [green]✓ {ca_health.message}[/green]")
+
+    # Check EDR
+    edr_status = check_http_service("mock_edr", config.edr_url)
+    if not edr_status.healthy:
+        console.print(f"  [red]✗ Mock EDR not responding[/red]")
+        return False
+    console.print(f"  [green]✓ Mock EDR responding[/green]")
+
+    # Check EDA
+    eda_status = check_container("eda-server")
+    if not eda_status.healthy:
+        console.print(f"  [yellow]⚠ EDA server not running - automation may not work[/yellow]")
+    else:
+        console.print(f"  [green]✓ EDA server running[/green]")
+
+    # Step 2: Issue certificate
+    if skip_issue:
+        if not cert_serial:
+            console.print("\n[red]✗ --cert-serial required with --skip-issue[/red]")
+            return False
+        serial = cert_serial
+        console.print(f"\n[bold]Step 2: Using Existing Certificate[/bold]")
+        console.print(f"  Serial: {serial}")
+    else:
+        console.print(f"\n[bold]Step 2: Issuing Certificate[/bold]")
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+            transient=True,
+        ) as progress:
+            progress.add_task("Issuing certificate...", total=None)
+            cert_result = issue_certificate(
+                config=config,
+                device_fqdn=device_fqdn,
+                pki_type=pki_type,
+                ca_level=ca_level,
+            )
+
+        if not cert_result.success:
+            console.print(f"  [red]✗ Failed to issue certificate: {cert_result.message}[/red]")
+            return False
+
+        serial = cert_result.serial
+        console.print(f"  [green]✓ Certificate issued[/green]")
+        console.print(f"    Serial: {serial}")
+
+    # Step 3: Trigger security event
+    console.print(f"\n[bold]Step 3: Triggering Security Event[/bold]")
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        progress.add_task("Sending event...", total=None)
+        event_result = trigger_event(
+            config=config,
+            source=source,
+            device_id=device,
+            scenario=scenario,
+            severity="critical",
+            certificate_cn=device_fqdn,
+            certificate_serial=serial,
+            ca_level=ca_level,
+            pki_type=pki_type,
+        )
+
+    if not event_result.success:
+        console.print(f"  [red]✗ Failed to trigger event: {event_result.message}[/red]")
+        return False
+
+    console.print(f"  [green]✓ Event triggered[/green]")
+    console.print(f"    Event ID: {event_result.event_id}")
+
+    # Step 4: Wait for automation
+    console.print(f"\n[bold]Step 4: Waiting for Automation ({wait_time}s)[/bold]")
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Waiting for EDA to process event...", total=wait_time)
+        for i in range(wait_time):
+            time.sleep(1)
+            progress.update(task, completed=i + 1)
+
+    # Step 5: Verify revocation
+    console.print(f"\n[bold]Step 5: Verifying Revocation[/bold]")
+
+    verify_result = verify_certificate_status(
+        config=config,
+        serial=serial,
+        pki_type=pki_type,
+        ca_level=ca_level,
+    )
+
+    console.print("\n" + "=" * 70)
+    if verify_result.success and verify_result.status == "REVOKED":
+        console.print("[bold green]TEST PASSED: Certificate was revoked[/bold green]")
+        console.print(f"  Serial: {serial}")
+        console.print(f"  Status: {verify_result.status}")
+        console.print("=" * 70 + "\n")
+        return True
+    else:
+        console.print("[bold red]TEST FAILED: Certificate was NOT revoked[/bold red]")
+        console.print(f"  Serial: {serial}")
+        console.print(f"  Status: {verify_result.status or 'UNKNOWN'}")
+        console.print(f"\nCheck EDA logs: podman logs eda-server")
+        console.print("=" * 70 + "\n")
+        return False
+
+
 @app.command()
 def test(
     device: str = typer.Option(
@@ -585,6 +738,14 @@ def test(
         "Certificate Private Key Compromise",
         "--scenario", "-s",
         help="Security scenario to trigger"
+    ),
+    category: Optional[str] = typer.Option(
+        None, "--category",
+        help="Run all scenarios in a category (original, pki, iot, identity, network)"
+    ),
+    all_scenarios: bool = typer.Option(
+        False, "--all",
+        help="Run all available scenarios"
     ),
     pki_type: PKIType = typer.Option(
         PKIType.RSA,
@@ -625,147 +786,90 @@ def test(
     2. Triggers a security event
     3. Waits for EDA automation
     4. Verifies the certificate was revoked
+
+    Use --all to run every scenario, or --category to run all scenarios
+    in a category (original, pki, iot, identity, network).
     """
+    # Determine which scenarios to run
+    if all_scenarios and category:
+        console.print("[red]Cannot use --all and --category together[/red]")
+        raise typer.Exit(1)
+
+    if skip_issue and (all_scenarios or category):
+        console.print("[red]Cannot use --skip-issue with --all or --category[/red]")
+        raise typer.Exit(1)
+
+    if all_scenarios:
+        scenarios_to_run = get_all_scenarios()
+        label = "all scenarios"
+    elif category:
+        if category not in SCENARIOS:
+            console.print(f"[red]Unknown category: {category}[/red]")
+            console.print(f"Available categories: {', '.join(SCENARIOS.keys())}")
+            raise typer.Exit(1)
+        scenarios_to_run = SCENARIOS[category]
+        label = f"category '{category}'"
+    else:
+        scenarios_to_run = [scenario]
+        label = None
+
     config = LabConfig.load()
 
-    # Generate device name if not provided
-    if not device:
-        device = f"testdevice-{random.randint(1000000000, 9999999999)}"
-
-    device_fqdn = f"{device}.{config.lab_domain}"
-
-    console.print("\n" + "=" * 70)
-    console.print("[bold cyan]Certificate Revocation Test[/bold cyan]")
-    console.print("=" * 70)
-    console.print(f"\n  Device:   {device_fqdn}")
-    console.print(f"  PKI:      {pki_type.value.upper()}")
-    console.print(f"  CA:       {ca_level.value}")
-    console.print(f"  Scenario: {scenario}")
-    console.print(f"  Source:   {source.value.upper()}\n")
-
-    # Step 1: Check services
-    console.print("[bold]Step 1: Checking Services[/bold]")
-
-    # Check CA is responding
-    ca_health = check_ca_health(pki_type, ca_level)
-    if not ca_health.healthy:
-        console.print(f"  [red]✗ {ca_health.message}[/red]")
-        console.print(f"    [dim]Hint: Start PKI with: sudo podman-compose -f pki-compose.yml up -d[/dim]")
-        raise typer.Exit(1)
-    console.print(f"  [green]✓ {ca_health.message}[/green]")
-
-    # Check EDR
-    edr_status = check_http_service("mock_edr", config.edr_url)
-    if not edr_status.healthy:
-        console.print(f"  [red]✗ Mock EDR not responding[/red]")
-        raise typer.Exit(1)
-    console.print(f"  [green]✓ Mock EDR responding[/green]")
-
-    # Check EDA
-    eda_status = check_container("eda-server")
-    if not eda_status.healthy:
-        console.print(f"  [yellow]⚠ EDA server not running - automation may not work[/yellow]")
-    else:
-        console.print(f"  [green]✓ EDA server running[/green]")
-
-    # Step 2: Issue certificate
-    if skip_issue:
-        if not cert_serial:
-            console.print("\n[red]✗ --cert-serial required with --skip-issue[/red]")
-            raise typer.Exit(1)
-        serial = cert_serial
-        console.print(f"\n[bold]Step 2: Using Existing Certificate[/bold]")
-        console.print(f"  Serial: {serial}")
-    else:
-        console.print(f"\n[bold]Step 2: Issuing Certificate[/bold]")
-
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-            transient=True,
-        ) as progress:
-            progress.add_task("Issuing certificate...", total=None)
-            cert_result = issue_certificate(
-                config=config,
-                device_fqdn=device_fqdn,
-                pki_type=pki_type,
-                ca_level=ca_level,
-            )
-
-        if not cert_result.success:
-            console.print(f"  [red]✗ Failed to issue certificate: {cert_result.message}[/red]")
-            raise typer.Exit(1)
-
-        serial = cert_result.serial
-        console.print(f"  [green]✓ Certificate issued[/green]")
-        console.print(f"    Serial: {serial}")
-
-    # Step 3: Trigger security event
-    console.print(f"\n[bold]Step 3: Triggering Security Event[/bold]")
-
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-        transient=True,
-    ) as progress:
-        progress.add_task("Sending event...", total=None)
-        event_result = trigger_event(
+    # Single scenario — preserve original exit behavior
+    if len(scenarios_to_run) == 1:
+        passed = _run_single_test(
             config=config,
-            source=source,
-            device_id=device,
-            scenario=scenario,
-            severity="critical",
-            certificate_cn=device_fqdn,
-            certificate_serial=serial,
-            ca_level=ca_level,
+            scenario=scenarios_to_run[0],
             pki_type=pki_type,
+            ca_level=ca_level,
+            source=source,
+            wait_time=wait_time,
+            device=device,
+            skip_issue=skip_issue,
+            cert_serial=cert_serial,
         )
+        if not passed:
+            raise typer.Exit(1)
+        return
 
-    if not event_result.success:
-        console.print(f"  [red]✗ Failed to trigger event: {event_result.message}[/red]")
-        raise typer.Exit(1)
+    # Multiple scenarios
+    total = len(scenarios_to_run)
+    console.print(f"\n[bold cyan]Running {total} scenarios ({label})[/bold cyan]\n")
 
-    console.print(f"  [green]✓ Event triggered[/green]")
-    console.print(f"    Event ID: {event_result.event_id}")
+    passed = 0
+    failed = 0
+    results: list[tuple[str, bool]] = []
 
-    # Step 4: Wait for automation
-    console.print(f"\n[bold]Step 4: Waiting for Automation ({wait_time}s)[/bold]")
+    for i, s in enumerate(scenarios_to_run, 1):
+        console.print(f"[bold]--- Scenario {i}/{total} ---[/bold]")
+        ok = _run_single_test(
+            config=config,
+            scenario=s,
+            pki_type=pki_type,
+            ca_level=ca_level,
+            source=source,
+            wait_time=wait_time,
+        )
+        results.append((s, ok))
+        if ok:
+            passed += 1
+        else:
+            failed += 1
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Waiting for EDA to process event...", total=wait_time)
-        for i in range(wait_time):
-            time.sleep(1)
-            progress.update(task, completed=i + 1)
-
-    # Step 5: Verify revocation
-    console.print(f"\n[bold]Step 5: Verifying Revocation[/bold]")
-
-    verify_result = verify_certificate_status(
-        config=config,
-        serial=serial,
-        pki_type=pki_type,
-        ca_level=ca_level,
-    )
-
+    # Print summary
     console.print("\n" + "=" * 70)
-    if verify_result.success and verify_result.status == "REVOKED":
-        console.print("[bold green]TEST PASSED: Certificate was revoked[/bold green]")
-        console.print(f"  Serial: {serial}")
-        console.print(f"  Status: {verify_result.status}")
-    else:
-        console.print("[bold red]TEST FAILED: Certificate was NOT revoked[/bold red]")
-        console.print(f"  Serial: {serial}")
-        console.print(f"  Status: {verify_result.status or 'UNKNOWN'}")
-        console.print(f"\nCheck EDA logs: podman logs eda-server")
-        raise typer.Exit(1)
+    console.print(f"[bold cyan]Test Summary ({label})[/bold cyan]")
+    console.print("=" * 70)
 
+    for s, ok in results:
+        status = "[green]PASS[/green]" if ok else "[red]FAIL[/red]"
+        console.print(f"  {status}  {s}")
+
+    console.print(f"\n[bold]Results: {passed} passed, {failed} failed, {total} total[/bold]")
     console.print("=" * 70 + "\n")
+
+    if failed > 0:
+        raise typer.Exit(1)
 
 
 @app.command("perf-test")
