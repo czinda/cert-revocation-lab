@@ -122,16 +122,30 @@ pki -d "$CLIENT_DB" -c "$PASSWORD" client-init --force 2>/dev/null
 ADMIN_P12="/root/.dogtag/$INSTANCE/ca_admin_cert.p12"
 if [ -f "$ADMIN_P12" ]; then
     pki -d "$CLIENT_DB" -c "$PASSWORD" pkcs12-import \\
-        --pkcs12-file "$ADMIN_P12" \\
-        --pkcs12-password "$PASSWORD" 2>/dev/null
+        --pkcs12 "$ADMIN_P12" \\
+        --password "$PASSWORD" 2>/dev/null
 fi
 
 # Also try from the alias directory
 if [ -f "$NSS_DB/ca_admin_cert.p12" ]; then
     pki -d "$CLIENT_DB" -c "$PASSWORD" pkcs12-import \\
-        --pkcs12-file "$NSS_DB/ca_admin_cert.p12" \\
-        --pkcs12-password "$PASSWORD" 2>/dev/null
+        --pkcs12 "$NSS_DB/ca_admin_cert.p12" \\
+        --password "$PASSWORD" 2>/dev/null
 fi
+
+# Import CA trust chain so pki CLI trusts the server TLS certificate
+for CERT_NICK in "Root CA - Cert-Lab" "Intermediate CA - Cert-Lab" "caSigningCert cert-$INSTANCE CA"; do
+    certutil -L -d "$NSS_DB" -n "$CERT_NICK" -a 2>/dev/null | \\
+        certutil -A -d "$CLIENT_DB" -n "$CERT_NICK" -t "CT,C,C" 2>/dev/null
+done
+
+# Discover admin cert nickname dynamically
+ADMIN_NICK=$(certutil -L -d "$CLIENT_DB" | grep -i "PKI Administrator" | sed 's/\\s*[ucpPCTw,]*$//' | sed 's/\\s*$//')
+if [ -z "$ADMIN_NICK" ]; then
+    ADMIN_NICK="PKI Administrator"
+    echo "WARN|Could not discover admin cert nickname, using default"
+fi
+echo "ADMIN_NICK|$ADMIN_NICK"
 
 echo "PERF_START|$(date +%s%N)"
 
@@ -155,7 +169,7 @@ for i in $(seq 1 {issue_count}); do
 
     # Submit CSR via pki CLI
     OUTPUT=$(pki -d "$CLIENT_DB" -c "$PASSWORD" \\
-        -U "$CA_URL" -n "PKI Administrator" \\
+        -U "$CA_URL" -n "$ADMIN_NICK" \\
         ca-cert-request-submit --profile "$PROFILE" \\
         --csr-file "$CSRFILE" 2>/dev/null)
 
@@ -164,7 +178,7 @@ for i in $(seq 1 {issue_count}); do
     if [ -n "$REQUEST_ID" ]; then
         # Approve the request
         APPROVE_OUT=$(pki -d "$CLIENT_DB" -c "$PASSWORD" \\
-            -U "$CA_URL" -n "PKI Administrator" \\
+            -U "$CA_URL" -n "$ADMIN_NICK" \\
             ca-cert-request-approve "$REQUEST_ID" --force 2>/dev/null)
 
         SERIAL=$(echo "$APPROVE_OUT" | grep -oP 'Certificate ID:\\s+\\K0x[0-9a-fA-F]+' | head -1)
@@ -219,7 +233,7 @@ for i in $(seq 0 $((REVOKE_COUNT - 1))); do
     START_NS=$(date +%s%N)
 
     pki -d "$CLIENT_DB" -c "$PASSWORD" \\
-        -U "$CA_URL" -n "PKI Administrator" \\
+        -U "$CA_URL" -n "$ADMIN_NICK" \\
         ca-cert-revoke "$SERIAL" --reason Key_Compromise --force 2>/dev/null
 
     END_NS=$(date +%s%N)
@@ -240,7 +254,7 @@ echo "PHASE|REVOKE|END|$(date +%s%N)|$REVOKED"
 echo "PHASE|CRL|START|$(date +%s%N)"
 
 pki -d "$CLIENT_DB" -c "$PASSWORD" \\
-    -U "$CA_URL" -n "PKI Administrator" \\
+    -U "$CA_URL" -n "$ADMIN_NICK" \\
     ca-crl-issue --force 2>/dev/null && echo "CRL_ISSUED|OK" || echo "CRL_ISSUED|FAIL"
 
 echo "PHASE|CRL|END|$(date +%s%N)"

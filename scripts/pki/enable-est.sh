@@ -16,7 +16,7 @@ print_header "Enabling EST Subsystem"
 
 # Check if IoT CA is running
 if ! curl -sk "https://localhost:8443/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
-    log_error "IoT CA is not running. Initialize IoT CA first."
+    log_error "CA is not running. Initialize the CA first."
     exit 1
 fi
 

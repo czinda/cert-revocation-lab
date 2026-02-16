@@ -115,17 +115,9 @@ phase2_install_cert() {
     configure_server_cert_profile "$PKI_INSTANCE" "$PKI_TYPE"
 
     # Enable EST subsystem on this CA
-    local est_script="$(dirname "$0")/enable-est.sh"
+    log_info "Enabling EST subsystem..."
     export PKI_INSTANCE_NAME="$PKI_INSTANCE"
-    if [ -x "$est_script" ]; then
-        log_info "Enabling EST subsystem..."
-        "$est_script" && log_info "EST enabled successfully" || log_warn "EST enablement failed (non-fatal)"
-    elif [ -f "$est_script" ]; then
-        log_info "Enabling EST subsystem..."
-        bash "$est_script" && log_info "EST enabled successfully" || log_warn "EST enablement failed (non-fatal)"
-    else
-        log_warn "enable-est.sh not found, skipping EST enablement"
-    fi
+    "$(dirname "$0")/enable-est.sh"
 
     print_header "${CA_NAME} Initialization Complete"
     [ -n "$ALGO_DESC" ] && echo "Algorithm:   $ALGO_DESC"

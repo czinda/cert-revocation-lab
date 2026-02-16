@@ -203,7 +203,18 @@ sudo podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \
 # Complete IoT CA (Phase 2: installs cert)
 sudo podman exec -it dogtag-iot-ca /scripts/init-iot-ca.sh
 
-# 4. Initialize ACME Sub-CA (Phase 1: generates CSR)
+# 4. Initialize EST Sub-CA (Phase 1: generates CSR)
+sudo podman exec -it dogtag-est-ca /scripts/init-est-ca.sh
+
+# Sign EST CA CSR with Intermediate CA (profile: caCACert)
+sudo podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \
+  /certs/est-ca.csr /certs/est-ca-signed.crt \
+  https://intermediate-ca.cert-lab.local:8443 caCACert
+
+# Complete EST CA (Phase 2: installs cert + enables EST subsystem)
+sudo podman exec -it dogtag-est-ca /scripts/init-est-ca.sh
+
+# 5. Initialize ACME Sub-CA (Phase 1: generates CSR)
 sudo podman exec -it dogtag-acme-ca /scripts/init-acme-ca.sh
 
 # Sign ACME CA CSR with Intermediate CA (profile: caCACert)
@@ -214,7 +225,7 @@ sudo podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \
 # Complete ACME CA (Phase 2: installs cert + deploys ACME responder)
 sudo podman exec -it dogtag-acme-ca /scripts/init-acme-ca.sh
 
-# 5. FreeIPA uses its internal Dogtag CA
+# 6. FreeIPA uses its internal Dogtag CA
 # (External CA mode is complex; internal CA works out of the box)
 ```
 
@@ -821,14 +832,29 @@ sudo podman exec -it dogtag-acme-ca /scripts/init-acme-ca.sh
 - `https://acme-ca.cert-lab.local:8446/acme/directory` - ACME directory
 - `https://acme-ca.cert-lab.local:8446/ca` - Dogtag CA web UI
 
-### EST Subsystem
+### EST CA Manual Initialization
 
-EST provides RFC 7030 certificate enrollment, running in its own dedicated EST Sub-CA container. EST is initialized as a separate subordinate CA under the Intermediate CA, with its own 389DS instance. For manual enablement:
+If you need to initialize the EST CA separately (not using `init-pki-hierarchy.sh`):
 
 ```bash
-# Enable EST on EST CA (after EST CA is initialized)
-sudo podman exec -it dogtag-est-ca /scripts/enable-est.sh
+# Start EST containers (included in pki-compose.yml)
+sudo podman-compose -f pki-compose.yml up -d ds-est dogtag-est-ca
+
+# Initialize EST CA (Phase 1: generate CSR)
+sudo podman exec -it dogtag-est-ca /scripts/init-est-ca.sh
+
+# Sign EST CA CSR with Intermediate CA
+sudo podman exec dogtag-intermediate-ca /scripts/sign-csr.sh \
+  /certs/est-ca.csr /certs/est-ca-signed.crt \
+  https://intermediate-ca.cert-lab.local:8443 caCACert
+
+# Complete EST CA (Phase 2: install cert + enable EST subsystem)
+sudo podman exec -it dogtag-est-ca /scripts/init-est-ca.sh
 ```
+
+### EST Subsystem
+
+EST provides RFC 7030 certificate enrollment, running in its own dedicated EST Sub-CA container. EST is initialized as a separate subordinate CA under the Intermediate CA, with its own 389DS instance. The `init-est-ca.sh` script supports all three PKI types (RSA, ECC, PQ) via the first argument or `PKI_TYPE` environment variable.
 
 ### IoT Client EST-First Enrollment
 
