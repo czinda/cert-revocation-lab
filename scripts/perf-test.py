@@ -430,7 +430,8 @@ def run_perf_test(
         )
 
         # Execute the batch script (long timeout for large batches)
-        timeout_s = max(600, issue_count * 2)  # ~2s per cert worst case
+        # Each cert takes ~25s (Java pki CLI startup + TLS + submit + approve)
+        timeout_s = max(600, issue_count * 30 + revoke_count * 15 + 60)
         print(f"[{pki_type.upper()}] Executing batch script (timeout: {timeout_s}s)...")
 
         start_time = time.monotonic()
