@@ -265,18 +265,19 @@ def issue_certificate(
         if result.returncode != 0:
             return CertificateResult(success=False, message=f"Failed to copy CSR: {result.stderr}")
 
-    # Setup client NSS database and submit request
-    setup_and_submit = f"""
+    # Setup client NSS database with admin cert and submit + approve request
+    # We use the admin cert for both submit and approve. Dogtag may auto-approve
+    # requests from authenticated agents, so we handle that case gracefully.
+    setup_submit_approve = f"""
 set -e
-CLIENT_DB=/root/.dogtag/nssdb
+CLIENT_DB=/tmp/pki-issue-nssdb
 INSTANCE={ca_config.instance}
 CA_URL=https://{ca_config.hostname}:8443
 
-# Create client NSS database if needed
+# Create fresh client NSS database
+rm -rf $CLIENT_DB
 mkdir -p $CLIENT_DB
-if [ ! -f $CLIENT_DB/cert9.db ]; then
-    certutil -N -d $CLIENT_DB --empty-password
-fi
+certutil -N -d $CLIENT_DB --empty-password
 
 # Import CA chain for trust
 for cert in /certs/root-ca.crt /certs/intermediate-ca.crt /certs/ca-chain.crt; do
@@ -292,10 +293,10 @@ if [ -f /tmp/ca-signing.crt ]; then
     certutil -A -d $CLIENT_DB -n 'CA Signing Cert' -t 'CT,C,C' -a -i /tmp/ca-signing.crt 2>/dev/null || true
 fi
 
-# Import admin P12 if available (try PKI admin password first, then token password)
+# Import admin P12
 ADMIN_P12=/root/.dogtag/$INSTANCE/ca_admin_cert.p12
+IMPORTED=false
 if [ -f "$ADMIN_P12" ]; then
-    IMPORTED=false
     for P12_PWD in '{config.pki_admin_password}' 'RedHat123' '' \
         $(cat /var/lib/pki/$INSTANCE/conf/password.conf 2>/dev/null | grep "internal=" | cut -d= -f2); do
         if pk12util -i "$ADMIN_P12" -d $CLIENT_DB -k /dev/null -W "$P12_PWD" 2>/dev/null; then
@@ -305,13 +306,24 @@ if [ -f "$ADMIN_P12" ]; then
     done
 fi
 
-# Submit certificate request
-pki -d $CLIENT_DB -U "$CA_URL" ca-cert-request-submit --profile {profile} --csr-file /tmp/request.csr
+# Find admin cert nickname
+ADMIN_NICK=""
+if [ "$IMPORTED" = "true" ]; then
+    ADMIN_NICK=$(certutil -L -d $CLIENT_DB 2>/dev/null | grep -iE "admin|caadmin" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
+fi
+if [ -z "$ADMIN_NICK" ]; then
+    ADMIN_NICK="PKI Administrator for $INSTANCE"
+fi
+
+# Submit certificate request with admin auth
+pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \
+    --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \
+    ca-cert-request-submit --profile {profile} --csr-file /tmp/request.csr
 """
 
-    rc, stdout, stderr = run_podman_exec(ca_config.container, setup_and_submit)
+    rc, stdout, stderr = run_podman_exec(ca_config.container, setup_submit_approve)
     if rc != 0:
-        return CertificateResult(success=False, message=f"Failed to submit request: {stderr}")
+        return CertificateResult(success=False, message=f"Failed to submit request: {stderr or stdout}")
 
     # Extract request ID
     request_id_match = re.search(r"Request ID:\s*(\S+)", stdout)
@@ -320,38 +332,56 @@ pki -d $CLIENT_DB -U "$CA_URL" ca-cert-request-submit --profile {profile} --csr-
 
     request_id = request_id_match.group(1)
 
-    # Find admin cert nickname and approve request
-    approve_cmd = f"""
-set -e
-CLIENT_DB=/root/.dogtag/nssdb
+    # Check if request was auto-approved (common when submitting as admin/agent)
+    check_cmd = f"""
+CLIENT_DB=/tmp/pki-issue-nssdb
 CA_URL=https://{ca_config.hostname}:8443
-
-# Find admin cert nickname
 ADMIN_NICK=$(certutil -L -d $CLIENT_DB 2>/dev/null | grep -iE "admin|caadmin" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
-
-if [ -z "$ADMIN_NICK" ]; then
-    echo "ERROR: Admin certificate not found"
-    exit 1
-fi
-
-# Approve the request
-pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" ca-cert-request-approve --force {request_id}
+[ -z "$ADMIN_NICK" ] && ADMIN_NICK="PKI Administrator for {ca_config.instance}"
+pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \
+    --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \
+    ca-cert-request-show {request_id}
 """
 
-    rc, stdout, stderr = run_podman_exec(ca_config.container, approve_cmd)
-    if rc != 0:
-        # Error details may be in stdout (shell echo) or stderr (pki CLI)
-        error_detail = stderr.strip() or stdout.strip()
+    rc, check_stdout, check_stderr = run_podman_exec(ca_config.container, check_cmd)
+
+    # Determine if we need to approve or if it was auto-approved
+    request_status_match = re.search(r"Request Status:\s*(\S+)", check_stdout or "")
+    request_status = request_status_match.group(1).lower() if request_status_match else "unknown"
+
+    if request_status == "pending":
+        # Need explicit approval
+        approve_cmd = f"""
+CLIENT_DB=/tmp/pki-issue-nssdb
+CA_URL=https://{ca_config.hostname}:8443
+ADMIN_NICK=$(certutil -L -d $CLIENT_DB 2>/dev/null | grep -iE "admin|caadmin" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
+[ -z "$ADMIN_NICK" ] && ADMIN_NICK="PKI Administrator for {ca_config.instance}"
+pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \
+    --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \
+    ca-cert-request-approve --force {request_id}
+"""
+
+        rc, stdout, stderr = run_podman_exec(ca_config.container, approve_cmd)
+        if rc != 0:
+            error_detail = stderr.strip() or stdout.strip()
+            return CertificateResult(
+                success=False,
+                request_id=request_id,
+                message=f"Failed to approve request: {error_detail}"
+            )
+    elif request_status == "complete":
+        # Auto-approved, use the check output to find the cert ID
+        stdout = check_stdout
+    else:
         return CertificateResult(
             success=False,
             request_id=request_id,
-            message=f"Failed to approve request: {error_detail}"
+            message=f"Unexpected request status: {request_status}"
         )
 
-    # Extract certificate ID
+    # Extract certificate ID from approve output or request-show output
     cert_id_match = re.search(r"Certificate ID:\s*(\S+)", stdout)
     if not cert_id_match:
-        # Try alternative pattern
         cert_id_match = re.search(r"Serial Number:\s*(\S+)", stdout)
 
     if not cert_id_match:
@@ -363,11 +393,13 @@ pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" ca-cert-request-approve --
 
     cert_id = cert_id_match.group(1)
 
-    # Retrieve the certificate
+    # Retrieve the certificate and clean up
     retrieve_cmd = f"""
+CLIENT_DB=/tmp/pki-issue-nssdb
 CA_URL=https://{ca_config.hostname}:8443
-pki -d /root/.dogtag/nssdb -U "$CA_URL" ca-cert-show {cert_id} --output /tmp/issued-cert.pem
+pki -d $CLIENT_DB -U "$CA_URL" ca-cert-show {cert_id} --output /tmp/issued-cert.pem
 cat /tmp/issued-cert.pem
+rm -rf $CLIENT_DB
 """
 
     rc, stdout, stderr = run_podman_exec(ca_config.container, retrieve_cmd)
@@ -406,7 +438,12 @@ def verify_certificate_status(
 
     check_cmd = f"""
 CA_URL=https://{ca_config.hostname}:8443
-pki -d /root/.dogtag/nssdb -U "$CA_URL" ca-cert-show {serial} 2>/dev/null | grep -i "Status:"
+CLIENT_DB=/tmp/pki-verify-nssdb
+if [ ! -f $CLIENT_DB/cert9.db ]; then
+    mkdir -p $CLIENT_DB
+    certutil -N -d $CLIENT_DB --empty-password 2>/dev/null
+fi
+pki -d $CLIENT_DB -U "$CA_URL" ca-cert-show {serial} 2>/dev/null | grep -i "Status:"
 """
 
     rc, stdout, stderr = run_podman_exec(ca_config.container, check_cmd)
