@@ -1,6 +1,17 @@
 # Event-Driven Certificate Revocation Lab
 
-Comprehensive lab environment demonstrating automated certificate lifecycle management in Zero Trust Architecture. Features **three independent PKI hierarchies** (RSA-4096, ECC P-384, ML-DSA-87) with Dogtag PKI and FreeIPA, integrated with Event-Driven Ansible for real-time security response.
+> Automated certificate lifecycle management for Zero Trust Architecture -- from detection to revocation in under 60 seconds.
+
+A full-stack lab environment running **three independent PKI hierarchies** -- RSA-4096, ECC P-384, and NIST FIPS 204 ML-DSA-87 (post-quantum) -- on Dogtag PKI with FreeIPA. Security events flow through Kafka into Event-Driven Ansible, which automatically revokes compromised certificates without human intervention.
+
+### Key Capabilities
+
+- **Triple PKI** -- RSA, ECC, and post-quantum (ML-DSA-87) hierarchies running simultaneously
+- **Sub-60s response** -- Security event to certificate revocation with zero manual steps
+- **EST + ACME enrollment** -- RFC 7030 and RFC 8555 automated certificate issuance
+- **IoT device simulation** -- Bulk device enrollment with EST-first strategy and REST API fallback
+- **31 security event types** -- EDR, SIEM, PKI, IoT, identity, and network threat scenarios
+- **Tiered validation** -- 10-tier health check system with auto-remediation
 
 ## PKI Architecture
 
@@ -528,7 +539,18 @@ The EDA rulebook processes 31 event types across 6 categories, routing each to t
 
 Events can target a specific PKI hierarchy using the `pki_type` field (`rsa`, `ecc`, `pqc`). Default is RSA-4096.
 
-## Performance Metrics
+## How It Works
+
+```
+1. Mock EDR detects "Mimikatz Credential Dumping" on workstation01
+2. EDR publishes event to Kafka topic "security-events"
+3. EDA rulebook matches event → triggers RSA revocation playbook
+4. Playbook finds certificate by subject, revokes on IoT Sub-CA
+5. Certificate status changes to REVOKED (reason: key_compromise)
+   Total elapsed: ~45 seconds
+```
+
+## Performance
 
 | Metric | Value |
 |--------|-------|
@@ -644,6 +666,16 @@ sudo podman logs dogtag-root-ca
 - **[Apache Kafka](https://kafka.apache.org/)** - Event Streaming
 - **[Podman](https://podman.io/)** - Container Runtime
 - **[FastAPI](https://fastapi.tiangolo.com/)** - Python Web Framework
+
+## Related Standards
+
+| Standard | Usage in Lab |
+|----------|-------------|
+| [RFC 7030](https://datatracker.ietf.org/doc/html/rfc7030) | EST certificate enrollment via dedicated EST Sub-CAs |
+| [RFC 8555](https://datatracker.ietf.org/doc/html/rfc8555) | ACME automated certificate issuance (RSA hierarchy) |
+| [RFC 5280](https://datatracker.ietf.org/doc/html/rfc5280) | X.509 certificate profiles and CRL generation |
+| [FIPS 204](https://csrc.nist.gov/pubs/fips/204/final) | ML-DSA-87 post-quantum digital signatures |
+| [NIST SP 800-207](https://csrc.nist.gov/pubs/sp/800/207/final) | Zero Trust Architecture principles |
 
 ## Author
 
