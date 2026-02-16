@@ -453,7 +453,9 @@ if [ ! -f $CLIENT_DB/cert9.db ]; then
     mkdir -p $CLIENT_DB
     certutil -N -d $CLIENT_DB --empty-password 2>/dev/null
 fi
-pki -d $CLIENT_DB -U "$CA_URL" ca-cert-show {serial} 2>/dev/null | grep -i "Status:"
+pki -d $CLIENT_DB -U "$CA_URL" \
+    --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \
+    ca-cert-show {serial} 2>/dev/null | grep -i "Status:"
 """
 
     rc, stdout, stderr = run_podman_exec(ca_config.container, check_cmd)
