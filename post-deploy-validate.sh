@@ -253,6 +253,12 @@ check_skip() {
     TOTAL_SKIP=$((TOTAL_SKIP + 1))
 }
 
+check_warn() {
+    echo -e "${YELLOW}WARN${NC}"
+    [ -n "$1" ] && echo -e "         ${YELLOW}> $1${NC}"
+    TOTAL_PASS=$((TOTAL_PASS + 1))
+}
+
 check_wait() {
     echo -ne "${DIM}waiting${NC} "
 }
@@ -1073,12 +1079,17 @@ validate_est_ca() {
         echo -e "         ${DIM}$(openssl x509 -in "$est_cert" -noout -subject 2>/dev/null)${NC}"
     fi
 
-    # EST endpoint
+    # EST endpoint - check HTTP status code
+    # RFC 7030: /cacerts returns application/pkcs7-mime with HTTP 200
     check_start "T4" "$pki_label EST endpoint (port $est_port) ..."
-    if curl -sk "${est_url}/.well-known/est/cacerts" 2>/dev/null | head -1 | grep -q "BEGIN\|MIIB\|MIIC\|MIID"; then
+    local est_http_code
+    est_http_code=$(curl -sk -o /dev/null -w '%{http_code}' "${est_url}/.well-known/est/cacerts" 2>/dev/null)
+    if [ "$est_http_code" = "200" ]; then
         check_pass
-    else
+    elif [ "$est_http_code" = "404" ] || [ "$est_http_code" = "000" ]; then
         check_skip "EST responder not active (may need configuration)"
+    else
+        check_warn "EST responder returned HTTP $est_http_code"
     fi
 
     [ "$est_ok" = true ] && return 0 || return 1
@@ -1091,10 +1102,14 @@ validate_est_endpoint() {
     local est_hostname="${est_ca_name#dogtag-}.${LAB_DOMAIN:-cert-lab.local}"
 
     check_start "T4" "$pki_label EST endpoint (port $est_port) ..."
-    if curl -sk "https://${est_hostname}:${est_port}/.well-known/est/cacerts" 2>/dev/null | head -1 | grep -q "BEGIN\|MIIB\|MIIC\|MIID"; then
+    local est_http_code
+    est_http_code=$(curl -sk -o /dev/null -w '%{http_code}' "https://${est_hostname}:${est_port}/.well-known/est/cacerts" 2>/dev/null)
+    if [ "$est_http_code" = "200" ]; then
         check_pass
-    else
+    elif [ "$est_http_code" = "404" ] || [ "$est_http_code" = "000" ]; then
         check_skip "EST not enabled (optional)"
+    else
+        check_warn "EST responder returned HTTP $est_http_code"
     fi
 }
 
