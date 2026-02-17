@@ -37,33 +37,37 @@ CERTS_DIR = PROJECT_DIR / "data" / "certs"
 PKI_CONFIG = {
     "rsa": {
         "name": "RSA-4096",
-        "ports": {"root": 8443, "intermediate": 8444, "iot": 8445},
+        "ports": {"root": 8443, "intermediate": 8444, "iot": 8445, "est": 8447, "acme": 8446},
         "hostnames": {
             "root": "root-ca.cert-lab.local",
             "intermediate": "intermediate-ca.cert-lab.local",
             "iot": "iot-ca.cert-lab.local",
+            "est": "est-ca.cert-lab.local",
+            "acme": "acme-ca.cert-lab.local",
         },
         "admin_dir": CERTS_DIR / "admin",
         "cert_prefix": "",
     },
     "ecc": {
         "name": "ECC P-384",
-        "ports": {"root": 8463, "intermediate": 8464, "iot": 8465},
+        "ports": {"root": 8463, "intermediate": 8464, "iot": 8465, "est": 8466},
         "hostnames": {
             "root": "ecc-root-ca.cert-lab.local",
             "intermediate": "ecc-intermediate-ca.cert-lab.local",
             "iot": "ecc-iot-ca.cert-lab.local",
+            "est": "ecc-est-ca.cert-lab.local",
         },
         "admin_dir": CERTS_DIR / "ecc" / "admin",
         "cert_prefix": "ecc-",
     },
     "pqc": {
         "name": "ML-DSA-87",
-        "ports": {"root": 8453, "intermediate": 8454, "iot": 8455},
+        "ports": {"root": 8453, "intermediate": 8454, "iot": 8455, "est": 8456},
         "hostnames": {
             "root": "pq-root-ca.cert-lab.local",
             "intermediate": "pq-intermediate-ca.cert-lab.local",
             "iot": "pq-iot-ca.cert-lab.local",
+            "est": "pq-est-ca.cert-lab.local",
         },
         "admin_dir": CERTS_DIR / "pq" / "admin",
         "cert_prefix": "pq-",
@@ -87,15 +91,15 @@ class PKIClient:
 
     # Container name map (shared across all methods)
     CONTAINER_MAP = {
-        "rsa": {"root": "dogtag-root-ca", "intermediate": "dogtag-intermediate-ca", "iot": "dogtag-iot-ca"},
-        "ecc": {"root": "dogtag-ecc-root-ca", "intermediate": "dogtag-ecc-intermediate-ca", "iot": "dogtag-ecc-iot-ca"},
-        "pqc": {"root": "dogtag-pq-root-ca", "intermediate": "dogtag-pq-intermediate-ca", "iot": "dogtag-pq-iot-ca"},
+        "rsa": {"root": "dogtag-root-ca", "intermediate": "dogtag-intermediate-ca", "iot": "dogtag-iot-ca", "est": "dogtag-est-ca", "acme": "dogtag-acme-ca"},
+        "ecc": {"root": "dogtag-ecc-root-ca", "intermediate": "dogtag-ecc-intermediate-ca", "iot": "dogtag-ecc-iot-ca", "est": "dogtag-ecc-est-ca"},
+        "pqc": {"root": "dogtag-pq-root-ca", "intermediate": "dogtag-pq-intermediate-ca", "iot": "dogtag-pq-iot-ca", "est": "dogtag-pq-est-ca"},
     }
 
     INSTANCE_MAP = {
-        "rsa": {"root": "pki-root-ca", "intermediate": "pki-intermediate-ca", "iot": "pki-iot-ca"},
-        "ecc": {"root": "pki-ecc-root-ca", "intermediate": "pki-ecc-intermediate-ca", "iot": "pki-ecc-iot-ca"},
-        "pqc": {"root": "pki-pq-root-ca", "intermediate": "pki-pq-intermediate-ca", "iot": "pki-pq-iot-ca"},
+        "rsa": {"root": "pki-root-ca", "intermediate": "pki-intermediate-ca", "iot": "pki-iot-ca", "est": "pki-est-ca", "acme": "pki-acme-ca"},
+        "ecc": {"root": "pki-ecc-root-ca", "intermediate": "pki-ecc-intermediate-ca", "iot": "pki-ecc-iot-ca", "est": "pki-ecc-est-ca"},
+        "pqc": {"root": "pki-pq-root-ca", "intermediate": "pki-pq-intermediate-ca", "iot": "pki-pq-iot-ca", "est": "pki-pq-est-ca"},
     }
 
     def __init__(self, pki_type: str = "rsa", ca_level: str = "iot"):

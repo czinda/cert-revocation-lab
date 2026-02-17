@@ -51,6 +51,16 @@
         url: "https://iot-ca.cert-lab.local:8443"
         instance: "pki-iot-ca"
         nss_db: "/var/lib/pki/pki-iot-ca/alias"
+      est:
+        container: "dogtag-est-ca"
+        url: "https://est-ca.cert-lab.local:8443"
+        instance: "pki-est-ca"
+        nss_db: "/var/lib/pki/pki-est-ca/alias"
+      acme:
+        container: "dogtag-acme-ca"
+        url: "https://acme-ca.cert-lab.local:8443"
+        instance: "pki-acme-ca"
+        nss_db: "/var/lib/pki/pki-acme-ca/alias"
 
   tasks:
     - name: Set CA configuration

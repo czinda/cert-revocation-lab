@@ -81,6 +81,18 @@
         admin_cert: "{{ admin_creds_dir }}/iot-admin-cert.pem"
         admin_key: "{{ admin_creds_dir }}/iot-admin-key.pem"
         ca_cert: "{{ certs_dir }}/iot-ca-chain.crt"
+      est:
+        name: "EST CA"
+        url: "https://est-ca.cert-lab.local:8447"
+        admin_cert: "{{ admin_creds_dir }}/est-admin-cert.pem"
+        admin_key: "{{ admin_creds_dir }}/est-admin-key.pem"
+        ca_cert: "{{ certs_dir }}/est-ca-chain.crt"
+      acme:
+        name: "ACME CA"
+        url: "https://acme-ca.cert-lab.local:8446"
+        admin_cert: "{{ admin_creds_dir }}/acme-admin-cert.pem"
+        admin_key: "{{ admin_creds_dir }}/acme-admin-key.pem"
+        ca_cert: "{{ certs_dir }}/acme-ca-chain.crt"
 
   tasks:
     - name: Set CA configuration

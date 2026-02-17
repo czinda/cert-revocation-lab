@@ -70,6 +70,13 @@
         admin_cert: "{{ admin_creds_dir }}/pq-iot-admin-cert.pem"
         admin_key: "{{ admin_creds_dir }}/pq-iot-admin-key.pem"
         ca_cert: "{{ certs_dir }}/pq/iot-ca-chain.crt"
+      est:
+        name: "PQ EST CA"
+        container: "dogtag-pq-est-ca"
+        url: "https://pq-est-ca.cert-lab.local:8456"
+        admin_cert: "{{ admin_creds_dir }}/pq-est-admin-cert.pem"
+        admin_key: "{{ admin_creds_dir }}/pq-est-admin-key.pem"
+        ca_cert: "{{ certs_dir }}/pq/est-ca-chain.crt"
 
   tasks:
     - name: Set CA configuration

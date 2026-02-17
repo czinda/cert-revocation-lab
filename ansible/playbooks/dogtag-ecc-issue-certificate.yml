@@ -51,6 +51,11 @@
         url: "https://ecc-iot-ca.cert-lab.local:8443"
         instance: "pki-ecc-iot-ca"
         nss_db: "/var/lib/pki/pki-ecc-iot-ca/alias"
+      est:
+        container: "dogtag-ecc-est-ca"
+        url: "https://ecc-est-ca.cert-lab.local:8443"
+        instance: "pki-ecc-est-ca"
+        nss_db: "/var/lib/pki/pki-ecc-est-ca/alias"
 
   tasks:
     - name: Set CA configuration
