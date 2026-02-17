@@ -232,9 +232,15 @@ def generate_csr(
 def _default_profile(pki_type: PKIType) -> str:
     """Return the default certificate profile for the given PKI type.
 
-    Uses caServerCert for all types - the profile must be configured on each CA
-    to accept the appropriate key types (RSA, EC, ML-DSA).
+    Dogtag ships type-specific profiles with the correct key constraints:
+    - caServerCert: RSA keys only (default)
+    - caECServerCert: EC keys (nistp256, nistp384, nistp521)
+    - caMLDSAServerCert: ML-DSA keys (post-quantum)
     """
+    if pki_type == PKIType.ECC:
+        return "caECServerCert"
+    elif pki_type == PKIType.PQC:
+        return "caMLDSAServerCert"
     return "caServerCert"
 
 

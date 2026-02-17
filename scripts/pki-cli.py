@@ -439,9 +439,15 @@ rm -rf $CLIENT_DB
     def _default_profile(self) -> str:
         """Return the default certificate profile for this PKI type.
 
-        Uses caServerCert for all types - the profile must be configured on each CA
-        to accept the appropriate key types (RSA, EC, ML-DSA).
+        Dogtag ships type-specific profiles with the correct key constraints:
+        - caServerCert: RSA keys only (default)
+        - caECServerCert: EC keys (nistp256, nistp384, nistp521)
+        - caMLDSAServerCert: ML-DSA keys (post-quantum)
         """
+        if self.pki_type == "ecc":
+            return "caECServerCert"
+        elif self.pki_type == "pqc":
+            return "caMLDSAServerCert"
         return "caServerCert"
 
     def issue_cert(self, cn: str, profile: str = None) -> Optional[str]:
@@ -877,8 +883,8 @@ def main():
     p_issue = subparsers.add_parser("issue", help="Issue a test certificate")
     add_common_args(p_issue)
     p_issue.add_argument("--cn", help="Certificate Common Name (default: auto-generated)")
-    p_issue.add_argument("--profile", default="caServerCert",
-                         help="Certificate profile (default: caServerCert)")
+    p_issue.add_argument("--profile", default=None,
+                         help="Certificate profile (default: auto per PKI type)")
     p_issue.set_defaults(func=cmd_issue)
 
     # list command

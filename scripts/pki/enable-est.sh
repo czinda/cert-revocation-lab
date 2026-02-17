@@ -37,10 +37,19 @@ mkdir -p "/var/lib/pki/${PKI_INSTANCE}/conf/est"
 # Use FQDN (not localhost) so the hostname matches the server certificate CN
 EST_PASSWORD="${PKI_ADMIN_PASSWORD:-${ADMIN_PASSWORD:-RedHat123}}"
 CA_FQDN=$(hostname -f 2>/dev/null || echo "localhost")
+
+# Select the correct certificate profile based on PKI type
+# Dogtag ships type-specific profiles with correct key constraints
+EST_PROFILE="caServerCert"
+case "$PKI_INSTANCE" in
+    *ecc*) EST_PROFILE="caECServerCert" ;;
+    *pq*)  EST_PROFILE="caMLDSAServerCert" ;;
+esac
+
 cat > "/var/lib/pki/${PKI_INSTANCE}/conf/est/backend.conf" << EOF
 class=org.dogtagpki.est.DogtagRABackend
 url=https://${CA_FQDN}:8443
-profile=caServerCert
+profile=${EST_PROFILE}
 username=admin
 password=${EST_PASSWORD}
 EOF
