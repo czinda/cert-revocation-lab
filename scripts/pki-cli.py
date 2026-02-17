@@ -279,7 +279,10 @@ class PKIClient:
     def list_certs(self, status_filter: str = "VALID") -> list:
         """List certificates on the CA via pki CLI."""
         status_arg = f"--status {status_filter}" if status_filter.lower() != "all" else ""
-        cmd = f"pki -d /root/.dogtag/nssdb -c '' ca-cert-find {status_arg} 2>/dev/null"
+        cmd = (f"pki -U https://{self.hostname}:8443"
+               f" --ignore-cert-status UNTRUSTED_ISSUER"
+               f" --ignore-cert-status UNKNOWN_ISSUER"
+               f" ca-cert-find {status_arg} 2>/dev/null")
         output = self._podman_exec(cmd)
         if output is None:
             print("Error listing certificates (podman exec failed)")
@@ -314,7 +317,10 @@ class PKIClient:
     def get_cert(self, serial: str) -> Optional[dict]:
         """Get certificate details by serial via pki CLI."""
         serial = self._normalize_serial(serial, with_prefix=True)
-        cmd = f"pki -d /root/.dogtag/nssdb -c '' ca-cert-show {serial} 2>/dev/null"
+        cmd = (f"pki -U https://{self.hostname}:8443"
+               f" --ignore-cert-status UNTRUSTED_ISSUER"
+               f" --ignore-cert-status UNKNOWN_ISSUER"
+               f" ca-cert-show {serial} 2>/dev/null")
         output = self._podman_exec(cmd)
         if output is None:
             return None
