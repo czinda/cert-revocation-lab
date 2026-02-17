@@ -240,8 +240,12 @@ sudo podman exec <container> sed -i '1s|.*|#!/usr/bin/bash|' /usr/bin/systemctl
 ### Certificate Profiles
 
 - `caCACert`: Use for signing subordinate CA certificates
-- `caServerCert`: Use for signing server TLS certificates
+- `caServerCert`: Use for signing server TLS certificates (RSA keys only)
+- `caECServerCert`: Use for signing server TLS certificates (ECC keys)
+- `caMLDSAServerCert`: Use for signing server TLS certificates (ML-DSA keys)
 - `caUserCert`: Use for signing user certificates
+
+**Important**: Dogtag stores profiles in LDAP after initialization. Editing profile files on disk (`/var/lib/pki/<instance>/conf/ca/profiles/ca/`) has no effect on running CAs. The `caServerCert` profile only accepts RSA keys by default (`keyType=RSA`). For ECC and PQ PKI types, use the type-specific profiles (`caECServerCert`, `caMLDSAServerCert`) which have the correct key constraints built in. The `lab` CLI and `pki-cli.py` select the correct profile automatically based on PKI type.
 
 ### Ansible-Based PKI Initialization (Alternative)
 
@@ -716,10 +720,13 @@ The `scripts/pki-cli.py` tool provides certificate management without external d
 ./scripts/pki-cli.py test --ca iot
 ```
 
+**Supported CA levels:** `root`, `intermediate`, `iot`, `est`, `acme`
+
 **Notes:**
 - Uses `pki` CLI via `sudo podman exec` for revocation (bypasses REST API nonce issue)
-- REST API used for GET requests (list, status) which don't require nonce
+- Certificate lookup (`list`, `status`, `get_cert`) uses URL-based auth: `pki -U https://<hostname>:8443 --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER` (required for EST/ACME Sub-CAs whose trust chains aren't in the local NSS db)
 - Serial numbers require `0x` prefix for Dogtag REST API
+- Automatically selects the correct certificate profile per PKI type (`caServerCert` for RSA, `caECServerCert` for ECC, `caMLDSAServerCert` for PQ)
 
 ### Ansible Playbooks for Dogtag
 
@@ -740,6 +747,13 @@ The `ansible/rulebooks/security-events.yml` routes events based on:
 2. **PKI type** - If `pki_type` field is set in event (rsa, ecc, pqc)
 3. **Default** - RSA-4096 PKI for unspecified events
 
+**CA level resolution** in revocation playbooks (priority order):
+1. `event.ca_level` from the Kafka event payload (set by test/caller)
+2. `ca_level` from rulebook extra_vars (hardcoded per event type)
+3. Default: `iot`
+
+This ensures the revocation targets the CA where the certificate was actually issued, while providing sensible defaults for real events that don't specify a CA level.
+
 ### Supported Event Types (31 rules)
 
 | Category | Event Types |
@@ -758,6 +772,17 @@ The `ansible/rulebooks/security-events.yml` routes events based on:
 ./lab test --pki-type ecc --scenario "IoT Device Cloning Detected"
 ./lab test --pki-type pqc --ca-level iot
 ./lab test --pki-type rsa --scenario "Certificate Private Key Compromise"
+
+# Test on EST Sub-CA
+./lab test --pki-type rsa --ca-level est
+./lab test --pki-type ecc --ca-level est
+
+# Run all 23 scenarios
+./lab test --pki-type rsa --all
+
+# Run scenarios by category
+./lab test --pki-type rsa --category iot
+./lab test --pki-type rsa --category identity
 
 # List all scenarios
 ./lab scenarios
@@ -855,6 +880,8 @@ sudo podman exec -it dogtag-est-ca /scripts/init-est-ca.sh
 ### EST Subsystem
 
 EST provides RFC 7030 certificate enrollment, running in its own dedicated EST Sub-CA container. EST is initialized as a separate subordinate CA under the Intermediate CA, with its own 389DS instance. The `init-est-ca.sh` script supports all three PKI types (RSA, ECC, PQ) via the first argument or `PKI_TYPE` environment variable.
+
+The EST backend (`enable-est.sh`) automatically selects the correct certificate profile based on PKI type: `caServerCert` for RSA, `caECServerCert` for ECC, `caMLDSAServerCert` for PQ. The backend URL uses the container's FQDN (via `hostname -f`) to match the server certificate CN for TLS verification.
 
 ### IoT Client EST-First Enrollment
 
