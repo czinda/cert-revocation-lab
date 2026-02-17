@@ -93,9 +93,12 @@ baseDN=dc=acme
 ACME_DB
 
     # Configure ACME issuer (points to this CA)
+    # Use FQDN (not localhost) so the hostname matches the server certificate CN
+    local acme_fqdn
+    acme_fqdn=$(hostname -f 2>/dev/null || echo "localhost")
     cat > /var/lib/pki/${PKI_INSTANCE}/conf/acme/issuer.conf << ACME_ISSUER
 class=org.dogtagpki.acme.issuer.PKIIssuer
-url=https://localhost:8443
+url=https://${acme_fqdn}:8443
 profile=acmeServerCert
 username=admin
 password=${PKI_PASSWORD}

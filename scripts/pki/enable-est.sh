@@ -34,10 +34,12 @@ log_info "Configuring EST subsystem..."
 mkdir -p "/var/lib/pki/${PKI_INSTANCE}/conf/est"
 
 # Configure EST backend - points to this CA for certificate issuance
+# Use FQDN (not localhost) so the hostname matches the server certificate CN
 EST_PASSWORD="${PKI_ADMIN_PASSWORD:-${ADMIN_PASSWORD:-RedHat123}}"
+CA_FQDN=$(hostname -f 2>/dev/null || echo "localhost")
 cat > "/var/lib/pki/${PKI_INSTANCE}/conf/est/backend.conf" << EOF
 class=org.dogtagpki.est.DogtagRABackend
-url=https://localhost:8443
+url=https://${CA_FQDN}:8443
 profile=caServerCert
 username=admin
 password=${EST_PASSWORD}
@@ -121,10 +123,13 @@ done
 
 # Verify EST is working
 log_info "Verifying EST endpoint..."
-if curl -sk "https://localhost:8443/est/.well-known/est/cacerts" 2>/dev/null | head -1 | grep -q "BEGIN\|MIIB\|MIIC\|MIID"; then
-    log_info "EST is responding correctly"
+EST_HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' "https://localhost:8443/.well-known/est/cacerts" 2>/dev/null)
+if [ "$EST_HTTP_CODE" = "200" ]; then
+    log_info "EST is responding correctly (HTTP 200)"
+elif [ "$EST_HTTP_CODE" = "000" ] || [ "$EST_HTTP_CODE" = "404" ]; then
+    log_warn "EST endpoint not responding (HTTP $EST_HTTP_CODE) - may need container restart"
 else
-    log_warn "EST endpoint not responding - may need container restart"
+    log_warn "EST endpoint returned HTTP $EST_HTTP_CODE - check backend configuration"
 fi
 
 HOSTNAME=$(hostname -f 2>/dev/null || echo "localhost")
