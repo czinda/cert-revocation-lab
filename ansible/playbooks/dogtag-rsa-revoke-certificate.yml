@@ -18,9 +18,10 @@
     pki_type: "rsa"
     pki_name: "RSA-4096"
 
-    # CA selection (root, intermediate, iot)
-    # Use ca_level from extra_vars first, then event.ca_level, handling null values
-    target_ca: "{{ ca_level | default(event.ca_level | default('iot', true), true) }}"
+    # CA selection (root, intermediate, iot, est, acme)
+    # Prefer event.ca_level (set by test/caller) so revocation targets the correct CA,
+    # fall back to ca_level from rulebook extra_vars, then default to iot
+    target_ca: "{{ event.ca_level | default(ca_level | default('iot', true), true) }}"
 
     # Event data (passed from EDA)
     # Use 'default(value, true)' to treat null/None as undefined

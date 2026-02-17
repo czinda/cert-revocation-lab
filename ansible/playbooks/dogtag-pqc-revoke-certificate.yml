@@ -18,8 +18,10 @@
     pki_type: "pqc"
     pki_name: "ML-DSA-87"
 
-    # CA selection (root, intermediate, iot)
-    target_ca: "{{ ca_level | default(event.ca_level | default('iot', true), true) }}"
+    # CA selection (root, intermediate, iot, est, acme)
+    # Prefer event.ca_level (set by test/caller) so revocation targets the correct CA,
+    # fall back to ca_level from rulebook extra_vars, then default to iot
+    target_ca: "{{ event.ca_level | default(ca_level | default('iot', true), true) }}"
 
     # Event data (passed from EDA)
     device_fqdn: "{{ event.device_fqdn | default('unknown.cert-lab.local', true) }}"
