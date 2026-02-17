@@ -864,7 +864,7 @@ def main():
     def add_common_args(p):
         p.add_argument("--pki", choices=["rsa", "ecc", "pqc"], default="rsa",
                        help="PKI type (default: rsa)")
-        p.add_argument("--ca", choices=["root", "intermediate", "iot"], default="iot",
+        p.add_argument("--ca", choices=["root", "intermediate", "iot", "est", "acme"], default="iot",
                        help="CA level (default: iot)")
 
     # issue command
