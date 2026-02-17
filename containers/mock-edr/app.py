@@ -34,7 +34,7 @@ class TriggerRequest(BaseModel):
     severity: str = Field(default="high", pattern="^(low|medium|high|critical)$")
     certificate_cn: Optional[str] = Field(None, description="Certificate CN to revoke")
     certificate_serial: Optional[str] = Field(None, description="Certificate serial number (hex format)")
-    ca_level: Optional[str] = Field(None, pattern="^(root|intermediate|iot)$", description="CA level that issued the certificate")
+    ca_level: Optional[str] = Field(None, pattern="^(root|intermediate|iot|est|acme)$", description="CA level that issued the certificate")
     pki_type: Optional[str] = Field(None, pattern="^(rsa|ecc|pqc)$", description="PKI type for certificate operations (rsa, ecc, pqc)")
 
 
