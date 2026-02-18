@@ -653,14 +653,16 @@ services:
       - ./notebooks:/home/jovyan/work
       - ./data/certs:/home/jovyan/certs:ro
       - ./data/logs:/home/jovyan/logs:ro
+      - ./data/perf-metrics:/home/jovyan/perf-metrics:ro
+      - ./ansible/rulebooks:/home/jovyan/rulebooks:ro
     networks:
       lab-network:
         ipv4_address: ${IP_JUPYTER:-172.20.0.60}
     ports:
       - "8888:8888"
-    # Install kafka-python on startup
+    # Install dependencies on startup
     command: >
-      bash -c "pip install --quiet kafka-python pandas ipywidgets &&
+      bash -c "pip install --quiet kafka-python pandas ipywidgets httpx pyyaml &&
                start-notebook.sh --NotebookApp.token='${JUPYTER_TOKEN}'"
 
 # ===========================================================================
