@@ -125,6 +125,39 @@ pip install -e .
 - `lab est-enroll` - Enroll for certificate via EST protocol (RFC 7030)
 - `lab est-cacerts` - Get CA certificates from EST endpoint
 - `lab perf-test` - Run bulk PKI performance test (issuance + revocation)
+- `lab test-advanced` - Run advanced test suites (lifecycle, protocols, multi-pki, verification, resilience, siem, freeipa)
+
+### Lab Test-Advanced Command
+
+Run advanced test suites that go beyond the basic event-driven revocation pipeline:
+
+```bash
+# Run all 7 suites (20 tests)
+./lab test-advanced
+
+# Run a specific suite
+./lab test-advanced --suite lifecycle --pki-type rsa
+./lab test-advanced --suite protocols --pki-type ecc
+./lab test-advanced --suite multi-pki
+./lab test-advanced --suite verification --pki-type rsa
+./lab test-advanced --suite resilience --wait 60
+./lab test-advanced --suite siem
+./lab test-advanced --suite freeipa
+```
+
+**Test suites (20 tests):**
+
+| Suite | Tests | Description |
+|-------|-------|-------------|
+| `lifecycle` | 4 | Revocation reasons, idempotent revocation, certificate hold/unhold, hold then permanent revoke |
+| `protocols` | 4 | EST enroll+revoke, EST renewal, EST cacerts across PKIs, ACME issue+revoke |
+| `multi-pki` | 3 | Parallel multi-PKI revocation, all CA levels, PKI event routing correctness |
+| `verification` | 2 | OCSP status before/after revocation, CRL serial presence after revocation |
+| `resilience` | 2 | Duplicate event handling, rapid-fire 5-cert revocation |
+| `siem` | 4 | Attack chain, IoT compromise, PKI attack, identity theft simulations |
+| `freeipa` | 1 | Identity event triggers Dogtag revocation (skips if FreeIPA not deployed) |
+
+Tests that require infrastructure not present (e.g., FreeIPA, ACME CA, multiple PKI types) are automatically skipped with a `SKIP` status.
 
 ### Lab Test Polling Behavior
 

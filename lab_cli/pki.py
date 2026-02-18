@@ -585,3 +585,279 @@ pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \\
         status=verify_result.status,
         message=f"Revocation may have failed. Status: {verify_result.status}"
     )
+
+
+def unhold_certificate(
+    config: LabConfig,
+    serial: str,
+    pki_type: Optional[PKIType] = None,
+    ca_level: Optional[CALevel] = None,
+) -> RevocationResult:
+    """
+    Release a certificate from hold (un-revoke a held certificate).
+
+    Only works on certificates that were revoked with reason=6 (certificateHold).
+    Certificates revoked with permanent reasons cannot be unholded.
+
+    Args:
+        config: Lab configuration
+        serial: Certificate serial number
+        pki_type: PKI type
+        ca_level: CA level
+
+    Returns:
+        RevocationResult with updated status
+    """
+    pki_type = pki_type or config.pki_type
+    ca_level = ca_level or config.ca_level
+    ca_config = config.get_ca_config(pki_type, ca_level)
+
+    unhold_cmd = f"""
+set -e
+CLIENT_DB=/root/.dogtag/nssdb
+INSTANCE={ca_config.instance}
+CA_URL=https://{ca_config.hostname}:8443
+
+# Ensure client NSS database exists
+mkdir -p $CLIENT_DB
+if [ ! -f $CLIENT_DB/cert9.db ]; then
+    certutil -N -d $CLIENT_DB --empty-password
+fi
+
+# Import admin P12 if not already in database
+ADMIN_P12=/root/.dogtag/$INSTANCE/ca_admin_cert.p12
+if [ -f "$ADMIN_P12" ] && ! certutil -L -d $CLIENT_DB 2>/dev/null | grep -qiE "admin|caadmin"; then
+    for P12_PWD in '{config.pki_admin_password}' 'RedHat123' ''; do
+        if pk12util -i "$ADMIN_P12" -d $CLIENT_DB -k /dev/null -W "$P12_PWD" 2>/dev/null; then
+            break
+        fi
+    done
+fi
+
+# Find admin cert nickname
+ADMIN_NICK=$(certutil -L -d $CLIENT_DB 2>/dev/null | grep -iE "admin|caadmin" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
+
+if [ -z "$ADMIN_NICK" ]; then
+    echo "ERROR: Admin certificate not found in NSS database"
+    exit 1
+fi
+
+# Release hold on the certificate
+pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \\
+    --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \\
+    ca-cert-release-hold {serial} --force
+"""
+
+    rc, stdout, stderr = run_podman_exec(ca_config.container, unhold_cmd)
+
+    if rc != 0:
+        error_detail = stderr.strip() or stdout.strip()
+        return RevocationResult(
+            success=False,
+            serial=serial,
+            message=f"Failed to release hold: {error_detail}"
+        )
+
+    # Verify certificate is back to VALID
+    verify_result = verify_certificate_status(config, serial, pki_type, ca_level)
+
+    if verify_result.success and verify_result.status == "VALID":
+        return RevocationResult(
+            success=True,
+            serial=serial,
+            status="VALID",
+            message=f"Certificate {serial} hold released, status: VALID"
+        )
+
+    return RevocationResult(
+        success=False,
+        serial=serial,
+        status=verify_result.status,
+        message=f"Hold release may have failed. Status: {verify_result.status}"
+    )
+
+
+def check_ocsp_status(
+    config: LabConfig,
+    serial: str,
+    pki_type: Optional[PKIType] = None,
+    ca_level: Optional[CALevel] = None,
+) -> RevocationResult:
+    """
+    Check certificate revocation status via OCSP.
+
+    Queries the Dogtag OCSP responder to check if a certificate is
+    good, revoked, or unknown.
+
+    Args:
+        config: Lab configuration
+        serial: Certificate serial number
+        pki_type: PKI type
+        ca_level: CA level
+
+    Returns:
+        RevocationResult with OCSP status (good/revoked/unknown)
+    """
+    pki_type = pki_type or config.pki_type
+    ca_level = ca_level or config.ca_level
+    ca_config = config.get_ca_config(pki_type, ca_level)
+
+    # We need to export the CA signing cert and the target cert, then run openssl ocsp
+    ocsp_cmd = f"""
+set -e
+INSTANCE={ca_config.instance}
+CA_URL=https://{ca_config.hostname}:8443
+PKI_DB=/var/lib/pki/$INSTANCE/alias
+CLIENT_DB=/tmp/pki-ocsp-nssdb
+OCSP_URL="$CA_URL/ca/ocsp"
+
+# Setup temporary NSS db
+rm -rf $CLIENT_DB
+mkdir -p $CLIENT_DB
+certutil -N -d $CLIENT_DB --empty-password
+
+# Export CA signing certificate
+certutil -L -d $PKI_DB -n "caSigningCert cert-$INSTANCE CA" -a > /tmp/ocsp-ca.pem 2>/dev/null
+
+# Export the target certificate
+pki -d $CLIENT_DB -U "$CA_URL" \\
+    --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \\
+    ca-cert-show {serial} --output /tmp/ocsp-target.pem 2>/dev/null
+
+# Query OCSP
+openssl ocsp \\
+    -issuer /tmp/ocsp-ca.pem \\
+    -cert /tmp/ocsp-target.pem \\
+    -url "$OCSP_URL" \\
+    -no_nonce \\
+    -CAfile /tmp/ocsp-ca.pem 2>&1 || true
+
+# Clean up
+rm -rf $CLIENT_DB /tmp/ocsp-ca.pem /tmp/ocsp-target.pem
+"""
+
+    rc, stdout, stderr = run_podman_exec(ca_config.container, ocsp_cmd, timeout=30)
+
+    combined = (stdout + "\n" + stderr).lower()
+
+    if "good" in combined:
+        return RevocationResult(
+            success=True,
+            serial=serial,
+            status="good",
+            message=f"OCSP status for {serial}: good"
+        )
+    elif "revoked" in combined:
+        return RevocationResult(
+            success=True,
+            serial=serial,
+            status="revoked",
+            message=f"OCSP status for {serial}: revoked"
+        )
+    elif "unknown" in combined:
+        return RevocationResult(
+            success=True,
+            serial=serial,
+            status="unknown",
+            message=f"OCSP status for {serial}: unknown"
+        )
+
+    return RevocationResult(
+        success=False,
+        serial=serial,
+        message=f"Could not determine OCSP status: {stdout[:200]}"
+    )
+
+
+def check_crl_for_serial(
+    config: LabConfig,
+    serial: str,
+    pki_type: Optional[PKIType] = None,
+    ca_level: Optional[CALevel] = None,
+    force_crl: bool = False,
+) -> tuple[bool, int]:
+    """
+    Check if a certificate serial number appears in the CRL.
+
+    Optionally forces CRL generation first via `pki ca-crl-issue --force`.
+
+    Args:
+        config: Lab configuration
+        serial: Certificate serial number (hex with or without 0x prefix)
+        pki_type: PKI type
+        ca_level: CA level
+        force_crl: If True, force CRL regeneration before checking
+
+    Returns:
+        Tuple of (serial_found: bool, crl_entry_count: int)
+    """
+    pki_type = pki_type or config.pki_type
+    ca_level = ca_level or config.ca_level
+    ca_config = config.get_ca_config(pki_type, ca_level)
+
+    # Normalize serial: remove 0x prefix, uppercase
+    clean_serial = serial.lstrip("0x").lstrip("0X").upper()
+
+    # If forcing CRL, do that first
+    if force_crl:
+        force_cmd = f"""
+CLIENT_DB=/root/.dogtag/nssdb
+INSTANCE={ca_config.instance}
+CA_URL=https://{ca_config.hostname}:8443
+
+mkdir -p $CLIENT_DB
+if [ ! -f $CLIENT_DB/cert9.db ]; then
+    certutil -N -d $CLIENT_DB --empty-password
+fi
+
+ADMIN_P12=/root/.dogtag/$INSTANCE/ca_admin_cert.p12
+if [ -f "$ADMIN_P12" ] && ! certutil -L -d $CLIENT_DB 2>/dev/null | grep -qiE "admin|caadmin"; then
+    for P12_PWD in '{config.pki_admin_password}' 'RedHat123' ''; do
+        if pk12util -i "$ADMIN_P12" -d $CLIENT_DB -k /dev/null -W "$P12_PWD" 2>/dev/null; then
+            break
+        fi
+    done
+fi
+
+ADMIN_NICK=$(certutil -L -d $CLIENT_DB 2>/dev/null | grep -iE "admin|caadmin" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
+[ -z "$ADMIN_NICK" ] && ADMIN_NICK="PKI Administrator for $INSTANCE"
+
+pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \\
+    --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \\
+    ca-crl-issue --force
+"""
+        run_podman_exec(ca_config.container, force_cmd, timeout=30)
+
+    # Fetch and parse CRL
+    crl_cmd = f"""
+CA_URL=https://{ca_config.hostname}:8443
+curl -sk "$CA_URL/ca/ee/ca/getCRL?op=getCRL&crlIssuingPoint=MasterCRL" \\
+    -o /tmp/crl.der 2>/dev/null
+
+# Try to parse as DER first, fall back to base64 decode
+if openssl crl -inform DER -in /tmp/crl.der -text -noout 2>/dev/null; then
+    openssl crl -inform DER -in /tmp/crl.der -text -noout 2>/dev/null
+elif openssl crl -inform PEM -in /tmp/crl.der -text -noout 2>/dev/null; then
+    openssl crl -inform PEM -in /tmp/crl.der -text -noout 2>/dev/null
+else
+    # Try base64 decode
+    base64 -d /tmp/crl.der > /tmp/crl2.der 2>/dev/null
+    openssl crl -inform DER -in /tmp/crl2.der -text -noout 2>/dev/null || echo "CRL_PARSE_FAILED"
+fi
+
+rm -f /tmp/crl.der /tmp/crl2.der
+"""
+
+    rc, stdout, stderr = run_podman_exec(ca_config.container, crl_cmd, timeout=30)
+
+    if "CRL_PARSE_FAILED" in stdout or rc != 0:
+        return (False, 0)
+
+    # Count revoked entries
+    entry_count = stdout.lower().count("serial number:")
+
+    # Check if our serial is in the CRL
+    # CRL displays serials in uppercase hex without 0x prefix
+    found = clean_serial in stdout.upper()
+
+    return (found, entry_count)

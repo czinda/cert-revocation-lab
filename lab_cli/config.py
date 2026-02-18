@@ -286,6 +286,45 @@ class LabConfig:
         return CA_CONFIGS[pki][level]
 
 
+# Advanced test suites
+ADVANCED_SUITES: dict[str, list[str]] = {
+    "lifecycle": [
+        "test_revocation_reasons",
+        "test_idempotent_revocation",
+        "test_certificate_hold_unhold",
+        "test_hold_then_revoke",
+    ],
+    "protocols": [
+        "test_est_enroll_revoke",
+        "test_est_renewal",
+        "test_est_cacerts",
+        "test_acme_issue_revoke",
+    ],
+    "multi-pki": [
+        "test_multi_pki_parallel",
+        "test_all_ca_levels",
+        "test_pki_event_routing",
+    ],
+    "verification": [
+        "test_ocsp_after_revocation",
+        "test_crl_after_revocation",
+    ],
+    "resilience": [
+        "test_duplicate_events",
+        "test_rapid_fire_revocation",
+    ],
+    "siem": [
+        "test_siem_attack_chain",
+        "test_siem_iot_compromise",
+        "test_siem_pki_attack",
+        "test_siem_identity_theft",
+    ],
+    "freeipa": [
+        "test_freeipa_identity_event",
+    ],
+}
+
+
 def get_all_scenarios() -> list[str]:
     """Get a flat list of all available scenarios."""
     all_scenarios = []

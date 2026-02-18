@@ -3,6 +3,7 @@ Certificate Revocation Lab CLI - Main entry point.
 
 Usage:
     lab test [OPTIONS]           Run certificate revocation test
+    lab test-advanced [OPTIONS]  Run advanced test suites
     lab status                   Check service status
     lab scenarios                List available scenarios
     lab trigger [OPTIONS]        Trigger a security event
@@ -31,6 +32,7 @@ from .config import (
     CALevel,
     EventSource,
     SCENARIOS,
+    ADVANCED_SUITES,
     get_all_scenarios,
 )
 from .events import trigger_event, EventResult
@@ -881,6 +883,106 @@ def test(
         console.print(f"  {status}  {s}")
 
     console.print(f"\n[bold]Results: {passed} passed, {failed} failed, {total} total[/bold]")
+    console.print("=" * 70 + "\n")
+
+    if failed > 0:
+        raise typer.Exit(1)
+
+
+@app.command("test-advanced")
+def test_advanced(
+    suite: str = typer.Option(
+        "all", "--suite", "-s",
+        help="Test suite: lifecycle, protocols, multi-pki, verification, resilience, siem, freeipa, all"
+    ),
+    pki_type: PKIType = typer.Option(
+        PKIType.RSA,
+        "--pki-type", "-p",
+        help="PKI type (rsa, ecc, pqc)"
+    ),
+    ca_level: CALevel = typer.Option(
+        CALevel.IOT,
+        "--ca-level", "-l",
+        help="CA level (root, intermediate, iot, est, acme)"
+    ),
+    wait_time: int = typer.Option(
+        30,
+        "--wait", "-w",
+        help="Max seconds to poll for revocation"
+    ),
+):
+    """
+    Run advanced test suites for the Certificate Revocation Lab.
+
+    Suites: lifecycle, protocols, multi-pki, verification, resilience, siem, freeipa.
+    Use --suite all to run everything, or pick a specific suite.
+
+    Examples:
+        lab test-advanced --suite lifecycle --pki-type rsa
+        lab test-advanced --suite protocols --pki-type ecc
+        lab test-advanced --suite multi-pki
+        lab test-advanced --suite all --wait 60
+    """
+    from .advanced_tests import run_advanced_tests
+
+    config = LabConfig.load()
+
+    if suite != "all" and suite not in ADVANCED_SUITES:
+        console.print(f"[red]Unknown suite: {suite}[/red]")
+        console.print(f"Available: {', '.join(ADVANCED_SUITES.keys())}, all")
+        raise typer.Exit(1)
+
+    suites_label = suite if suite != "all" else "all suites"
+    total_tests = sum(len(t) for t in ADVANCED_SUITES.values()) if suite == "all" else len(ADVANCED_SUITES.get(suite, []))
+
+    console.print(f"\n[bold cyan]Advanced Test Suite[/bold cyan]\n")
+    console.print(f"  Suite:    {suites_label} ({total_tests} tests)")
+    console.print(f"  PKI:      {pki_type.value.upper()}")
+    console.print(f"  CA:       {ca_level.value}")
+    console.print(f"  Timeout:  {wait_time}s")
+    console.print()
+
+    results = run_advanced_tests(suite, config, pki_type, ca_level, wait_time, console)
+
+    if not results:
+        raise typer.Exit(1)
+
+    # Summary table
+    passed = sum(1 for _, ok, msg in results if ok and not msg.startswith("SKIP:"))
+    skipped = sum(1 for _, _, msg in results if msg.startswith("SKIP:"))
+    failed = sum(1 for _, ok, msg in results if not ok and not msg.startswith("SKIP:"))
+    total = len(results)
+
+    console.print("\n" + "=" * 70)
+    console.print("[bold cyan]Advanced Test Summary[/bold cyan]")
+    console.print("=" * 70)
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Test", style="cyan")
+    table.add_column("Result")
+    table.add_column("Details")
+
+    for test_name, ok, msg in results:
+        display = test_name.replace("test_", "").replace("_", " ").title()
+        if msg.startswith("SKIP:"):
+            result_str = "[dim]SKIP[/dim]"
+            detail = msg[5:].strip()
+        elif ok:
+            result_str = "[green]PASS[/green]"
+            detail = msg
+        else:
+            result_str = "[red]FAIL[/red]"
+            detail = msg
+        table.add_row(display, result_str, detail)
+
+    console.print(table)
+    console.print(
+        f"\n[bold]Results: "
+        f"[green]{passed} passed[/green], "
+        f"[red]{failed} failed[/red], "
+        f"[dim]{skipped} skipped[/dim], "
+        f"{total} total[/bold]"
+    )
     console.print("=" * 70 + "\n")
 
     if failed > 0:
