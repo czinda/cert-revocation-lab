@@ -394,6 +394,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka.${LAB_DOMAIN:-cert-lab.local}:9092
       LAB_LOG_DIR: /opt/cert-lab/logs
       PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       # Lab host settings for SSH-based revocation
       LAB_HOST_IP: ${LAB_HOST_IP:-host.containers.internal}
       LAB_HOST_USER: ${LAB_HOST_USER:-}
@@ -417,6 +418,8 @@ services:
       - "pq-intermediate-ca.cert-lab.local:host-gateway"
       - "pq-iot-ca.cert-lab.local:host-gateway"
       - "pq-est-ca.cert-lab.local:host-gateway"
+      # FreeIPA (port 4443)
+      - "ipa.cert-lab.local:host-gateway"
     volumes:
       - ./ansible/rulebooks:/rulebooks:ro
       - ./ansible/playbooks:/playbooks:ro

@@ -1,0 +1,176 @@
+---
+- name: Revoke Certificate - FreeIPA Identity Management
+  hosts: localhost
+  gather_facts: false
+  vars:
+    ipa_host: "ipa.cert-lab.local"
+    ipa_port: "4443"
+    ipa_url: "https://{{ ipa_host }}:{{ ipa_port }}"
+    ipa_user: "admin"
+    ipa_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default(lookup('env', 'IPA_PASSWORD'), true) | mandatory }}"
+
+    device_fqdn: "{{ event.device_fqdn | default('unknown.cert-lab.local', true) }}"
+    certificate_cn: "{{ event.certificate_cn | default(device_fqdn, true) }}"
+    event_severity: "{{ event.severity | default('high', true) }}"
+    event_id: "{{ event.event_id | default('manual', true) }}"
+    event_description: "{{ event.description | default('Security incident', true) }}"
+    revocation_reason: 1
+    log_file: "{{ lookup('env', 'LAB_LOG_DIR') | default('/opt/cert-lab/logs', true) }}/freeipa-revocation.log"
+
+  tasks:
+    - name: Display revocation request
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          FREEIPA - CERTIFICATE REVOCATION (REST API)
+          ============================================================
+          Event ID:      {{ event_id }}
+          Device:        {{ device_fqdn }}
+          Certificate:   {{ certificate_cn }}
+          Severity:      {{ event_severity }}
+          ============================================================
+
+    - name: Validate severity
+      ansible.builtin.assert:
+        that: event_severity in ['high', 'critical']
+        fail_msg: "Severity '{{ event_severity }}' does not trigger automatic revocation"
+
+    - name: Block for FreeIPA operations
+      block:
+        - name: Login to FreeIPA
+          ansible.builtin.uri:
+            url: "{{ ipa_url }}/ipa/session/login_password"
+            method: POST
+            headers:
+              Host: "{{ ipa_host }}"
+              Referer: "https://{{ ipa_host }}/ipa"
+              Content-Type: "application/x-www-form-urlencoded"
+            body: "user={{ ipa_user }}&password={{ ipa_password | urlencode }}"
+            validate_certs: false
+            status_code: 200
+          register: ipa_login
+          no_log: true
+
+        - name: Extract session cookie
+          ansible.builtin.set_fact:
+            ipa_cookie: "{{ ipa_login.cookies_string }}"
+
+        - name: Find host in FreeIPA
+          ansible.builtin.uri:
+            url: "{{ ipa_url }}/ipa/session/json"
+            method: POST
+            headers:
+              Host: "{{ ipa_host }}"
+              Referer: "https://{{ ipa_host }}/ipa"
+              Content-Type: "application/json"
+              Accept: "application/json"
+              Cookie: "{{ ipa_cookie }}"
+            body_format: json
+            body:
+              method: "host_show"
+              params:
+                - ["{{ device_fqdn }}"]
+                - {}
+            validate_certs: false
+          register: host_result
+          failed_when: false
+
+        - name: Find valid certificates
+          ansible.builtin.uri:
+            url: "{{ ipa_url }}/ipa/session/json"
+            method: POST
+            headers:
+              Host: "{{ ipa_host }}"
+              Referer: "https://{{ ipa_host }}/ipa"
+              Content-Type: "application/json"
+              Accept: "application/json"
+              Cookie: "{{ ipa_cookie }}"
+            body_format: json
+            body:
+              method: "cert_find"
+              params:
+                - []
+                - subject: "{{ certificate_cn }}"
+                  status: "VALID"
+            validate_certs: false
+          register: cert_result
+          failed_when: false
+
+        - name: Extract certificate serials
+          ansible.builtin.set_fact:
+            cert_serials: "{{ cert_result.json.result.result | default([]) | map(attribute='serial_number') | list }}"
+          when: cert_result.json is defined and cert_result.json.result is defined
+
+        - name: Display certificates found
+          ansible.builtin.debug:
+            msg: "Found {{ cert_serials | default([]) | length }} valid certificate(s)"
+
+        - name: Revoke each certificate
+          ansible.builtin.uri:
+            url: "{{ ipa_url }}/ipa/session/json"
+            method: POST
+            headers:
+              Host: "{{ ipa_host }}"
+              Referer: "https://{{ ipa_host }}/ipa"
+              Content-Type: "application/json"
+              Accept: "application/json"
+              Cookie: "{{ ipa_cookie }}"
+            body_format: json
+            body:
+              method: "cert_revoke"
+              params:
+                - ["{{ item }}"]
+                - revocation_reason: "{{ revocation_reason }}"
+            validate_certs: false
+          loop: "{{ cert_serials | default([]) }}"
+          register: revoke_results
+          failed_when: false
+
+        - name: Disable host in FreeIPA
+          ansible.builtin.uri:
+            url: "{{ ipa_url }}/ipa/session/json"
+            method: POST
+            headers:
+              Host: "{{ ipa_host }}"
+              Referer: "https://{{ ipa_host }}/ipa"
+              Content-Type: "application/json"
+              Accept: "application/json"
+              Cookie: "{{ ipa_cookie }}"
+            body_format: json
+            body:
+              method: "host_disable"
+              params:
+                - ["{{ device_fqdn }}"]
+                - {}
+            validate_certs: false
+          when: host_result.json is defined and host_result.json.result is defined
+          failed_when: false
+
+        - name: Log revocation
+          ansible.builtin.lineinfile:
+            path: "{{ log_file }}"
+            line: "{{ lookup('pipe', 'date -Iseconds') }} | IPA | EVENT={{ event_id }} | DEVICE={{ device_fqdn }} | CERTS_REVOKED={{ cert_serials | default([]) | length }} | SEVERITY={{ event_severity }}"
+            create: true
+            mode: '0644'
+
+      rescue:
+        - name: Log failure
+          ansible.builtin.debug:
+            msg: "FreeIPA revocation failed for {{ device_fqdn }}: {{ ansible_failed_result.msg | default('Unknown error') }}"
+
+        - name: Log error to file
+          ansible.builtin.lineinfile:
+            path: "{{ log_file }}"
+            line: "{{ lookup('pipe', 'date -Iseconds') }} | IPA | EVENT={{ event_id }} | DEVICE={{ device_fqdn }} | STATUS=FAILED"
+            create: true
+            mode: '0644'
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          FREEIPA - REVOCATION COMPLETE
+          ============================================================
+          Device:       {{ device_fqdn }}
+          Certificates: {{ cert_serials | default([]) | length }} revoked
+          ============================================================

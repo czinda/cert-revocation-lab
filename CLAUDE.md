@@ -740,6 +740,7 @@ The `scripts/pki-cli.py` tool provides certificate management without external d
 - `ansible/playbooks/dogtag-rsa-revoke-certificate.yml` - RSA-4096 PKI
 - `ansible/playbooks/dogtag-ecc-revoke-certificate.yml` - ECC P-384 PKI
 - `ansible/playbooks/dogtag-pqc-revoke-certificate.yml` - ML-DSA-87 PKI
+- `ansible/playbooks/freeipa-revoke-certificate.yml` - FreeIPA Identity Management (REST API)
 
 **Certificate Issuance:**
 - `ansible/playbooks/dogtag-rsa-issue-certificate.yml` - RSA-4096 PKI
@@ -750,8 +751,9 @@ The `scripts/pki-cli.py` tool provides certificate management without external d
 
 The `ansible/rulebooks/security-events.yml` routes events based on:
 1. **Event type** - IoT events go to IoT CA, identity events to Intermediate CA
-2. **PKI type** - If `pki_type` field is set in event (rsa, ecc, pqc)
-3. **Default** - RSA-4096 PKI for unspecified events
+2. **PKI type** - Every event type has explicit RSA/ECC/PQC rules (no catch-all fallback)
+3. **Default** - RSA-4096 PKI when `pki_type` is not specified
+4. **FreeIPA** - Identity events (impossible_travel, service_account_abuse, mfa_bypass, kerberoasting) additionally trigger FreeIPA revocation via REST API
 
 **CA level resolution** in revocation playbooks (priority order):
 1. `event.ca_level` from the Kafka event payload (set by test/caller)
@@ -760,16 +762,18 @@ The `ansible/rulebooks/security-events.yml` routes events based on:
 
 This ensures the revocation targets the CA where the certificate was actually issued, while providing sensible defaults for real events that don't specify a CA level.
 
-### Supported Event Types (31 rules)
+### Supported Event Types (26 event types, 87 rules)
 
-| Category | Event Types |
-|----------|-------------|
-| Original | malware_detection, credential_theft, ransomware, c2_communication, lateral_movement, privilege_escalation, suspicious_script |
-| PKI/Cert | key_compromise, geo_anomaly, compliance_violation, mitm_detected, rogue_ca |
-| IoT | firmware_integrity, device_cloning, iot_anomaly, protocol_attack |
-| Identity | impossible_travel, service_account_abuse, mfa_bypass, kerberoasting |
-| Network | tls_downgrade, ct_log_mismatch, ocsp_bypass |
-| SIEM | data_exfiltration, unauthorized_access, certificate_misuse |
+All 26 event types have explicit RSA/ECC/PQC rules (27 per PKI type = 81 Dogtag rules, including separate critical/high malware rules), plus 4 FreeIPA identity rules and 2 logging rules.
+
+| Category | Event Types | Scenarios |
+|----------|-------------|-----------|
+| Original | malware_detection, credential_theft, ransomware, c2_communication, lateral_movement, privilege_escalation, suspicious_script | 7 |
+| PKI/Cert | key_compromise, geo_anomaly, compliance_violation, mitm_detected, rogue_ca | 5 |
+| IoT | firmware_integrity, device_cloning, iot_anomaly, protocol_attack | 4 |
+| Identity | impossible_travel, service_account_abuse, mfa_bypass, kerberoasting | 4 (+ FreeIPA) |
+| Network | tls_downgrade, ct_log_mismatch, ocsp_bypass | 3 |
+| SIEM | data_exfiltration, unauthorized_access, certificate_misuse | 3 |
 
 ### Testing with PKI Type
 
@@ -783,12 +787,13 @@ This ensures the revocation targets the CA where the certificate was actually is
 ./lab test --pki-type rsa --ca-level est
 ./lab test --pki-type ecc --ca-level est
 
-# Run all 23 scenarios
+# Run all 26 scenarios
 ./lab test --pki-type rsa --all
 
 # Run scenarios by category
 ./lab test --pki-type rsa --category iot
 ./lab test --pki-type rsa --category identity
+./lab test --pki-type rsa --category siem
 
 # List all scenarios
 ./lab scenarios

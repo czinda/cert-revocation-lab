@@ -248,7 +248,29 @@ SCENARIOS = {
         "parent_process": "systemd",
         "network_ioc": "ocsp.pki.local:80",
         "description": "OCSP stapling failure with soft-fail bypass - revocation check circumvention attempt"
-    }
+    },
+
+    # === SIEM Correlation Events (also triggerable via EDR) ===
+    "Data Exfiltration Detected": {
+        "event_type": "data_exfiltration",
+        "process_name": "rclone.exe",
+        "parent_process": "cmd.exe",
+        "network_ioc": "mega.nz:443",
+        "description": "Large data transfer to external cloud storage detected"
+    },
+    "Unauthorized System Access": {
+        "event_type": "unauthorized_access",
+        "process_name": "rdp_session.exe",
+        "parent_process": "svchost.exe",
+        "network_ioc": "10.0.0.50:3389",
+        "description": "Access attempt to restricted system from unauthorized source"
+    },
+    "Certificate Misuse Detected": {
+        "event_type": "certificate_misuse",
+        "process_name": "openssl.exe",
+        "parent_process": "bash.exe",
+        "description": "Certificate used from unexpected location or for unauthorized purpose"
+    },
 }
 
 

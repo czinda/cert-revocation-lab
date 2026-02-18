@@ -197,6 +197,11 @@ SCENARIOS: dict[str, list[str]] = {
         "Certificate Transparency Log Mismatch",
         "OCSP Stapling Failure",
     ],
+    "siem": [
+        "Data Exfiltration Detected",
+        "Unauthorized System Access",
+        "Certificate Misuse Detected",
+    ],
 }
 
 # SIEM alert type mappings

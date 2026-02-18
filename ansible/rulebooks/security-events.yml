@@ -9,6 +9,9 @@
 #   - RSA-4096: Traditional cryptography (dogtag-rsa-*)
 #   - ECC P-384: Elliptic curve cryptography (dogtag-ecc-*)
 #   - ML-DSA-87: Post-quantum cryptography (dogtag-pqc-*)
+#
+# Every event type has explicit RSA/ECC/PQC rules. RSA is the default when
+# pki_type is not specified.
 
 - name: Security Event Processor
   hosts: all
@@ -23,17 +26,17 @@
 
   rules:
     # =========================================================================
-    # ORIGINAL EVENT TYPES - Route to FreeIPA or default Dogtag RSA
-    # Note: Kafka source wraps messages in {meta, body} - use event.body.*
+    # ORIGINAL EVENT TYPES - Malware, credential theft, ransomware, etc.
     # =========================================================================
 
-    # Rule 1: Critical malware detection - immediate revocation
-    - name: Critical Malware Detection - Immediate Revocation
+    # --- Critical malware detection ---
+    - name: Critical Malware Detection - RSA
       condition: >
         event.body.source in ["edr", "siem"] and
         event.body.event_type == "malware_detection" and
         event.body.severity == "critical" and
-        event.body.action_required == "revoke_certificate"
+        event.body.action_required == "revoke_certificate" and
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -42,12 +45,43 @@
             priority: "critical"
             ca_level: "intermediate"
 
-    # Rule 2: Credential theft - immediate revocation
-    - name: Credential Theft Detected - Revoke Certificate
+    - name: Critical Malware Detection - ECC
+      condition: >
+        event.body.source in ["edr", "siem"] and
+        event.body.event_type == "malware_detection" and
+        event.body.severity == "critical" and
+        event.body.action_required == "revoke_certificate" and
+        event.body.pki_type == "ecc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "critical"
+            ca_level: "intermediate"
+
+    - name: Critical Malware Detection - PQC
+      condition: >
+        event.body.source in ["edr", "siem"] and
+        event.body.event_type == "malware_detection" and
+        event.body.severity == "critical" and
+        event.body.action_required == "revoke_certificate" and
+        event.body.pki_type == "pqc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "critical"
+            ca_level: "intermediate"
+
+    # --- Credential theft ---
+    - name: Credential Theft Detected - RSA
       condition: >
         event.body.event_type == "credential_theft" and
         event.body.severity in ["high", "critical"] and
-        event.body.action_required == "revoke_certificate"
+        event.body.action_required == "revoke_certificate" and
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -56,12 +90,41 @@
             priority: "high"
             ca_level: "intermediate"
 
-    # Rule 3: High severity malware - revocation
-    - name: High Severity Malware - Revoke Certificate
+    - name: Credential Theft Detected - ECC
+      condition: >
+        event.body.event_type == "credential_theft" and
+        event.body.severity in ["high", "critical"] and
+        event.body.action_required == "revoke_certificate" and
+        event.body.pki_type == "ecc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+
+    - name: Credential Theft Detected - PQC
+      condition: >
+        event.body.event_type == "credential_theft" and
+        event.body.severity in ["high", "critical"] and
+        event.body.action_required == "revoke_certificate" and
+        event.body.pki_type == "pqc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+
+    # --- High severity malware ---
+    - name: High Severity Malware - RSA
       condition: >
         event.body.event_type == "malware_detection" and
         event.body.severity == "high" and
-        event.body.action_required == "revoke_certificate"
+        event.body.action_required == "revoke_certificate" and
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -70,11 +133,40 @@
             priority: "high"
             ca_level: "intermediate"
 
-    # Rule 4: Ransomware detection - emergency revocation
-    - name: Ransomware Detection - Emergency Revocation
+    - name: High Severity Malware - ECC
+      condition: >
+        event.body.event_type == "malware_detection" and
+        event.body.severity == "high" and
+        event.body.action_required == "revoke_certificate" and
+        event.body.pki_type == "ecc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+
+    - name: High Severity Malware - PQC
+      condition: >
+        event.body.event_type == "malware_detection" and
+        event.body.severity == "high" and
+        event.body.action_required == "revoke_certificate" and
+        event.body.pki_type == "pqc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+
+    # --- Ransomware detection ---
+    - name: Ransomware Detection - RSA
       condition: >
         event.body.event_type == "ransomware" and
-        event.body.severity in ["high", "critical"]
+        event.body.severity in ["high", "critical"] and
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -83,11 +175,38 @@
             priority: "emergency"
             ca_level: "intermediate"
 
-    # Rule 5: C2 communication - revocation
-    - name: C2 Communication Detected - Revoke Certificate
+    - name: Ransomware Detection - ECC
+      condition: >
+        event.body.event_type == "ransomware" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "ecc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "emergency"
+            ca_level: "intermediate"
+
+    - name: Ransomware Detection - PQC
+      condition: >
+        event.body.event_type == "ransomware" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "pqc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "emergency"
+            ca_level: "intermediate"
+
+    # --- C2 communication ---
+    - name: C2 Communication Detected - RSA
       condition: >
         event.body.event_type == "c2_communication" and
-        event.body.severity in ["high", "critical"]
+        event.body.severity in ["high", "critical"] and
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -96,11 +215,38 @@
             priority: "high"
             ca_level: "intermediate"
 
-    # Rule 6: Lateral movement - revocation
-    - name: Lateral Movement Detected - Revoke Certificate
+    - name: C2 Communication Detected - ECC
+      condition: >
+        event.body.event_type == "c2_communication" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "ecc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+
+    - name: C2 Communication Detected - PQC
+      condition: >
+        event.body.event_type == "c2_communication" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "pqc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+
+    # --- Lateral movement ---
+    - name: Lateral Movement Detected - RSA
       condition: >
         event.body.event_type == "lateral_movement" and
-        event.body.severity in ["high", "critical"]
+        event.body.severity in ["high", "critical"] and
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -109,11 +255,38 @@
             priority: "high"
             ca_level: "intermediate"
 
-    # Rule 7: Privilege escalation - revocation
-    - name: Privilege Escalation - Revoke Certificate
+    - name: Lateral Movement Detected - ECC
+      condition: >
+        event.body.event_type == "lateral_movement" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "ecc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+
+    - name: Lateral Movement Detected - PQC
+      condition: >
+        event.body.event_type == "lateral_movement" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "pqc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+
+    # --- Privilege escalation ---
+    - name: Privilege Escalation - RSA
       condition: >
         event.body.event_type == "privilege_escalation" and
-        event.body.severity in ["high", "critical"]
+        event.body.severity in ["high", "critical"] and
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -122,14 +295,67 @@
             priority: "high"
             ca_level: "intermediate"
 
-    # Rule 8: Suspicious script - revocation
-    - name: Suspicious Script Execution - Revoke Certificate
+    - name: Privilege Escalation - ECC
+      condition: >
+        event.body.event_type == "privilege_escalation" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "ecc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+
+    - name: Privilege Escalation - PQC
+      condition: >
+        event.body.event_type == "privilege_escalation" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "pqc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+
+    # --- Suspicious script ---
+    - name: Suspicious Script Execution - RSA
       condition: >
         event.body.event_type == "suspicious_script" and
-        event.body.severity in ["high", "critical"]
+        event.body.severity in ["high", "critical"] and
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+
+    - name: Suspicious Script Execution - ECC
+      condition: >
+        event.body.event_type == "suspicious_script" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "ecc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+
+    - name: Suspicious Script Execution - PQC
+      condition: >
+        event.body.event_type == "suspicious_script" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "pqc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -139,8 +365,7 @@
     # PKI/CERTIFICATE-SPECIFIC EVENTS - Critical priority
     # =========================================================================
 
-    # Rule 9: Key compromise - immediate revocation (all PKI types)
-    # ca_level not hardcoded - uses event.ca_level (defaults to iot in playbook)
+    # --- Key compromise (ca_level from event, defaults to iot in playbook) ---
     - name: Certificate Private Key Compromise - RSA
       condition: >
         event.body.event_type == "key_compromise" and
@@ -180,11 +405,12 @@
             priority: "emergency"
             reason: 1
 
-    # Rule 10: Geographic anomaly - potential credential theft
-    - name: Certificate Used from Unusual Location
+    # --- Geographic anomaly ---
+    - name: Certificate Used from Unusual Location - RSA
       condition: >
         event.body.event_type == "geo_anomaly" and
-        event.body.severity in ["high", "critical"]
+        event.body.severity in ["high", "critical"] and
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -194,11 +420,40 @@
             ca_level: "intermediate"
             reason: 1
 
-    # Rule 11: Compliance violation - expired cert in use
-    - name: Expired Certificate Compliance Violation
+    - name: Certificate Used from Unusual Location - ECC
+      condition: >
+        event.body.event_type == "geo_anomaly" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "ecc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+            reason: 1
+
+    - name: Certificate Used from Unusual Location - PQC
+      condition: >
+        event.body.event_type == "geo_anomaly" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "pqc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+            reason: 1
+
+    # --- Compliance violation ---
+    - name: Expired Certificate Compliance Violation - RSA
       condition: >
         event.body.event_type == "compliance_violation" and
-        event.body.severity in ["high", "critical"]
+        event.body.severity in ["high", "critical"] and
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -208,11 +463,40 @@
             ca_level: "intermediate"
             reason: 5  # cessationOfOperation
 
-    # Rule 12: MITM detected - certificate pinning violation
-    - name: Certificate Pinning Violation - MITM Attack
+    - name: Expired Certificate Compliance Violation - ECC
+      condition: >
+        event.body.event_type == "compliance_violation" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "ecc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+            reason: 5
+
+    - name: Expired Certificate Compliance Violation - PQC
+      condition: >
+        event.body.event_type == "compliance_violation" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "pqc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+            reason: 5
+
+    # --- MITM / certificate pinning violation ---
+    - name: Certificate Pinning Violation - MITM Attack - RSA
       condition: >
         event.body.event_type == "mitm_detected" and
-        event.body.severity in ["high", "critical"]
+        event.body.severity in ["high", "critical"] and
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -222,25 +506,82 @@
             ca_level: "intermediate"
             reason: 1
 
-    # Rule 13: Rogue CA detected - CA compromise
-    - name: Rogue CA Certificate Detected
+    - name: Certificate Pinning Violation - MITM Attack - ECC
+      condition: >
+        event.body.event_type == "mitm_detected" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "ecc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "emergency"
+            ca_level: "intermediate"
+            reason: 1
+
+    - name: Certificate Pinning Violation - MITM Attack - PQC
+      condition: >
+        event.body.event_type == "mitm_detected" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "pqc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "emergency"
+            ca_level: "intermediate"
+            reason: 1
+
+    # --- Rogue CA detected ---
+    - name: Rogue CA Certificate Detected - RSA
       condition: >
         event.body.event_type == "rogue_ca" and
-        event.body.severity == "critical"
+        event.body.severity == "critical" and
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "emergency"
-            ca_level: "root"  # May need root CA action
+            ca_level: "root"
             reason: 2  # caCompromise
+
+    - name: Rogue CA Certificate Detected - ECC
+      condition: >
+        event.body.event_type == "rogue_ca" and
+        event.body.severity == "critical" and
+        event.body.pki_type == "ecc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "emergency"
+            ca_level: "root"
+            reason: 2
+
+    - name: Rogue CA Certificate Detected - PQC
+      condition: >
+        event.body.event_type == "rogue_ca" and
+        event.body.severity == "critical" and
+        event.body.pki_type == "pqc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "emergency"
+            ca_level: "root"
+            reason: 2
 
     # =========================================================================
     # IoT-SPECIFIC EVENTS - Route to IoT Sub-CA
     # =========================================================================
 
-    # Rule 14: IoT firmware tampering - RSA IoT CA
+    # --- IoT firmware tampering ---
     - name: IoT Firmware Tampering - RSA
       condition: >
         event.body.event_type == "firmware_integrity" and
@@ -283,7 +624,7 @@
             ca_level: "iot"
             reason: 1
 
-    # Rule 15: IoT device cloning - immediate revocation
+    # --- IoT device cloning ---
     - name: IoT Device Cloning Detected - RSA
       condition: >
         event.body.event_type == "device_cloning" and
@@ -326,7 +667,7 @@
             ca_level: "iot"
             reason: 1
 
-    # Rule 16: Anomalous IoT behavior
+    # --- Anomalous IoT behavior ---
     - name: Anomalous IoT Behavior - RSA
       condition: >
         event.body.event_type == "iot_anomaly" and
@@ -369,7 +710,7 @@
             ca_level: "iot"
             reason: 1
 
-    # Rule 17: IoT protocol exploitation
+    # --- IoT protocol exploitation ---
     - name: IoT Protocol Exploitation - RSA
       condition: >
         event.body.event_type == "protocol_attack" and
@@ -416,71 +757,233 @@
     # IDENTITY/ACCESS EVENTS - Route to Intermediate CA
     # =========================================================================
 
-    # Rule 18: Impossible travel - credential compromise
-    - name: Impossible Travel Detected
+    # --- Impossible travel ---
+    - name: Impossible Travel Detected - RSA
+      condition: >
+        event.body.event_type == "impossible_travel" and
+        event.body.severity in ["high", "critical"] and
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+            reason: 1
+
+    - name: Impossible Travel Detected - ECC
+      condition: >
+        event.body.event_type == "impossible_travel" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "ecc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+            reason: 1
+
+    - name: Impossible Travel Detected - PQC
+      condition: >
+        event.body.event_type == "impossible_travel" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "pqc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+            reason: 1
+
+    # --- Service account abuse ---
+    - name: Service Account Abuse Detected - RSA
+      condition: >
+        event.body.event_type == "service_account_abuse" and
+        event.body.severity in ["high", "critical"] and
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+            reason: 1
+
+    - name: Service Account Abuse Detected - ECC
+      condition: >
+        event.body.event_type == "service_account_abuse" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "ecc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+            reason: 1
+
+    - name: Service Account Abuse Detected - PQC
+      condition: >
+        event.body.event_type == "service_account_abuse" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "pqc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+            reason: 1
+
+    # --- MFA bypass ---
+    - name: MFA Bypass Attempt Detected - RSA
+      condition: >
+        event.body.event_type == "mfa_bypass" and
+        event.body.severity in ["high", "critical"] and
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "emergency"
+            ca_level: "intermediate"
+            reason: 1
+
+    - name: MFA Bypass Attempt Detected - ECC
+      condition: >
+        event.body.event_type == "mfa_bypass" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "ecc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "emergency"
+            ca_level: "intermediate"
+            reason: 1
+
+    - name: MFA Bypass Attempt Detected - PQC
+      condition: >
+        event.body.event_type == "mfa_bypass" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "pqc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "emergency"
+            ca_level: "intermediate"
+            reason: 1
+
+    # --- Kerberoasting ---
+    - name: Kerberoasting Attack Detected - RSA
+      condition: >
+        event.body.event_type == "kerberoasting" and
+        event.body.severity in ["high", "critical"] and
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+            reason: 1
+
+    - name: Kerberoasting Attack Detected - ECC
+      condition: >
+        event.body.event_type == "kerberoasting" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "ecc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+            reason: 1
+
+    - name: Kerberoasting Attack Detected - PQC
+      condition: >
+        event.body.event_type == "kerberoasting" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "pqc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+            reason: 1
+
+    # --- FreeIPA identity revocation (fires alongside Dogtag rules) ---
+    - name: Impossible Travel - FreeIPA
       condition: >
         event.body.event_type == "impossible_travel" and
         event.body.severity in ["high", "critical"]
       action:
         run_playbook:
-          name: /playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/freeipa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
-            ca_level: "intermediate"
-            reason: 1
 
-    # Rule 19: Service account abuse
-    - name: Service Account Abuse Detected
+    - name: Service Account Abuse - FreeIPA
       condition: >
         event.body.event_type == "service_account_abuse" and
         event.body.severity in ["high", "critical"]
       action:
         run_playbook:
-          name: /playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/freeipa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
-            ca_level: "intermediate"
-            reason: 1
 
-    # Rule 20: MFA bypass attempt
-    - name: MFA Bypass Attempt Detected
+    - name: MFA Bypass - FreeIPA
       condition: >
         event.body.event_type == "mfa_bypass" and
         event.body.severity in ["high", "critical"]
       action:
         run_playbook:
-          name: /playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/freeipa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "emergency"
-            ca_level: "intermediate"
-            reason: 1
 
-    # Rule 21: Kerberoasting detected
-    - name: Kerberoasting Attack Detected
+    - name: Kerberoasting - FreeIPA
       condition: >
         event.body.event_type == "kerberoasting" and
         event.body.severity in ["high", "critical"]
       action:
         run_playbook:
-          name: /playbooks/dogtag-rsa-revoke-certificate.yml
+          name: /playbooks/freeipa-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
-            ca_level: "intermediate"
-            reason: 1
 
     # =========================================================================
     # NETWORK SECURITY EVENTS
     # =========================================================================
 
-    # Rule 22: TLS downgrade attack
-    - name: TLS Downgrade Attack Detected
+    # --- TLS downgrade attack ---
+    - name: TLS Downgrade Attack Detected - RSA
       condition: >
         event.body.event_type == "tls_downgrade" and
-        event.body.severity in ["high", "critical"]
+        event.body.severity in ["high", "critical"] and
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -490,11 +993,40 @@
             ca_level: "intermediate"
             reason: 1
 
-    # Rule 23: Certificate transparency log mismatch
-    - name: Certificate Transparency Log Mismatch
+    - name: TLS Downgrade Attack Detected - ECC
+      condition: >
+        event.body.event_type == "tls_downgrade" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "ecc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+            reason: 1
+
+    - name: TLS Downgrade Attack Detected - PQC
+      condition: >
+        event.body.event_type == "tls_downgrade" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "pqc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+            reason: 1
+
+    # --- Certificate transparency log mismatch ---
+    - name: Certificate Transparency Log Mismatch - RSA
       condition: >
         event.body.event_type == "ct_log_mismatch" and
-        event.body.severity in ["high", "critical"]
+        event.body.severity in ["high", "critical"] and
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -504,14 +1036,71 @@
             ca_level: "intermediate"
             reason: 1
 
-    # Rule 24: OCSP stapling failure / bypass
-    - name: OCSP Bypass Attempt Detected
+    - name: Certificate Transparency Log Mismatch - ECC
+      condition: >
+        event.body.event_type == "ct_log_mismatch" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "ecc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "emergency"
+            ca_level: "intermediate"
+            reason: 1
+
+    - name: Certificate Transparency Log Mismatch - PQC
+      condition: >
+        event.body.event_type == "ct_log_mismatch" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "pqc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "emergency"
+            ca_level: "intermediate"
+            reason: 1
+
+    # --- OCSP bypass ---
+    - name: OCSP Bypass Attempt Detected - RSA
       condition: >
         event.body.event_type == "ocsp_bypass" and
-        event.body.severity in ["high", "critical"]
+        event.body.severity in ["high", "critical"] and
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+            reason: 1
+
+    - name: OCSP Bypass Attempt Detected - ECC
+      condition: >
+        event.body.event_type == "ocsp_bypass" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "ecc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+            reason: 1
+
+    - name: OCSP Bypass Attempt Detected - PQC
+      condition: >
+        event.body.event_type == "ocsp_bypass" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "pqc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
           extra_vars:
             event: "{{ event.body }}"
             priority: "high"
@@ -522,55 +1111,25 @@
     # SIEM CORRELATION RULES
     # =========================================================================
 
-    # Rule 25: Data exfiltration correlated
-    - name: Data Exfiltration Correlated - Revoke Certificate
+    # --- Data exfiltration ---
+    - name: Data Exfiltration Correlated - RSA
       condition: >
         event.body.event_type == "data_exfiltration" and
-        event.body.severity in ["high", "critical"]
-      action:
-        run_playbook:
-          name: /playbooks/dogtag-rsa-revoke-certificate.yml
-          extra_vars:
-            event: "{{ event.body }}"
-            priority: "high"
-            ca_level: "intermediate"
-
-    # Rule 26: Unauthorized access correlated
-    - name: Unauthorized Access Correlated - Revoke Certificate
-      condition: >
-        event.body.event_type == "unauthorized_access" and
-        event.body.action_required == "revoke_certificate"
-      action:
-        run_playbook:
-          name: /playbooks/dogtag-rsa-revoke-certificate.yml
-          extra_vars:
-            event: "{{ event.body }}"
-            priority: "medium"
-            ca_level: "intermediate"
-
-    # Rule 27: Certificate misuse - immediate revocation
-    - name: Certificate Misuse - Revoke Certificate
-      condition: >
-        event.body.event_type == "certificate_misuse"
-      action:
-        run_playbook:
-          name: /playbooks/dogtag-rsa-revoke-certificate.yml
-          extra_vars:
-            event: "{{ event.body }}"
-            priority: "high"
-            ca_level: "intermediate"
-
-    # =========================================================================
-    # PKI-TYPE SPECIFIC ROUTING (when pki_type is explicitly set)
-    # =========================================================================
-
-    # Rule 28: Generic high/critical event - ECC PKI
-    - name: Generic Security Event - ECC PKI
-      condition: >
         event.body.severity in ["high", "critical"] and
-        event.body.action_required == "revoke_certificate" and
-        event.body.pki_type == "ecc" and
-        event.body.event_type not in ["key_compromise", "firmware_integrity", "device_cloning", "iot_anomaly", "protocol_attack"]
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+
+    - name: Data Exfiltration Correlated - ECC
+      condition: >
+        event.body.event_type == "data_exfiltration" and
+        event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "ecc"
       action:
         run_playbook:
           name: /playbooks/dogtag-ecc-revoke-certificate.yml
@@ -579,13 +1138,88 @@
             priority: "high"
             ca_level: "intermediate"
 
-    # Rule 29: Generic high/critical event - PQC PKI
-    - name: Generic Security Event - PQC PKI
+    - name: Data Exfiltration Correlated - PQC
       condition: >
+        event.body.event_type == "data_exfiltration" and
         event.body.severity in ["high", "critical"] and
+        event.body.pki_type == "pqc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+
+    # --- Unauthorized access ---
+    - name: Unauthorized Access Correlated - RSA
+      condition: >
+        event.body.event_type == "unauthorized_access" and
         event.body.action_required == "revoke_certificate" and
-        event.body.pki_type == "pqc" and
-        event.body.event_type not in ["key_compromise", "firmware_integrity", "device_cloning", "iot_anomaly", "protocol_attack"]
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "medium"
+            ca_level: "intermediate"
+
+    - name: Unauthorized Access Correlated - ECC
+      condition: >
+        event.body.event_type == "unauthorized_access" and
+        event.body.action_required == "revoke_certificate" and
+        event.body.pki_type == "ecc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "medium"
+            ca_level: "intermediate"
+
+    - name: Unauthorized Access Correlated - PQC
+      condition: >
+        event.body.event_type == "unauthorized_access" and
+        event.body.action_required == "revoke_certificate" and
+        event.body.pki_type == "pqc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-pqc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "medium"
+            ca_level: "intermediate"
+
+    # --- Certificate misuse ---
+    - name: Certificate Misuse - RSA
+      condition: >
+        event.body.event_type == "certificate_misuse" and
+        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-rsa-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+
+    - name: Certificate Misuse - ECC
+      condition: >
+        event.body.event_type == "certificate_misuse" and
+        event.body.pki_type == "ecc"
+      action:
+        run_playbook:
+          name: /playbooks/dogtag-ecc-revoke-certificate.yml
+          extra_vars:
+            event: "{{ event.body }}"
+            priority: "high"
+            ca_level: "intermediate"
+
+    - name: Certificate Misuse - PQC
+      condition: >
+        event.body.event_type == "certificate_misuse" and
+        event.body.pki_type == "pqc"
       action:
         run_playbook:
           name: /playbooks/dogtag-pqc-revoke-certificate.yml
@@ -598,7 +1232,7 @@
     # LOGGING AND AUDIT
     # =========================================================================
 
-    # Rule 30: Log unhandled high/critical events
+    # Log unhandled high/critical events
     - name: Log Unhandled Critical Events
       condition: >
         event.body.severity in ["high", "critical"] and
@@ -614,7 +1248,7 @@
             Action Required: {{ event.body.action_required }}
             PKI Type: {{ event.body.pki_type | default('not specified') }}
 
-    # Rule 31: Audit log all events
+    # Audit log all events
     - name: Audit Log All Events
       condition: event.body.event_id is defined
       action:
