@@ -155,12 +155,18 @@ Run comprehensive health checks with auto-remediation:
 - **Tier 1**: Networks & volumes
 - **Tier 2**: Base infrastructure (postgres, redis, zookeeper)
 - **Tier 3**: Kafka event bus
-- **Tier 4**: PKI infrastructure (389DS, Dogtag CAs, certificates)
+- **Tier 4**: PKI infrastructure (389DS, Dogtag CAs, certificates, ACME directory RFC 8555 field validation)
 - **Tier 5**: FreeIPA identity management
 - **Tier 6**: AWX / Ansible runner
 - **Tier 7**: Event-Driven Ansible (EDA)
 - **Tier 8**: Security tools (Mock EDR, SIEM, IoT Client, Jupyter)
-- **Tier 9**: End-to-end integration test
+- **Tier 9**: End-to-end integration test (event flow per PKI type, certificate lifecycle: issue → revoke → verify)
+
+**Key validation checks:**
+- **Tier 4 ACME**: Validates all 4 RFC 8555 directory fields (`newNonce`, `newAccount`, `newOrder`, `revokeCert`), passes if >= 3 present
+- **Tier 9 EDR catalog**: Verifies scenarios endpoint and reports scenario count
+- **Tier 9 per-PKI event flow**: For each deployed PKI type (RSA/ECC/PQ), triggers an event via EDR with `pki_type` and verifies it reaches Kafka
+- **Tier 9 cert lifecycle E2E**: For each deployed PKI type, issues a cert via `pki-cli.py`, triggers a "Certificate Private Key Compromise" event with the serial, waits for EDA processing, then verifies the cert status is REVOKED. Requires Tier 4 (PKI) and Tier 7 (EDA) to pass.
 
 **Auto-remediation (`--fix`):**
 - Restart stopped containers
