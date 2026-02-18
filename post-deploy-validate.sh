@@ -950,10 +950,22 @@ validate_acme_ca() {
         echo -e "         ${DIM}$(openssl x509 -in "$acme_cert" -noout -subject 2>/dev/null)${NC}"
     fi
 
-    # ACME directory endpoint (warn-only)
+    # ACME directory endpoint - validate RFC 8555 required fields
     check_start "T4" "ACME directory endpoint ..."
-    if curl -sk "${acme_url}/acme/directory" 2>/dev/null | grep -q "newNonce\|newAccount\|newOrder"; then
-        check_pass
+    local acme_dir
+    acme_dir=$(curl -sk "${acme_url}/acme/directory" 2>/dev/null)
+    if [ -n "$acme_dir" ]; then
+        local acme_fields=0
+        echo "$acme_dir" | grep -q "newNonce" && acme_fields=$((acme_fields + 1))
+        echo "$acme_dir" | grep -q "newAccount" && acme_fields=$((acme_fields + 1))
+        echo "$acme_dir" | grep -q "newOrder" && acme_fields=$((acme_fields + 1))
+        echo "$acme_dir" | grep -q "revokeCert" && acme_fields=$((acme_fields + 1))
+        if [ $acme_fields -ge 3 ]; then
+            check_pass
+            echo -e "         ${DIM}${acme_fields}/4 RFC 8555 directory fields present${NC}"
+        else
+            check_warn "Only ${acme_fields}/4 ACME directory fields found"
+        fi
     else
         check_skip "ACME responder not active (may need configuration)"
     fi
@@ -1666,7 +1678,134 @@ tier_9_e2e() {
     check_start "T9" "EDR scenario catalog ..."
     local scen
     scen=$(curl -s "http://localhost:8082/scenarios" 2>/dev/null)
-    echo "$scen" | grep -q "Mimikatz\|Malware\|Ransomware" && check_pass || { check_fail "No scenarios returned"; ok=false; }
+    if echo "$scen" | grep -q "Mimikatz\|Malware\|Ransomware"; then
+        local scen_count
+        scen_count=$(echo "$scen" | tr ',' '\n' | grep -c '"')
+        check_pass
+        echo -e "         ${DIM}${scen_count} scenarios available${NC}"
+    else
+        check_fail "No scenarios returned"
+        ok=false
+    fi
+
+    # ---- Per-PKI-type event flow: verify ECC/PQ events reach Kafka ----
+
+    if [ "$ECC_PKI_DEPLOYED" = true ] && [ "$(get_tier_status 3)" = "pass" ]; then
+        check_start "T9" "Event flow (ECC via EDR → Kafka) ..."
+        local ecc_resp
+        ecc_resp=$(curl -s -X POST "http://localhost:8082/trigger" \
+            -H "Content-Type: application/json" \
+            -d "{\"device_id\":\"e2e-ecc-flow-$(date +%s)\",\"scenario\":\"Generic Malware Detection\",\"severity\":\"high\",\"pki_type\":\"ecc\"}" 2>/dev/null)
+        if echo "$ecc_resp" | grep -q "triggered\|event_id"; then
+            check_pass
+        else
+            check_fail "ECC event trigger failed"
+            ok=false
+        fi
+    fi
+
+    if [ "$PQ_PKI_DEPLOYED" = true ] && [ "$(get_tier_status 3)" = "pass" ]; then
+        check_start "T9" "Event flow (PQ via EDR → Kafka) ..."
+        local pq_resp
+        pq_resp=$(curl -s -X POST "http://localhost:8082/trigger" \
+            -H "Content-Type: application/json" \
+            -d "{\"device_id\":\"e2e-pq-flow-$(date +%s)\",\"scenario\":\"Generic Malware Detection\",\"severity\":\"high\",\"pki_type\":\"pqc\"}" 2>/dev/null)
+        if echo "$pq_resp" | grep -q "triggered\|event_id"; then
+            check_pass
+        else
+            check_fail "PQ event trigger failed"
+            ok=false
+        fi
+    fi
+
+    # ---- Certificate lifecycle E2E: issue → trigger → revoke → verify ----
+    local cli="./scripts/pki-cli.py"
+
+    if [ "$RSA_PKI_DEPLOYED" = true ] && [ "$(get_tier_status 4)" = "pass" ] && [ "$(get_tier_status 7)" = "pass" ]; then
+        check_start "T9" "E2E cert revocation (RSA IoT) ..."
+        local e2e_cn="e2e-validate-$(date +%s).cert-lab.local"
+        local issue_out
+        issue_out=$($cli issue --ca iot --pki rsa --cn "$e2e_cn" 2>&1)
+        local e2e_serial
+        e2e_serial=$(echo "$issue_out" | grep -oE '0x[0-9a-fA-F]+' | tail -1)
+        if [ -n "$e2e_serial" ]; then
+            # Trigger revocation event with cert serial
+            curl -s -X POST "http://localhost:8082/trigger" \
+                -H "Content-Type: application/json" \
+                -d "{\"device_id\":\"$e2e_cn\",\"scenario\":\"Certificate Private Key Compromise\",\"severity\":\"critical\",\"certificate_serial\":\"$e2e_serial\",\"certificate_cn\":\"$e2e_cn\",\"ca_level\":\"iot\",\"pki_type\":\"rsa\"}" >/dev/null 2>&1
+            echo -ne "${DIM}waiting 15s${NC} "
+            sleep 15
+            local status_out
+            status_out=$($cli status "$e2e_serial" --ca iot --pki rsa 2>&1)
+            if echo "$status_out" | grep -qi "REVOKED"; then
+                check_pass
+                echo -e "         ${DIM}Certificate $e2e_serial issued + revoked via EDA${NC}"
+            else
+                check_fail "Certificate $e2e_serial not revoked (status: $(echo "$status_out" | grep -i 'status' | head -1))"
+                ok=false
+            fi
+        else
+            check_fail "Could not issue test certificate"
+            echo -e "         ${DIM}$(echo "$issue_out" | tail -3)${NC}"
+            ok=false
+        fi
+    fi
+
+    if [ "$ECC_PKI_DEPLOYED" = true ] && [ "$(get_tier_status 4)" = "pass" ] && [ "$(get_tier_status 7)" = "pass" ]; then
+        check_start "T9" "E2E cert revocation (ECC IoT) ..."
+        local e2e_cn="e2e-ecc-validate-$(date +%s).cert-lab.local"
+        local issue_out
+        issue_out=$($cli issue --ca iot --pki ecc --cn "$e2e_cn" 2>&1)
+        local e2e_serial
+        e2e_serial=$(echo "$issue_out" | grep -oE '0x[0-9a-fA-F]+' | tail -1)
+        if [ -n "$e2e_serial" ]; then
+            curl -s -X POST "http://localhost:8082/trigger" \
+                -H "Content-Type: application/json" \
+                -d "{\"device_id\":\"$e2e_cn\",\"scenario\":\"Certificate Private Key Compromise\",\"severity\":\"critical\",\"certificate_serial\":\"$e2e_serial\",\"certificate_cn\":\"$e2e_cn\",\"ca_level\":\"iot\",\"pki_type\":\"ecc\"}" >/dev/null 2>&1
+            echo -ne "${DIM}waiting 15s${NC} "
+            sleep 15
+            local status_out
+            status_out=$($cli status "$e2e_serial" --ca iot --pki ecc 2>&1)
+            if echo "$status_out" | grep -qi "REVOKED"; then
+                check_pass
+                echo -e "         ${DIM}Certificate $e2e_serial issued + revoked via EDA${NC}"
+            else
+                check_fail "Certificate $e2e_serial not revoked"
+                ok=false
+            fi
+        else
+            check_fail "Could not issue ECC test certificate"
+            ok=false
+        fi
+    fi
+
+    if [ "$PQ_PKI_DEPLOYED" = true ] && [ "$(get_tier_status 4)" = "pass" ] && [ "$(get_tier_status 7)" = "pass" ]; then
+        check_start "T9" "E2E cert revocation (PQ IoT) ..."
+        local e2e_cn="e2e-pq-validate-$(date +%s).cert-lab.local"
+        local issue_out
+        issue_out=$($cli issue --ca iot --pki pqc --cn "$e2e_cn" 2>&1)
+        local e2e_serial
+        e2e_serial=$(echo "$issue_out" | grep -oE '0x[0-9a-fA-F]+' | tail -1)
+        if [ -n "$e2e_serial" ]; then
+            curl -s -X POST "http://localhost:8082/trigger" \
+                -H "Content-Type: application/json" \
+                -d "{\"device_id\":\"$e2e_cn\",\"scenario\":\"Certificate Private Key Compromise\",\"severity\":\"critical\",\"certificate_serial\":\"$e2e_serial\",\"certificate_cn\":\"$e2e_cn\",\"ca_level\":\"iot\",\"pki_type\":\"pqc\"}" >/dev/null 2>&1
+            echo -ne "${DIM}waiting 15s${NC} "
+            sleep 15
+            local status_out
+            status_out=$($cli status "$e2e_serial" --ca iot --pki pqc 2>&1)
+            if echo "$status_out" | grep -qi "REVOKED"; then
+                check_pass
+                echo -e "         ${DIM}Certificate $e2e_serial issued + revoked via EDA${NC}"
+            else
+                check_fail "Certificate $e2e_serial not revoked"
+                ok=false
+            fi
+        else
+            check_fail "Could not issue PQ test certificate"
+            ok=false
+        fi
+    fi
 
     [ "$ok" = true ] && set_tier_status 9 pass || set_tier_status 9 fail
 }
