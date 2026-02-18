@@ -438,8 +438,7 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 │   ├── init-pq-iot-ca.sh              # PQ IoT CA
 │   ├── init-pq-est-ca.sh              # PQ EST wrapper
 │   ├── init-pq-pki-hierarchy.sh       # PQ full hierarchy
-│   ├── sign-csr.sh
-│   └── export-chain.sh
+│   └── sign-csr.sh
 │
 ├── containers/
 │   ├── mock-edr/              # FastAPI EDR simulator
@@ -463,7 +462,11 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 │   └── bash-scripts/
 │       ├── test-revocation.sh     # → ./lab test
 │       ├── validate-lab.sh        # → ./lab validate
-│       └── preflight-check.sh     # → ./lab validate
+│       ├── preflight-check.sh     # → ./lab validate
+│       ├── post-deploy-validate.sh # → ./lab validate --fix
+│       ├── list-certs.sh          # → pki-cli.py list
+│       ├── setup-admin-nssdb.sh   # Not called by automation
+│       └── export-chain.sh        # Not called by any script
 │
 └── data/
     ├── certs/
@@ -820,7 +823,7 @@ ansible-playbook ansible/playbooks/dogtag-pqc-issue-certificate.yml \
 
 ## ACME and EST Subsystems
 
-The lab includes ACME (Automated Certificate Management Environment) and EST (Enrollment over Secure Transport) subsystems for automated certificate enrollment. Both are integrated into the automated initialization pipeline (`init-pki-hierarchy.sh`) and validation (`post-deploy-validate.sh`).
+The lab includes ACME (Automated Certificate Management Environment) and EST (Enrollment over Secure Transport) subsystems for automated certificate enrollment. Both are integrated into the automated initialization pipeline (`init-pki-hierarchy.sh`) and validation (`./lab validate`).
 
 ### Architecture
 
