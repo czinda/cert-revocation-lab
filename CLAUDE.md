@@ -116,7 +116,7 @@ pip install -e .
 **Commands:**
 - `lab status` - Check all service health
 - `lab scenarios` - List available security scenarios
-- `lab test` - Complete end-to-end revocation test
+- `lab test` - Complete end-to-end revocation test (polls for result, exits early)
 - `lab issue` - Issue a certificate from Dogtag PKI (REST API)
 - `lab trigger` - Trigger a security event via EDR/SIEM
 - `lab verify` - Check certificate revocation status
@@ -125,6 +125,23 @@ pip install -e .
 - `lab est-enroll` - Enroll for certificate via EST protocol (RFC 7030)
 - `lab est-cacerts` - Get CA certificates from EST endpoint
 - `lab perf-test` - Run bulk PKI performance test (issuance + revocation)
+
+### Lab Test Polling Behavior
+
+`lab test` polls certificate status every 2 seconds after triggering the security event, instead of waiting the full `--wait` duration. It exits early as soon as the certificate shows `REVOKED` and reports the elapsed time. If the certificate is not revoked within the timeout, the test fails and reports the last observed status.
+
+```bash
+# Default: poll up to 30s
+./lab test --pki-type rsa --scenario "Certificate Private Key Compromise"
+
+# Increase timeout for slow systems
+./lab test --pki-type ecc --wait 60
+
+# Short timeout for fast labs
+./lab test --pki-type rsa --wait 15
+```
+
+Typical revocation completes in 10-20 seconds (Kafka → EDA → Ansible playbook → Dogtag revocation).
 
 ### Lab Validate Command
 
