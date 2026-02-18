@@ -689,40 +689,55 @@ def _run_single_test(
     console.print(f"  [green]✓ Event triggered[/green]")
     console.print(f"    Event ID: {event_result.event_id}")
 
-    # Step 4: Wait for automation
-    console.print(f"\n[bold]Step 4: Waiting for Automation ({wait_time}s)[/bold]")
+    # Step 4: Poll for revocation
+    console.print(f"\n[bold]Step 4: Waiting for Revocation (up to {wait_time}s)[/bold]")
+
+    poll_interval = 2
+    revoked = False
+    verify_result = None
+    elapsed = 0
 
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         console=console,
     ) as progress:
-        task = progress.add_task("Waiting for EDA to process event...", total=wait_time)
-        for i in range(wait_time):
-            time.sleep(1)
-            progress.update(task, completed=i + 1)
+        task = progress.add_task("Polling certificate status...", total=wait_time)
+        while elapsed < wait_time:
+            # Brief initial delay to let event propagate
+            sleep_for = min(poll_interval, wait_time - elapsed)
+            time.sleep(sleep_for)
+            elapsed += sleep_for
+            progress.update(task, completed=elapsed)
 
-    # Step 5: Verify revocation
-    console.print(f"\n[bold]Step 5: Verifying Revocation[/bold]")
+            verify_result = verify_certificate_status(
+                config=config,
+                serial=serial,
+                pki_type=pki_type,
+                ca_level=ca_level,
+            )
+            if verify_result.success and verify_result.status == "REVOKED":
+                revoked = True
+                progress.update(task, completed=wait_time)
+                break
 
-    verify_result = verify_certificate_status(
-        config=config,
-        serial=serial,
-        pki_type=pki_type,
-        ca_level=ca_level,
-    )
+    # Step 5: Result
+    console.print(f"\n[bold]Step 5: Result[/bold]")
 
     console.print("\n" + "=" * 70)
-    if verify_result.success and verify_result.status == "REVOKED":
+    if revoked:
         console.print("[bold green]TEST PASSED: Certificate was revoked[/bold green]")
         console.print(f"  Serial: {serial}")
-        console.print(f"  Status: {verify_result.status}")
+        console.print(f"  Status: REVOKED")
+        console.print(f"  Detected after: {elapsed}s")
         console.print("=" * 70 + "\n")
         return True
     else:
+        status = verify_result.status if verify_result else "UNKNOWN"
         console.print("[bold red]TEST FAILED: Certificate was NOT revoked[/bold red]")
         console.print(f"  Serial: {serial}")
-        console.print(f"  Status: {verify_result.status or 'UNKNOWN'}")
+        console.print(f"  Status: {status or 'UNKNOWN'}")
+        console.print(f"  Waited: {wait_time}s")
         console.print(f"\nCheck EDA logs: podman logs eda-server")
         console.print("=" * 70 + "\n")
         return False
@@ -765,7 +780,7 @@ def test(
     wait_time: int = typer.Option(
         30,
         "--wait", "-w",
-        help="Seconds to wait for automation"
+        help="Max seconds to poll for revocation"
     ),
     skip_issue: bool = typer.Option(
         False,
@@ -784,8 +799,8 @@ def test(
     This command:
     1. Issues a test certificate (or uses existing)
     2. Triggers a security event
-    3. Waits for EDA automation
-    4. Verifies the certificate was revoked
+    3. Polls certificate status until revoked (or timeout)
+    4. Reports pass/fail result
 
     Use --all to run every scenario, or --category to run all scenarios
     in a category (original, pki, iot, identity, network).
