@@ -796,7 +796,10 @@ def check_crl_for_serial(
     ca_config = config.get_ca_config(pki_type, ca_level)
 
     # Normalize serial: remove 0x prefix, uppercase
-    clean_serial = serial.lstrip("0x").lstrip("0X").upper()
+    clean_serial = serial
+    if clean_serial.startswith("0x") or clean_serial.startswith("0X"):
+        clean_serial = clean_serial[2:]
+    clean_serial = clean_serial.upper()
 
     # If forcing CRL, do that first
     if force_crl:

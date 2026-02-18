@@ -6,10 +6,13 @@ EST/ACME protocol operations, multi-PKI scenarios, OCSP/CRL verification,
 resilience, SIEM attack chains, and FreeIPA integration.
 """
 
+import base64
 import random
-import re
+import subprocess
+import tempfile
 import time
-from typing import Optional
+from pathlib import Path
+from typing import Callable, Optional
 
 import httpx
 from rich.console import Console
@@ -18,11 +21,10 @@ from .config import (
     LabConfig,
     PKIType,
     CALevel,
-    EventSource,
     ADVANCED_SUITES,
     CA_CONFIGS,
 )
-from .events import trigger_event, trigger_edr_event
+from .events import trigger_edr_event
 from .pki import (
     issue_certificate,
     verify_certificate_status,
@@ -66,6 +68,40 @@ def _device_fqdn(config: LabConfig, prefix: str = "advtest") -> tuple[str, str]:
     """Generate a random device ID and FQDN."""
     device_id = f"{prefix}-{random.randint(1000000000, 9999999999)}"
     return device_id, f"{device_id}.{config.lab_domain}"
+
+
+def _extract_serial_from_pem(cert_pem: str) -> Optional[str]:
+    """Extract serial number from a PEM or base64-DER certificate.
+
+    Returns hex serial with 0x prefix (e.g. '0x1A2B3C'), or None on failure.
+    """
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False) as f:
+        # Ensure PEM format
+        if not cert_pem.strip().startswith("-----BEGIN"):
+            f.write("-----BEGIN CERTIFICATE-----\n")
+            f.write(cert_pem.strip())
+            f.write("\n-----END CERTIFICATE-----\n")
+        else:
+            f.write(cert_pem)
+        tmp_path = f.name
+
+    try:
+        result = subprocess.run(
+            ["openssl", "x509", "-in", tmp_path, "-serial", "-noout"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        # Output is like "serial=1A2B3C4D" or "serial=1a2b3c4d"
+        line = result.stdout.strip()
+        if "=" in line:
+            hex_serial = line.split("=", 1)[1].strip()
+            return f"0x{hex_serial.upper()}"
+        return None
+    except Exception:
+        return None
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
 
 
 def _poll_for_revocation(
@@ -248,11 +284,10 @@ def test_est_enroll_revoke(
 
     # Extract serial from the certificate
     serial = result.serial
+    if not serial and result.certificate:
+        serial = _extract_serial_from_pem(result.certificate)
     if not serial:
-        # Try to extract from certificate text
-        if result.certificate:
-            return False, "SKIP: EST returned certificate but no serial extraction available"
-        return False, f"SKIP: No serial from EST enrollment"
+        return False, "SKIP: EST returned no certificate or serial could not be extracted"
 
     # Trigger EDR event targeting the EST CA
     event_result = trigger_edr_event(
@@ -285,52 +320,95 @@ def test_est_renewal(
     if pki_type not in EST_ENDPOINTS:
         return False, f"SKIP: EST not available for {pki_type.value} PKI"
 
+    est_url = EST_ENDPOINTS[pki_type]
     _, fqdn = _device_fqdn(config, "estrenew")
 
-    # Initial enrollment
-    result1 = est_enroll_certificate(config, fqdn, pki_type)
-    if not result1.success:
-        return False, f"SKIP: Initial EST enrollment failed: {result1.message}"
-
-    if not result1.certificate:
-        return False, "SKIP: EST enrollment returned no certificate data"
-
-    # Re-enrollment requires client cert — we'd need the cert and key files
-    # Since EST returned a cert, we need to write it to a temp file
-    import tempfile
-    from pathlib import Path
-
+    # Do initial enrollment manually so we keep the private key for TLS
+    # client auth during re-enrollment.  est_enroll_certificate() generates
+    # its key in a temp dir that is deleted before it returns.
     with tempfile.TemporaryDirectory() as tmpdir:
-        cert_path = Path(tmpdir) / "client.crt"
-        key_path = Path(tmpdir) / "client.key"
+        enroll_key = Path(tmpdir) / "enroll.key"
+        enroll_csr = Path(tmpdir) / "enroll.csr"
+        enroll_cert = Path(tmpdir) / "enroll.crt"
 
-        # Write the certificate
-        cert_data = result1.certificate
-        if not cert_data.startswith("-----BEGIN"):
-            # May be base64 DER, wrap in PEM
-            cert_data = f"-----BEGIN CERTIFICATE-----\n{cert_data}\n-----END CERTIFICATE-----"
-        cert_path.write_text(cert_data)
-
-        # Generate a new key for re-enrollment
-        import subprocess
-        subprocess.run(
-            ["openssl", "genrsa", "-out", str(key_path), "2048"],
-            capture_output=True, check=True
+        # Generate key
+        rc = subprocess.run(
+            ["openssl", "genrsa", "-out", str(enroll_key), "2048"],
+            capture_output=True,
         )
+        if rc.returncode != 0:
+            return False, f"SKIP: Key generation failed: {rc.stderr}"
 
+        # Generate CSR
+        rc = subprocess.run(
+            ["openssl", "req", "-new",
+             "-key", str(enroll_key),
+             "-out", str(enroll_csr),
+             "-subj", f"/CN={fqdn}/O=Cert-Lab/C=US"],
+            capture_output=True,
+        )
+        if rc.returncode != 0:
+            return False, f"SKIP: CSR generation failed: {rc.stderr}"
+
+        # Convert CSR to DER base64
+        rc = subprocess.run(
+            ["openssl", "req", "-in", str(enroll_csr), "-outform", "DER"],
+            capture_output=True,
+        )
+        if rc.returncode != 0:
+            return False, f"SKIP: CSR DER conversion failed: {rc.stderr}"
+        csr_b64 = base64.b64encode(rc.stdout).decode("ascii")
+
+        # Submit to EST simpleenroll
+        rc = subprocess.run(
+            ["curl", "-sk", "-X", "POST",
+             "-H", "Content-Type: application/pkcs10",
+             "-H", "Content-Transfer-Encoding: base64",
+             "--data", csr_b64,
+             f"{est_url}/simpleenroll"],
+            capture_output=True, text=True, timeout=60,
+        )
+        if rc.returncode != 0:
+            return False, f"SKIP: EST enrollment curl failed: {rc.stderr}"
+
+        cert1_text = rc.stdout.strip()
+        if "BEGIN CERTIFICATE" not in cert1_text and not cert1_text.startswith("MII"):
+            return False, f"SKIP: EST enrollment did not return a certificate: {cert1_text[:200]}"
+
+        # Write enrolled cert to file (ensure PEM format)
+        if not cert1_text.startswith("-----BEGIN"):
+            enroll_cert.write_text(
+                f"-----BEGIN CERTIFICATE-----\n{cert1_text}\n-----END CERTIFICATE-----\n"
+            )
+        else:
+            enroll_cert.write_text(cert1_text)
+
+        serial1 = _extract_serial_from_pem(enroll_cert.read_text())
+
+        # Re-enroll using the enrolled cert + its matching key for TLS auth
         result2 = est_reenroll_certificate(
             config=config,
             device_fqdn=fqdn,
             pki_type=pki_type,
-            client_cert=str(cert_path),
-            client_key=str(key_path),
+            client_cert=str(enroll_cert),
+            client_key=str(enroll_key),
         )
 
     if not result2.success:
         return False, f"SKIP: EST re-enrollment failed: {result2.message}"
 
-    # Both should have returned certificates
-    if result1.certificate == result2.certificate:
+    serial2 = None
+    if result2.certificate:
+        serial2 = _extract_serial_from_pem(result2.certificate)
+
+    if serial1 and serial2 and serial1 == serial2:
+        return False, f"Re-enrollment returned the same serial ({serial1})"
+
+    if serial1 and serial2:
+        return True, f"EST re-enrollment OK: {serial1} -> {serial2}"
+
+    # Fall back to raw certificate comparison
+    if cert1_text == (result2.certificate or "").strip():
         return False, "Re-enrollment returned the same certificate"
 
     return True, "EST re-enrollment returned a new certificate"
@@ -395,9 +473,10 @@ def test_acme_issue_revoke(
         return False, f"SKIP: ACME issuance failed: {result.message}"
 
     serial = result.serial
+    if not serial and result.certificate:
+        serial = _extract_serial_from_pem(result.certificate)
     if not serial:
-        # ACME may not return serial directly
-        return False, "SKIP: ACME returned success but no serial number"
+        return False, "SKIP: ACME returned no certificate or serial could not be extracted"
 
     # Trigger EDR event targeting the ACME CA
     event_result = trigger_edr_event(
@@ -758,42 +837,48 @@ def _check_siem_simulation(
     # Check SIEM health
     siem_status = check_http_service("mock_siem", siem_url)
     if not siem_status.healthy:
-        return False, f"SKIP: SIEM not responding"
+        return False, "SKIP: SIEM not responding"
+
+    # SIEM simulate endpoints take query parameters (FastAPI bare params),
+    # not JSON body.  target_device is required by all four endpoints.
+    device_id = f"siem-sim-{random.randint(10000, 99999)}"
+    params = {"target_device": f"{device_id}.cert-lab.local"}
 
     try:
         response = httpx.post(
             f"{siem_url}/simulate/{endpoint}",
-            json={},
+            params=params,
             timeout=30.0,
         )
     except httpx.ConnectError:
         return False, f"SKIP: Cannot connect to SIEM at {siem_url}"
     except httpx.TimeoutException:
-        return False, f"SIEM simulation timed out"
+        return False, "SIEM simulation timed out"
     except Exception as e:
         return False, f"SIEM simulation error: {e}"
 
     if response.status_code == 404:
         return False, f"SKIP: SIEM endpoint /simulate/{endpoint} not found"
 
+    if response.status_code == 422:
+        return False, f"SIEM validation error: {response.text[:200]}"
+
     if response.status_code != 200:
         return False, f"SIEM returned HTTP {response.status_code}: {response.text[:200]}"
 
     data = response.json()
 
-    # Check for events or correlation_id
-    events = data.get("events", data.get("alerts", []))
-    if isinstance(events, list):
-        event_count = len(events)
-    else:
-        event_count = data.get("event_count", data.get("alert_count", 0))
-
-    correlation_id = data.get("correlation_id", data.get("chain_id", None))
+    # SIEM simulate endpoints return:
+    #   {"attack_chain_id": "...", "phases_executed": N, "results": [...]}
+    # Extract event count from phases_executed or len(results).
+    results_list = data.get("results", [])
+    event_count = data.get("phases_executed", len(results_list))
+    correlation_id = data.get("attack_chain_id")
 
     if event_count >= expected_min_events:
         msg = f"{label}: {event_count} events generated"
         if correlation_id:
-            msg += f" (correlation_id: {correlation_id})"
+            msg += f" (chain_id: {correlation_id})"
         return True, msg
 
     return False, f"{label}: expected >= {expected_min_events} events, got {event_count}"
@@ -888,7 +973,7 @@ def test_freeipa_identity_event(
 # ---------------------------------------------------------------------------
 
 # Map test names to functions
-TEST_REGISTRY: dict[str, callable] = {
+TEST_REGISTRY: dict[str, Callable] = {
     "test_revocation_reasons": test_revocation_reasons,
     "test_idempotent_revocation": test_idempotent_revocation,
     "test_certificate_hold_unhold": test_certificate_hold_unhold,
