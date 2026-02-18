@@ -45,3 +45,4 @@ Thumbs.db
 # Podman/Docker
 *.tar
 *.img
+lima-lab.yaml
