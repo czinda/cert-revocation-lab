@@ -699,6 +699,92 @@ curl -sk -X POST 'https://localhost:4443/ipa/session/json' \
 - URL-encode special characters in password (e.g., `!` → `%21`)
 - Use session cookie from login for all API calls
 
+## FreeIPA External IdP (Entra ID) Integration
+
+FreeIPA supports external Identity Providers via OAuth 2.0 Device Authorization Grant (RFC 8628). Microsoft Entra ID is configured as an external IdP, allowing users to authenticate to Kerberos using their Entra ID credentials.
+
+### Prerequisites
+
+- FreeIPA server running (ipa-server 4.10.1+)
+- Entra ID App Registration with **"Allow public client flows"** set to **Yes** (enables device code flow)
+- The `sssd-idp` package on client hosts for Kerberos IdP pre-authentication
+
+### Lab Configuration
+
+| Setting | Value |
+|---------|-------|
+| IdP Name | `EntraID` |
+| Provider | `microsoft` |
+| Client ID | `<ENTRA_CLIENT_ID from secrets.enc.yaml>` |
+| Organization (Tenant ID) | `<ENTRA_TENANT_ID from secrets.enc.yaml>` |
+| Scope | `openid profile` |
+| User identifier attribute | `name` |
+
+**Note:** The default Microsoft template uses scope `openid email` and identifier `email`. This lab overrides both to use the `name` claim from the Entra ID userinfo endpoint.
+
+### Setup Commands
+
+Commands run on the FreeIPA host (192.168.1.121):
+
+```bash
+# 1. Authenticate as admin
+sudo podman exec -it freeipa kinit admin
+
+# 2. Add Entra ID as external IdP
+sudo podman exec freeipa ipa idp-add EntraID \
+  --provider microsoft \
+  --client-id "$ENTRA_CLIENT_ID" \
+  --organization "$ENTRA_TENANT_ID" \
+  --scope "openid profile" \
+  --idp-user-id "name"
+
+# 3. Verify IdP configuration
+sudo podman exec freeipa ipa idp-show EntraID --all
+
+# 4. Create a user and associate with the IdP
+sudo podman exec freeipa ipa user-add entrauser \
+  --first=Chris --last=User
+
+sudo podman exec freeipa ipa user-mod entrauser \
+  --user-auth-type=idp \
+  --idp EntraID \
+  --idp-user-id "<Entra ID display name>"
+```
+
+**Important:** The `--idp-user-id` on the user must exactly match (case-sensitive) what Entra ID returns in the `name` field of the userinfo response. Check `journalctl` for `ipa-otpd` logs showing `Received: [...]` to see the actual value returned.
+
+### Authentication Flow (Device Authorization Grant)
+
+```bash
+# 1. Get anonymous FAST armor ticket
+kinit -n -c /tmp/fast.ccache
+
+# 2. Authenticate as the IdP user (use -c to save to a named cache)
+kinit -T /tmp/fast.ccache -c /tmp/krb5cc_entrauser entrauser
+
+# 3. Follow the prompt: open the URL in a browser, enter the PIN, sign in with Entra ID
+
+# 4. Verify the ticket
+klist -c /tmp/krb5cc_entrauser
+```
+
+### Troubleshooting
+
+- **"Preauthentication failed"**: The `name` attribute returned by Entra ID doesn't match `--idp-user-id` on the user. Check logs:
+  ```bash
+  sudo podman exec freeipa journalctl -u ipa-otpd@* --no-pager -n 30
+  ```
+  Look for `Received: [...]` to see the actual value and update the user accordingly.
+
+- **Enable debug logging**: Add to `/etc/ipa/default.conf` inside the container:
+  ```ini
+  [global]
+  oidc_child_debug_level=10
+  ```
+  Remove after debugging (generates significant log volume).
+
+- **User identifier is case-sensitive**: `John Doe` is not the same as `john doe`.
+
 ## Known Limitations
 
 ### FreeIPA Requires Rootful Podman
