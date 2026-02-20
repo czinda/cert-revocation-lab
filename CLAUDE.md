@@ -796,6 +796,12 @@ The Python `podman-compose` may not fully support `condition: service_healthy` i
 
 Since all CA containers use `command: sleep infinity` and require manual initialization, the compose-level dependency is defense-in-depth rather than a hard requirement.
 
+### CA Healthchecks Show Unhealthy Before Initialization
+All CA containers have a healthcheck that queries `getStatus`. Before `pkispawn` runs and Tomcat starts, the healthcheck will fail and compose reports the container as "unhealthy". This is expected. The `start_period: 120s` prevents compose from treating these failures as fatal during initial startup.
+
+### `init-pki-hierarchy.sh` wait_for_ca Behavior
+After each CA is initialized, `init-pki-hierarchy.sh` calls `wait_for_ca()` to verify the CA is responding. Each call executes `curl` inside the target CA's own container (not the Root CA). The timeout is 120 seconds per CA. If a CA does not respond within 120s, the script logs a warning but continues with the next CA in the hierarchy.
+
 ### FreeIPA Requires Rootful Podman
 FreeIPA needs systemd support which requires rootful (sudo) podman. A separate compose file is provided:
 
