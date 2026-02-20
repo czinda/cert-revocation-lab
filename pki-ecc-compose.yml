@@ -7,6 +7,10 @@
 #
 # Network: 172.28.0.0/24 (pki-ecc-net)
 # Ports: 8463-8465 (CA), 3389 internal (DS)
+#
+# NOTE: podman-compose may not honor "condition: service_healthy" in depends_on.
+# start-lab.sh provides its own DS readiness checks (LDAP probes) as a safety net.
+# The init scripts also call wait_for_ds() internally before running pkispawn.
 
 version: "3.8"
 
@@ -115,6 +119,12 @@ services:
       - "8463:8443"
       - "8493:8080"
     command: ["/bin/bash", "-c", "sleep infinity"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk https://localhost:8443/ca/admin/ca/getStatus 2>/dev/null | grep -q running || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
 
   # Dogtag ECC Intermediate CA - ECDSA P-384
   dogtag-ecc-intermediate-ca:
@@ -162,6 +172,12 @@ services:
       - "8464:8443"
       - "8494:8080"
     command: ["/bin/bash", "-c", "sleep infinity"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk https://localhost:8443/ca/admin/ca/getStatus 2>/dev/null | grep -q running || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
 
   # Dogtag ECC IoT Sub-CA - ECDSA P-384
   dogtag-ecc-iot-ca:
@@ -209,6 +225,12 @@ services:
       - "8465:8443"
       - "8495:8080"
     command: ["/bin/bash", "-c", "sleep infinity"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk https://localhost:8443/ca/admin/ca/getStatus 2>/dev/null | grep -q running || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
 
   # 389 Directory Server for ECC EST CA
   ds-ecc-est:
@@ -276,6 +298,12 @@ services:
       - "8466:8443"
       - "8496:8080"
     command: ["/bin/bash", "-c", "sleep infinity"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk https://localhost:8443/ca/admin/ca/getStatus 2>/dev/null | grep -q running || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
 
 networks:
   pki-ecc-net:

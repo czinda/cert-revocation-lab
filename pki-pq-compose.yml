@@ -10,6 +10,10 @@
 #
 # Network: 172.27.0.0/24 (pki-pq-net)
 # Ports: 8453-8455 (CA), 3389 internal (DS)
+#
+# NOTE: podman-compose may not honor "condition: service_healthy" in depends_on.
+# start-lab.sh provides its own DS readiness checks (LDAP probes) as a safety net.
+# The init scripts also call wait_for_ds() internally before running pkispawn.
 
 version: "3.8"
 
@@ -119,6 +123,12 @@ services:
       - "8453:8443"
       - "8490:8080"
     command: ["/bin/bash", "-c", "sleep infinity"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk https://localhost:8443/ca/admin/ca/getStatus 2>/dev/null | grep -q running || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
 
   # Dogtag PQ Intermediate CA - ML-DSA-87
   dogtag-pq-intermediate-ca:
@@ -166,6 +176,12 @@ services:
       - "8454:8443"
       - "8484:8080"
     command: ["/bin/bash", "-c", "sleep infinity"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk https://localhost:8443/ca/admin/ca/getStatus 2>/dev/null | grep -q running || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
 
   # Dogtag PQ IoT Sub-CA - ML-DSA-87
   dogtag-pq-iot-ca:
@@ -213,6 +229,12 @@ services:
       - "8455:8443"
       - "8485:8080"
     command: ["/bin/bash", "-c", "sleep infinity"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk https://localhost:8443/ca/admin/ca/getStatus 2>/dev/null | grep -q running || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
 
   # 389 Directory Server for PQ EST CA
   ds-pq-est:
@@ -280,6 +302,12 @@ services:
       - "8456:8443"
       - "8486:8080"
     command: ["/bin/bash", "-c", "sleep infinity"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk https://localhost:8443/ca/admin/ca/getStatus 2>/dev/null | grep -q running || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
 
 networks:
   pki-pq-net:

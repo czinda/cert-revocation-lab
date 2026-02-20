@@ -1180,8 +1180,31 @@ quick_start() {
                 }
             fi
 
+            # Wait for Directory Servers to be ready before starting PKI servers
+            log_info "Waiting for Directory Servers to be ready..."
+            for ds in ds-root ds-intermediate ds-iot ds-acme ds-est; do
+                local ds_elapsed=0
+                while [ $ds_elapsed -lt 120 ]; do
+                    if [ "$RUNNING_AS_ROOT" = true ]; then
+                        if podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
+                            log_success "$ds is ready"
+                            break
+                        fi
+                    else
+                        if sudo podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
+                            log_success "$ds is ready"
+                            break
+                        fi
+                    fi
+                    sleep 5
+                    ((ds_elapsed += 5)) || true
+                done
+                if [ $ds_elapsed -ge 120 ]; then
+                    log_warn "$ds not ready after 120s"
+                fi
+            done
+
             # Start the PKI servers inside containers
-            sleep 5
             for ca in dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-acme-ca dogtag-est-ca; do
                 instance=$(echo $ca | sed 's/dogtag-/pki-/')
                 log_info "Starting PKI server in $ca..."

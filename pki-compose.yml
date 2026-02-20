@@ -2,6 +2,10 @@
 #
 # Dogtag PKI requires systemd and must run as root (rootful podman).
 # This is separate from the main podman-compose.yml which runs rootless.
+#
+# NOTE: podman-compose may not honor "condition: service_healthy" in depends_on.
+# start-lab.sh provides its own DS readiness checks (LDAP probes) as a safety net.
+# The init scripts also call wait_for_ds() internally before running pkispawn.
 
 version: "3.8"
 
