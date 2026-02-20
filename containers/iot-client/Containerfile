@@ -1,7 +1,10 @@
 # IoT Client Simulator
 # Emulates IoT devices enrolling for certificates via EST
 
-FROM python:3.11-slim
+FROM quay.io/hummingbird/python:3.12-builder
+
+# Switch to root for setup
+USER 0
 
 WORKDIR /app
 
@@ -11,6 +14,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application
 COPY app.py .
+
+# Switch to non-root user
+USER 65532
 
 # Expose port
 EXPOSE 8000

@@ -277,7 +277,7 @@ services:
   # ===========================================================================
 
   postgres:
-    image: postgres:${POSTGRES_VERSION:-15}
+    image: quay.io/hummingbird/postgresql:${POSTGRES_VERSION:-latest}
     container_name: postgres
     hostname: postgres.${LAB_DOMAIN:-cert-lab.local}
     environment:
@@ -297,7 +297,7 @@ services:
       start_period: 30s
 
   redis:
-    image: redis:${REDIS_VERSION:-7}
+    image: quay.io/hummingbird/valkey:${VALKEY_VERSION:-latest}
     container_name: redis
     hostname: redis.${LAB_DOMAIN:-cert-lab.local}
     volumes:
@@ -306,7 +306,7 @@ services:
       lab-network:
         ipv4_address: ${IP_REDIS:-172.20.0.21}
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -478,7 +478,7 @@ services:
     ports:
       - "8082:8000"
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health | grep -q '\"kafka_connected\": true' || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import json, urllib.request; d=json.load(urllib.request.urlopen('http://localhost:8000/health')); exit(0 if d.get('kafka_connected') else 1)\""]
       interval: 10s
       timeout: 10s
       retries: 5
@@ -503,7 +503,7 @@ services:
     ports:
       - "8083:8000"
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health | grep -q '\"kafka_connected\": true' || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import json, urllib.request; d=json.load(urllib.request.urlopen('http://localhost:8000/health')); exit(0 if d.get('kafka_connected') else 1)\""]
       interval: 10s
       timeout: 10s
       retries: 5
@@ -541,7 +541,7 @@ services:
     ports:
       - "8085:8000"
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
       interval: 10s
       timeout: 10s
       retries: 5
@@ -552,7 +552,7 @@ services:
   # ===========================================================================
 
   prometheus:
-    image: prom/prometheus:${PROMETHEUS_VERSION:-latest}
+    image: quay.io/prometheus/prometheus:${PROMETHEUS_VERSION:-latest}
     container_name: prometheus
     hostname: prometheus.${LAB_DOMAIN:-cert-lab.local}
     volumes:
@@ -641,7 +641,7 @@ services:
   # ===========================================================================
 
   jupyter:
-    image: jupyter/minimal-notebook:${JUPYTER_VERSION:-latest}
+    image: quay.io/jupyter/minimal-notebook:${JUPYTER_VERSION:-latest}
     container_name: jupyter
     hostname: jupyter.${LAB_DOMAIN:-cert-lab.local}
     environment:

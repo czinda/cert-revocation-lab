@@ -1,7 +1,7 @@
 # Mock EDR Container
 # FastAPI application simulating Endpoint Detection and Response alerts
 
-FROM python:3.11-slim
+FROM quay.io/hummingbird/python:3.12-builder
 
 LABEL maintainer="cert-revocation-lab"
 LABEL description="Mock EDR service for security event simulation"
@@ -10,6 +10,9 @@ LABEL description="Mock EDR service for security event simulation"
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app
+
+# Switch to root for setup
+USER 0
 
 WORKDIR /app
 
@@ -20,17 +23,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application
 COPY app.py .
 
-# Create non-root user
-RUN useradd -m -u 1000 appuser && \
-    chown -R appuser:appuser /app
-USER appuser
+# Switch to non-root user
+USER 65532
 
 # Expose port
 EXPOSE 8000
 
 # Health check
 HEALTHCHECK --interval=10s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 
 # Run application
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]

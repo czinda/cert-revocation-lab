@@ -1,13 +1,15 @@
 # PKI Metrics Exporter for Prometheus
 # Scrapes Dogtag PKI CAs and exports metrics in Prometheus format
 
-FROM python:3.11-slim
+FROM quay.io/hummingbird/python:3.12-builder
+
+# Switch to root for setup
+USER 0
 
 WORKDIR /app
 
 # Install openssl for OCSP probing
-RUN apt-get update && apt-get install -y --no-install-recommends openssl && \
-    rm -rf /var/lib/apt/lists/*
+RUN dnf install -y openssl && dnf clean all
 
 # Install dependencies
 COPY requirements.txt .
@@ -15,6 +17,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application
 COPY app.py .
+
+# Switch to non-root user
+USER 65532
 
 # Expose metrics port
 EXPOSE 9091

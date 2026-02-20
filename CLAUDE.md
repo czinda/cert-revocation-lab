@@ -539,6 +539,38 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 - **Prometheus**: Metrics collection from PKI exporter (15s scrape interval)
 - **Grafana**: PKI performance dashboard with auto-provisioned datasource
 
+## Container Image Sources
+
+The lab uses container images from quay.io and Project Hummingbird where available:
+
+| Service | Image | Registry |
+|---------|-------|----------|
+| PostgreSQL | `quay.io/hummingbird/postgresql` | Hummingbird |
+| Valkey (Redis-compatible) | `quay.io/hummingbird/valkey` | Hummingbird |
+| Mock EDR/SIEM, IoT Client, PKI Exporter | `quay.io/hummingbird/python:3.12-builder` | Hummingbird |
+| Prometheus | `quay.io/prometheus/prometheus` | quay.io |
+| Jupyter | `quay.io/jupyter/minimal-notebook` | quay.io |
+| Grafana | `grafana/grafana` | Docker Hub (no quay.io alternative) |
+| 389 Directory Server | `quay.io/389ds/dirsrv` | quay.io |
+| Dogtag PKI | `quay.io/dogtagpki/pki-ca` | quay.io |
+| FreeIPA | `quay.io/freeipa/freeipa-server` | quay.io |
+| AWX EE | `quay.io/ansible/awx-ee` | quay.io |
+| EDA Rulebook | `quay.io/ansible/ansible-rulebook` | quay.io |
+| Kafka / Zookeeper | `confluentinc/cp-kafka` / `cp-zookeeper` | Docker Hub |
+
+**Hummingbird Python image notes:**
+- Fedora-based (uses `dnf` not `apt-get` for system packages)
+- Runs as non-root UID 65532 by default
+- Containerfiles use `USER 0` for setup, then `USER 65532` for runtime
+- No `curl` available; healthchecks use `python -c "import urllib.request; ..."` instead
+
+**Valkey notes:**
+- Wire-protocol compatible with Redis; uses `valkey-cli` instead of `redis-cli`
+- Container name remains `redis` for backward compatibility with `REDIS_HOST` references
+
+**Future: Kafka migration to Strimzi/KRaft:**
+Strimzi provides a UBI-based Kafka image (`quay.io/strimzi/kafka`) that supports KRaft mode, which eliminates the Zookeeper dependency. This would replace both `confluentinc/cp-kafka` and `confluentinc/cp-zookeeper` with a single image using native Kafka configuration (different env vars from Confluent). Not included yet due to the significant configuration change required.
+
 ## PKI Algorithm Configurations
 
 ### RSA-4096 (Traditional)
