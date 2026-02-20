@@ -787,6 +787,15 @@ klist -c /tmp/krb5cc_entrauser
 
 ## Known Limitations
 
+### podman-compose May Not Honor Health Conditions
+The Python `podman-compose` may not fully support `condition: service_healthy` in `depends_on`. When ignored, all containers in a compose file start simultaneously regardless of dependency health status. The lab mitigates this with three layers of defense:
+
+1. **Compose level**: All CA containers declare `depends_on` with `condition: service_healthy` on their 389DS instance (works if podman-compose supports it)
+2. **`start-lab.sh`**: Explicitly probes each DS with `ldapsearch` before running init scripts (both normal and `--quick` paths)
+3. **Init scripts**: Each CA init script calls `wait_for_ds()` internally, retrying LDAP connectivity up to 60 times before running `pkispawn`
+
+Since all CA containers use `command: sleep infinity` and require manual initialization, the compose-level dependency is defense-in-depth rather than a hard requirement.
+
 ### FreeIPA Requires Rootful Podman
 FreeIPA needs systemd support which requires rootful (sudo) podman. A separate compose file is provided:
 
