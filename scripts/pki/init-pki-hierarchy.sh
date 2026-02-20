@@ -145,15 +145,17 @@ sed -i "1s|.*|#!/usr/bin/bash|" /usr/bin/systemctl
 }
 
 # Wait for CA to be ready
+# Usage: wait_for_ca <name> <url> [max_wait] [container]
 wait_for_ca() {
     local name="$1"
     local url="$2"
     local max_wait="${3:-120}"
+    local container="${4:-$ROOT_CONTAINER}"
     local elapsed=0
 
     log_info "Waiting for $name to be ready..."
     while [ $elapsed -lt $max_wait ]; do
-        if $PODMAN exec "$ROOT_CONTAINER" curl -sk "$url/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
+        if $PODMAN exec "$container" curl -sk "$url/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
             log_success "$name is ready"
             return 0
         fi
@@ -305,7 +307,7 @@ init_root_ca() {
     $PODMAN exec "$ROOT_CONTAINER" /scripts/init-${SCRIPT_PREFIX}root-ca.sh
 
     # Verify
-    wait_for_ca "${CA_PREFIX}Root CA" "$ROOT_URL" 60
+    wait_for_ca "${CA_PREFIX}Root CA" "$ROOT_URL" 120 "$ROOT_CONTAINER"
     log_success "${CA_PREFIX}Root CA initialization complete"
 }
 
@@ -343,7 +345,7 @@ init_intermediate_ca() {
     $PODMAN exec "$INTERMEDIATE_CONTAINER" /scripts/init-${SCRIPT_PREFIX}intermediate-ca.sh
 
     # Verify
-    wait_for_ca "${CA_PREFIX}Intermediate CA" "$INTERMEDIATE_URL" 60
+    wait_for_ca "${CA_PREFIX}Intermediate CA" "$INTERMEDIATE_URL" 120 "$INTERMEDIATE_CONTAINER"
     log_success "${CA_PREFIX}Intermediate CA initialization complete"
 }
 
@@ -381,7 +383,7 @@ init_iot_ca() {
     $PODMAN exec "$IOT_CONTAINER" /scripts/init-${SCRIPT_PREFIX}iot-ca.sh
 
     # Verify
-    wait_for_ca "${CA_PREFIX}IoT CA" "$IOT_URL" 60
+    wait_for_ca "${CA_PREFIX}IoT CA" "$IOT_URL" 120 "$IOT_CONTAINER"
     log_success "${CA_PREFIX}IoT CA initialization complete"
 }
 
@@ -429,7 +431,7 @@ init_acme_ca() {
     $PODMAN exec dogtag-acme-ca /scripts/init-acme-ca.sh
 
     # Verify
-    wait_for_ca "ACME CA" "https://acme-ca.cert-lab.local:8443" 60
+    wait_for_ca "ACME CA" "https://acme-ca.cert-lab.local:8443" 120 "dogtag-acme-ca"
     log_success "ACME CA initialization complete"
 }
 
@@ -473,7 +475,7 @@ init_est_ca() {
     $PODMAN exec "$EST_CONTAINER" /scripts/init-${SCRIPT_PREFIX}est-ca.sh
 
     # Verify
-    wait_for_ca "${CA_PREFIX}EST CA" "$EST_URL" 60
+    wait_for_ca "${CA_PREFIX}EST CA" "$EST_URL" 120 "$EST_CONTAINER"
     log_success "${CA_PREFIX}EST CA initialization complete"
 }
 
