@@ -5,6 +5,31 @@ version: "3.8"
 
 services:
   # ===========================================================================
+  # DNS (dnsmasq - wildcard resolution for *.cert-lab.local)
+  # ===========================================================================
+
+  dnsmasq:
+    build:
+      context: ./containers/dnsmasq
+    container_name: dnsmasq
+    hostname: dns.${LAB_DOMAIN:-cert-lab.local}
+    volumes:
+      - ./configs/dnsmasq/dnsmasq.conf:/etc/dnsmasq.conf:ro
+    ports:
+      - "5353:53/udp"
+      - "5353:53/tcp"
+    networks:
+      lab-network:
+        ipv4_address: ${IP_DNSMASQ:-172.20.0.2}
+    healthcheck:
+      test: ["CMD-SHELL", "dig @127.0.0.1 root-ca.cert-lab.local +short +time=2 | grep -q 127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+  # ===========================================================================
   # 389 Directory Server Instances (LDAP backend for each Dogtag CA)
   # ===========================================================================
 

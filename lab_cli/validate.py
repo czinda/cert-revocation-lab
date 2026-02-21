@@ -416,27 +416,30 @@ def tier_0_prerequisites(auto_fix: bool = False) -> TestCategory:
             remediation="cp .env.example .env && vi .env",
         ))
 
-    # /etc/hosts
+    # DNS resolution
     try:
-        hosts = Path("/etc/hosts").read_text()
-        if "cert-lab.local" in hosts:
+        import socket
+        result = socket.getaddrinfo("root-ca.cert-lab.local", None)
+        if any(addr[4][0] == "127.0.0.1" for addr in result):
             category.tests.append(TestCase(
-                name="/etc/hosts DNS",
+                name="DNS resolution",
                 result=TestResult.PASS,
-                message="cert-lab.local entries found",
+                message="root-ca.cert-lab.local resolves to 127.0.0.1",
             ))
         else:
+            resolved_ip = result[0][4][0] if result else "unknown"
             category.tests.append(TestCase(
-                name="/etc/hosts DNS",
-                result=TestResult.FAIL,
-                message="missing cert-lab.local entries",
-                remediation="Run: sudo ./start-lab.sh (sets up /etc/hosts)",
+                name="DNS resolution",
+                result=TestResult.WARN,
+                message=f"root-ca.cert-lab.local resolves to {resolved_ip} (expected 127.0.0.1)",
+                remediation="Run: ./scripts/setup-dns.sh",
             ))
-    except Exception:
+    except socket.gaierror:
         category.tests.append(TestCase(
-            name="/etc/hosts DNS",
-            result=TestResult.SKIP,
-            message="cannot read /etc/hosts",
+            name="DNS resolution",
+            result=TestResult.FAIL,
+            message="root-ca.cert-lab.local does not resolve",
+            remediation="Run: ./scripts/setup-dns.sh (one-time host resolver setup)",
         ))
 
     return category

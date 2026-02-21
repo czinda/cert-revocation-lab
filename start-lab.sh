@@ -332,30 +332,17 @@ setup_volumes() {
     fi
 }
 
-# Update /etc/hosts if needed
-setup_hosts() {
+# Check DNS resolution for cert-lab.local
+setup_dns() {
     log_info "Checking DNS resolution for cert-lab.local..."
-
-    if getent hosts root-ca.cert-lab.local &>/dev/null; then
-        log_success "cert-lab.local DNS is working"
+    if dig @127.0.0.1 -p 5353 root-ca.cert-lab.local +short +time=2 2>/dev/null | grep -q "127.0.0.1"; then
+        log_success "dnsmasq container is resolving cert-lab.local"
+    elif getent hosts root-ca.cert-lab.local &>/dev/null; then
+        log_success "cert-lab.local DNS is working (via /etc/hosts or system resolver)"
     else
-        log_warn "root-ca.cert-lab.local does not resolve"
-        log_info "Option 1 (recommended): Configure dnsmasq with: address=/cert-lab.local/127.0.0.1"
-        log_info "Option 2: Add entries to /etc/hosts manually"
-        log_info "Adding fallback /etc/hosts entries (requires sudo)..."
-        sudo tee -a /etc/hosts > /dev/null << 'EOF'
-
-# Certificate Revocation Lab - PKI CAs (rootful podman, accessed via host port mappings)
-127.0.0.1 root-ca.cert-lab.local intermediate-ca.cert-lab.local iot-ca.cert-lab.local acme-ca.cert-lab.local est-ca.cert-lab.local
-127.0.0.1 ecc-root-ca.cert-lab.local ecc-intermediate-ca.cert-lab.local ecc-iot-ca.cert-lab.local ecc-est-ca.cert-lab.local
-127.0.0.1 pq-root-ca.cert-lab.local pq-intermediate-ca.cert-lab.local pq-iot-ca.cert-lab.local pq-est-ca.cert-lab.local
-
-# Certificate Revocation Lab - Services (rootless podman, accessed via host port mappings)
-127.0.0.1 ipa.cert-lab.local kafka.cert-lab.local eda.cert-lab.local
-127.0.0.1 awx.cert-lab.local postgres.cert-lab.local redis.cert-lab.local
-127.0.0.1 edr.cert-lab.local siem.cert-lab.local jupyter.cert-lab.local
-EOF
-        log_success "Fallback DNS entries added to /etc/hosts"
+        log_warn "cert-lab.local does not resolve"
+        log_info "Run: ./scripts/setup-dns.sh (one-time host resolver setup)"
+        log_info "This configures your system to forward *.cert-lab.local to the dnsmasq container"
     fi
 }
 
@@ -1241,7 +1228,7 @@ quick_start() {
 
     # Start other containers (rootless) - exclude PKI/DS services
     local rootless_to_start=()
-    for svc in postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem iot-client jupyter prometheus grafana pki-exporter; do
+    for svc in dnsmasq postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem iot-client jupyter prometheus grafana pki-exporter; do
         if is_rootless_running "$svc"; then
             log_success "$svc is already running"
         else
@@ -1409,7 +1396,7 @@ main() {
     setup_directories
     setup_networks
     setup_volumes
-    setup_hosts
+    setup_dns
     start_base_infrastructure
     start_kafka
     start_directory_servers

@@ -107,7 +107,7 @@ fi
 
 # Force stop any remaining lab containers (rootless)
 log_info "Checking for remaining containers..."
-REMAINING=$(podman ps -a --format "{{.Names}}" 2>/dev/null | grep -E "(dogtag|freeipa|kafka|zookeeper|awx|eda|mock-|ds-root|ds-intermediate|ds-iot|ds-ecc|ds-pq|postgres|redis|jupyter)" || true)
+REMAINING=$(podman ps -a --format "{{.Names}}" 2>/dev/null | grep -E "(dnsmasq|dogtag|freeipa|kafka|zookeeper|awx|eda|mock-|ds-root|ds-intermediate|ds-iot|ds-ecc|ds-pq|postgres|redis|jupyter)" || true)
 if [ -n "$REMAINING" ]; then
     log_warn "Force stopping remaining rootless containers..."
     echo "$REMAINING" | xargs -r podman stop -t 5 2>/dev/null || true
@@ -138,7 +138,7 @@ if [ "$1" == "--clean" ]; then
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         # Remove lab-specific volumes (rootless)
         log_info "Removing rootless lab volumes..."
-        podman volume ls --format "{{.Name}}" 2>/dev/null | grep -E "(pki|freeipa|awx|ds-|zookeeper|kafka|postgres|redis|jupyter)" | xargs -r podman volume rm -f 2>/dev/null || true
+        podman volume ls --format "{{.Name}}" 2>/dev/null | grep -E "(pki|freeipa|awx|ds-|zookeeper|kafka|postgres|redis|jupyter|dnsmasq)" | xargs -r podman volume rm -f 2>/dev/null || true
 
         # Remove project-prefixed volumes (podman-compose creates these)
         podman volume ls --format "{{.Name}}" 2>/dev/null | grep "^${PROJECT_NAME}_" | xargs -r podman volume rm -f 2>/dev/null || true
@@ -222,10 +222,10 @@ log_success "Lab stopped successfully"
 echo
 
 # Show any remaining containers
-RUNNING=$(podman ps -a --format "{{.Names}}" 2>/dev/null | grep -E "(dogtag|freeipa|kafka|zookeeper|awx|eda|mock-|ds-|postgres|redis|jupyter)" | wc -l)
+RUNNING=$(podman ps -a --format "{{.Names}}" 2>/dev/null | grep -E "(dnsmasq|dogtag|freeipa|kafka|zookeeper|awx|eda|mock-|ds-|postgres|redis|jupyter)" | wc -l)
 if [ "$RUNNING" -gt 0 ]; then
     log_warn "Some lab containers still exist:"
-    podman ps -a --format "table {{.Names}}\t{{.Status}}" | grep -E "(dogtag|freeipa|kafka|zookeeper|awx|eda|mock-|ds-|postgres|redis|jupyter)"
+    podman ps -a --format "table {{.Names}}\t{{.Status}}" | grep -E "(dnsmasq|dogtag|freeipa|kafka|zookeeper|awx|eda|mock-|ds-|postgres|redis|jupyter)"
     echo
     echo "To force remove all: podman rm -f \$(podman ps -aq)"
 fi

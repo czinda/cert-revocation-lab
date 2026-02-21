@@ -59,6 +59,9 @@ FreeIPA (172.25.0.10:4443) - Identity Management with internal CA
 # Start fresh (remove all data)
 ./start-lab.sh --clean --all
 
+# One-time DNS setup (configures host to resolve *.cert-lab.local)
+./scripts/setup-dns.sh
+
 # Stop the lab
 ./stop-lab.sh
 
@@ -368,6 +371,7 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 
 | IP | Service | Ports |
 |----|---------|-------|
+| 172.20.0.2 | dnsmasq (DNS) | 5353:53 |
 | 172.20.0.20 | PostgreSQL | internal |
 | 172.20.0.21 | Redis | internal |
 | 172.20.0.22-23 | AWX web/task | 8084:8052 |
@@ -423,6 +427,34 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 |----|---------|-------|
 | 172.25.0.10 | FreeIPA | 4443:443, 8180:80, 3390:389, 6360:636 |
 
+## DNS Resolution (dnsmasq)
+
+The lab uses a dnsmasq container for wildcard DNS resolution of `*.cert-lab.local` to `127.0.0.1`. This replaces the previous approach of writing entries to `/etc/hosts` on every lab start.
+
+**How it works:**
+- A dnsmasq container (`172.20.0.2`) listens on host port `5353` (mapped from container port `53`)
+- The host system is configured (one-time) to forward `*.cert-lab.local` queries to `127.0.0.1:5353`
+- All subdomains resolve automatically — no need to enumerate hostnames
+
+**One-time setup:**
+```bash
+# Configure host resolver to forward cert-lab.local to dnsmasq (requires sudo)
+./scripts/setup-dns.sh
+
+# Verify DNS resolution
+./scripts/setup-dns.sh --verify
+
+# Remove DNS configuration
+./scripts/setup-dns.sh --remove
+```
+
+**OS-specific configuration created by `setup-dns.sh`:**
+- **macOS**: Creates `/etc/resolver/cert-lab.local` with `nameserver 127.0.0.1` / `port 5353`
+- **Linux (NetworkManager)**: Creates `/etc/NetworkManager/dnsmasq.d/cert-lab.conf` with `server=/cert-lab.local/127.0.0.1#5353`
+- **Linux (systemd-resolved)**: Creates `/etc/systemd/resolved.conf.d/cert-lab.conf` with `DNS=127.0.0.1:5353` and `Domains=~cert-lab.local`
+
+**Note:** Container-to-container DNS within compose networks is handled by Podman's internal DNS. The dnsmasq container is only for host-to-container resolution. Services that use `extra_hosts` with `host-gateway` (eda-server, iot-client, pki-exporter) are unaffected.
+
 ## Directory Structure
 
 ```
@@ -461,6 +493,8 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 │   ├── pq-est-ca-step1.cfg              # PQ EST (CSR)
 │   └── pq-est-ca-step2.cfg              # PQ EST (install)
 │
+├── configs/dnsmasq/           # dnsmasq DNS configuration
+│   └── dnsmasq.conf                     # Wildcard DNS for *.cert-lab.local
 ├── configs/prometheus/        # Prometheus scrape configuration
 │   └── prometheus.yml
 ├── configs/grafana/           # Grafana provisioning and dashboards
@@ -468,6 +502,7 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 │   ├── provisioning/dashboards/dashboard.yml
 │   └── dashboards/pki-metrics.json      # Pre-built PKI dashboard
 │
+├── scripts/setup-dns.sh       # One-time host DNS resolver setup
 ├── scripts/perf-test.py       # Bulk PKI performance test orchestrator
 ├── scripts/pki/               # PKI initialization scripts
 │   ├── lib-pki-common.sh              # Shared functions
@@ -491,6 +526,7 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → AWX Playbook → 
 │   └── sign-csr.sh
 │
 ├── containers/
+│   ├── dnsmasq/               # Wildcard DNS for lab domain
 │   ├── mock-edr/              # FastAPI EDR simulator
 │   ├── mock-siem/             # FastAPI SIEM simulator
 │   ├── pki-exporter/          # Prometheus metrics exporter for PKI
@@ -556,6 +592,7 @@ The lab uses container images from quay.io and Project Hummingbird where availab
 | FreeIPA | `quay.io/freeipa/freeipa-server` | quay.io |
 | AWX EE | `quay.io/ansible/awx-ee` | quay.io |
 | EDA Rulebook | `quay.io/ansible/ansible-rulebook` | quay.io |
+| dnsmasq (DNS) | `registry.fedoraproject.org/fedora-minimal` (custom build) | Fedora |
 | Kafka / Zookeeper | `docker.io/confluentinc/cp-kafka` / `cp-zookeeper` | Docker Hub |
 
 **Hummingbird image notes:**

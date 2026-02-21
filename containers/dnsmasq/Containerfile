@@ -1,0 +1,6 @@
+FROM registry.fedoraproject.org/fedora-minimal:latest
+RUN microdnf install -y dnsmasq bind-utils && microdnf clean all
+EXPOSE 53/udp 53/tcp
+HEALTHCHECK --interval=10s --timeout=5s --retries=3 \
+    CMD dig @127.0.0.1 root-ca.cert-lab.local +short +time=2 | grep -q "127.0.0.1"
+ENTRYPOINT ["dnsmasq", "--no-daemon", "--log-facility=-"]
