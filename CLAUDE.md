@@ -558,11 +558,13 @@ The lab uses container images from quay.io and Project Hummingbird where availab
 | EDA Rulebook | `quay.io/ansible/ansible-rulebook` | quay.io |
 | Kafka / Zookeeper | `docker.io/confluentinc/cp-kafka` / `cp-zookeeper` | Docker Hub |
 
-**Hummingbird Python image notes:**
-- Fedora-based (uses `dnf` not `apt-get` for system packages)
-- Runs as non-root UID 65532 by default
+**Hummingbird image notes:**
+- Hummingbird images only publish `latest` tags — no version-specific tags (e.g., no `postgresql:15` or `valkey:7`). Version variables in `.env` must be set to `latest`.
+- Python image is Fedora-based (uses `dnf` not `apt-get` for system packages)
+- Python image runs as non-root UID 65532 by default
 - Containerfiles use `USER 0` for setup, then `USER 65532` for runtime
 - No `curl` available; healthchecks use `python -c "import urllib.request; ..."` instead
+- No `gcc` included; Containerfiles install `gcc python3-devel` via `dnf` for C extensions (aiokafka, pydantic-core, cryptography)
 
 **Valkey notes:**
 - Wire-protocol compatible with Redis; uses `valkey-cli` instead of `redis-cli`
