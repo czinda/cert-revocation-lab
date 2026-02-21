@@ -55,16 +55,17 @@ decrypt_to_env() {
         exit 1
     fi
 
-    # Parse YAML and extract values
-    local admin_password=$(echo "$secrets" | grep "admin_password:" | cut -d: -f2 | tr -d ' "')
-    local db_password=$(echo "$secrets" | grep "db_password:" | cut -d: -f2 | tr -d ' "')
-    local ds_password=$(echo "$secrets" | grep "ds_password:" | cut -d: -f2 | tr -d ' "')
-    local pki_admin_password=$(echo "$secrets" | grep "pki_admin_password:" | cut -d: -f2 | tr -d ' "')
-    local pki_client_pkcs12_password=$(echo "$secrets" | grep "pki_client_pkcs12_password:" | cut -d: -f2 | tr -d ' "')
-    local pki_backup_password=$(echo "$secrets" | grep "pki_backup_password:" | cut -d: -f2 | tr -d ' "')
-    local pki_token_password=$(echo "$secrets" | grep "pki_token_password:" | cut -d: -f2 | tr -d ' "')
-    local awx_secret_key=$(echo "$secrets" | grep "awx_secret_key:" | cut -d: -f2 | tr -d ' "')
-    local jupyter_token=$(echo "$secrets" | grep "jupyter_token:" | cut -d: -f2 | tr -d ' "')
+    # Parse YAML and extract values (anchor with ^ to avoid substring matches,
+    # e.g. "admin_password:" must not match "pki_admin_password:")
+    local admin_password=$(echo "$secrets" | grep "^admin_password:" | cut -d: -f2 | tr -d ' "')
+    local db_password=$(echo "$secrets" | grep "^db_password:" | cut -d: -f2 | tr -d ' "')
+    local ds_password=$(echo "$secrets" | grep "^ds_password:" | cut -d: -f2 | tr -d ' "')
+    local pki_admin_password=$(echo "$secrets" | grep "^pki_admin_password:" | cut -d: -f2 | tr -d ' "')
+    local pki_client_pkcs12_password=$(echo "$secrets" | grep "^pki_client_pkcs12_password:" | cut -d: -f2 | tr -d ' "')
+    local pki_backup_password=$(echo "$secrets" | grep "^pki_backup_password:" | cut -d: -f2 | tr -d ' "')
+    local pki_token_password=$(echo "$secrets" | grep "^pki_token_password:" | cut -d: -f2 | tr -d ' "')
+    local awx_secret_key=$(echo "$secrets" | grep "^awx_secret_key:" | cut -d: -f2 | tr -d ' "')
+    local jupyter_token=$(echo "$secrets" | grep "^jupyter_token:" | cut -d: -f2 | tr -d ' "')
 
     # Start with the example file as a template
     if [[ -f "$ENV_EXAMPLE" ]]; then
@@ -114,15 +115,15 @@ export_secrets() {
         local secrets
         secrets=$(sops --decrypt "$SECRETS_ENC_FILE")
 
-        echo "export ADMIN_PASSWORD='$(echo "$secrets" | grep "admin_password:" | cut -d: -f2 | tr -d ' "')'"
-        echo "export DB_PASSWORD='$(echo "$secrets" | grep "db_password:" | cut -d: -f2 | tr -d ' "')'"
-        echo "export DS_PASSWORD='$(echo "$secrets" | grep "ds_password:" | cut -d: -f2 | tr -d ' "')'"
-        echo "export PKI_ADMIN_PASSWORD='$(echo "$secrets" | grep "pki_admin_password:" | cut -d: -f2 | tr -d ' "')'"
-        echo "export PKI_CLIENT_PKCS12_PASSWORD='$(echo "$secrets" | grep "pki_client_pkcs12_password:" | cut -d: -f2 | tr -d ' "')'"
-        echo "export PKI_BACKUP_PASSWORD='$(echo "$secrets" | grep "pki_backup_password:" | cut -d: -f2 | tr -d ' "')'"
-        echo "export PKI_TOKEN_PASSWORD='$(echo "$secrets" | grep "pki_token_password:" | cut -d: -f2 | tr -d ' "')'"
-        echo "export AWX_SECRET_KEY='$(echo "$secrets" | grep "awx_secret_key:" | cut -d: -f2 | tr -d ' "')'"
-        echo "export JUPYTER_TOKEN='$(echo "$secrets" | grep "jupyter_token:" | cut -d: -f2 | tr -d ' "')'"
+        echo "export ADMIN_PASSWORD='$(echo "$secrets" | grep "^admin_password:" | cut -d: -f2 | tr -d ' "')'"
+        echo "export DB_PASSWORD='$(echo "$secrets" | grep "^db_password:" | cut -d: -f2 | tr -d ' "')'"
+        echo "export DS_PASSWORD='$(echo "$secrets" | grep "^ds_password:" | cut -d: -f2 | tr -d ' "')'"
+        echo "export PKI_ADMIN_PASSWORD='$(echo "$secrets" | grep "^pki_admin_password:" | cut -d: -f2 | tr -d ' "')'"
+        echo "export PKI_CLIENT_PKCS12_PASSWORD='$(echo "$secrets" | grep "^pki_client_pkcs12_password:" | cut -d: -f2 | tr -d ' "')'"
+        echo "export PKI_BACKUP_PASSWORD='$(echo "$secrets" | grep "^pki_backup_password:" | cut -d: -f2 | tr -d ' "')'"
+        echo "export PKI_TOKEN_PASSWORD='$(echo "$secrets" | grep "^pki_token_password:" | cut -d: -f2 | tr -d ' "')'"
+        echo "export AWX_SECRET_KEY='$(echo "$secrets" | grep "^awx_secret_key:" | cut -d: -f2 | tr -d ' "')'"
+        echo "export JUPYTER_TOKEN='$(echo "$secrets" | grep "^jupyter_token:" | cut -d: -f2 | tr -d ' "')'"
     fi
 }
 
