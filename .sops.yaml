@@ -1,0 +1,16 @@
+# SOPS Configuration for Certificate Revocation Lab
+# https://github.com/getsops/sops
+
+creation_rules:
+  # Encrypt secrets.yaml with age
+  - path_regex: secrets\.yaml$
+    age: age1zuxrvj4jpw8tlyjxqt7urt8apvrrs6at3k7erl5zp6ytly37f9uswy26nk
+
+  # Encrypt any .enc.yaml files
+  - path_regex: \.enc\.yaml$
+    age: age1zuxrvj4jpw8tlyjxqt7urt8apvrrs6at3k7erl5zp6ytly37f9uswy26nk
+
+# Store configuration
+stores:
+  yaml:
+    indent: 2
