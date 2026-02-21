@@ -8,8 +8,8 @@ USER 0
 
 WORKDIR /app
 
-# Install openssl for OCSP probing
-RUN dnf install -y openssl && dnf clean all
+# Install openssl for OCSP probing and gcc for C extensions (pydantic-core)
+RUN dnf install -y openssl gcc python3-devel && dnf clean all
 
 # Install dependencies
 COPY requirements.txt .

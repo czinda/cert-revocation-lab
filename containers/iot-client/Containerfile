@@ -8,6 +8,9 @@ USER 0
 
 WORKDIR /app
 
+# Install build dependencies for C extensions (cryptography, pydantic-core)
+RUN dnf install -y gcc python3-devel && dnf clean all
+
 # Install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
