@@ -217,7 +217,7 @@ services:
   # ===========================================================================
 
   zookeeper:
-    image: confluentinc/cp-zookeeper:${ZOOKEEPER_VERSION:-7.5.0}
+    image: docker.io/confluentinc/cp-zookeeper:${ZOOKEEPER_VERSION:-7.5.0}
     container_name: zookeeper
     hostname: zookeeper.${LAB_DOMAIN:-cert-lab.local}
     environment:
@@ -239,7 +239,7 @@ services:
       start_period: 30s
 
   kafka:
-    image: confluentinc/cp-kafka:${KAFKA_VERSION:-7.5.0}
+    image: docker.io/confluentinc/cp-kafka:${KAFKA_VERSION:-7.5.0}
     container_name: kafka
     hostname: kafka.${LAB_DOMAIN:-cert-lab.local}
     depends_on:
@@ -572,7 +572,7 @@ services:
       start_period: 30s
 
   grafana:
-    image: grafana/grafana:${GRAFANA_VERSION:-latest}
+    image: docker.io/grafana/grafana:${GRAFANA_VERSION:-latest}
     container_name: grafana
     hostname: grafana.${LAB_DOMAIN:-cert-lab.local}
     depends_on:

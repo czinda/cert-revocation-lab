@@ -550,13 +550,13 @@ The lab uses container images from quay.io and Project Hummingbird where availab
 | Mock EDR/SIEM, IoT Client, PKI Exporter | `quay.io/hummingbird/python:3.12-builder` | Hummingbird |
 | Prometheus | `quay.io/prometheus/prometheus` | quay.io |
 | Jupyter | `quay.io/jupyter/minimal-notebook` | quay.io |
-| Grafana | `grafana/grafana` | Docker Hub (no quay.io alternative) |
+| Grafana | `docker.io/grafana/grafana` | Docker Hub (no quay.io alternative) |
 | 389 Directory Server | `quay.io/389ds/dirsrv` | quay.io |
 | Dogtag PKI | `quay.io/dogtagpki/pki-ca` | quay.io |
 | FreeIPA | `quay.io/freeipa/freeipa-server` | quay.io |
 | AWX EE | `quay.io/ansible/awx-ee` | quay.io |
 | EDA Rulebook | `quay.io/ansible/ansible-rulebook` | quay.io |
-| Kafka / Zookeeper | `confluentinc/cp-kafka` / `cp-zookeeper` | Docker Hub |
+| Kafka / Zookeeper | `docker.io/confluentinc/cp-kafka` / `cp-zookeeper` | Docker Hub |
 
 **Hummingbird Python image notes:**
 - Fedora-based (uses `dnf` not `apt-get` for system packages)
