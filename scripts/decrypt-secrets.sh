@@ -79,29 +79,28 @@ EOF
     fi
 
     # Replace CHANGEME values with actual secrets
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        # macOS sed
-        sed -i '' "s/ADMIN_PASSWORD=CHANGEME/ADMIN_PASSWORD=${admin_password}/" "$ENV_FILE"
-        sed -i '' "s/DB_PASSWORD=CHANGEME/DB_PASSWORD=${db_password}/" "$ENV_FILE"
-        sed -i '' "s/DS_PASSWORD=CHANGEME/DS_PASSWORD=${ds_password}/" "$ENV_FILE"
-        sed -i '' "s/PKI_ADMIN_PASSWORD=CHANGEME/PKI_ADMIN_PASSWORD=${pki_admin_password}/" "$ENV_FILE"
-        sed -i '' "s/PKI_CLIENT_PKCS12_PASSWORD=CHANGEME/PKI_CLIENT_PKCS12_PASSWORD=${pki_client_pkcs12_password}/" "$ENV_FILE"
-        sed -i '' "s/PKI_BACKUP_PASSWORD=CHANGEME/PKI_BACKUP_PASSWORD=${pki_backup_password}/" "$ENV_FILE"
-        sed -i '' "s/PKI_TOKEN_PASSWORD=CHANGEME/PKI_TOKEN_PASSWORD=${pki_token_password}/" "$ENV_FILE"
-        sed -i '' "s/AWX_SECRET_KEY=CHANGEME/AWX_SECRET_KEY=${awx_secret_key}/" "$ENV_FILE"
-        sed -i '' "s/JUPYTER_TOKEN=CHANGEME/JUPYTER_TOKEN=${jupyter_token}/" "$ENV_FILE"
-    else
-        # Linux sed
-        sed -i "s/ADMIN_PASSWORD=CHANGEME/ADMIN_PASSWORD=${admin_password}/" "$ENV_FILE"
-        sed -i "s/DB_PASSWORD=CHANGEME/DB_PASSWORD=${db_password}/" "$ENV_FILE"
-        sed -i "s/DS_PASSWORD=CHANGEME/DS_PASSWORD=${ds_password}/" "$ENV_FILE"
-        sed -i "s/PKI_ADMIN_PASSWORD=CHANGEME/PKI_ADMIN_PASSWORD=${pki_admin_password}/" "$ENV_FILE"
-        sed -i "s/PKI_CLIENT_PKCS12_PASSWORD=CHANGEME/PKI_CLIENT_PKCS12_PASSWORD=${pki_client_pkcs12_password}/" "$ENV_FILE"
-        sed -i "s/PKI_BACKUP_PASSWORD=CHANGEME/PKI_BACKUP_PASSWORD=${pki_backup_password}/" "$ENV_FILE"
-        sed -i "s/PKI_TOKEN_PASSWORD=CHANGEME/PKI_TOKEN_PASSWORD=${pki_token_password}/" "$ENV_FILE"
-        sed -i "s/AWX_SECRET_KEY=CHANGEME/AWX_SECRET_KEY=${awx_secret_key}/" "$ENV_FILE"
-        sed -i "s/JUPYTER_TOKEN=CHANGEME/JUPYTER_TOKEN=${jupyter_token}/" "$ENV_FILE"
-    fi
+    # Use a sed_replace helper to handle special characters in passwords
+    # (passwords may contain /, &, etc. that break sed with / delimiter)
+    local sed_inplace=(-i)
+    [[ "$OSTYPE" == "darwin"* ]] && sed_inplace=(-i '')
+
+    sed_replace() {
+        local key="$1" value="$2"
+        # Use | as delimiter since passwords won't contain it;
+        # also escape & which is special in sed replacement
+        local escaped_value="${value//&/\\&}"
+        sed "${sed_inplace[@]}" "s|${key}=CHANGEME|${key}=${escaped_value}|" "$ENV_FILE"
+    }
+
+    sed_replace ADMIN_PASSWORD "$admin_password"
+    sed_replace DB_PASSWORD "$db_password"
+    sed_replace DS_PASSWORD "$ds_password"
+    sed_replace PKI_ADMIN_PASSWORD "$pki_admin_password"
+    sed_replace PKI_CLIENT_PKCS12_PASSWORD "$pki_client_pkcs12_password"
+    sed_replace PKI_BACKUP_PASSWORD "$pki_backup_password"
+    sed_replace PKI_TOKEN_PASSWORD "$pki_token_password"
+    sed_replace AWX_SECRET_KEY "$awx_secret_key"
+    sed_replace JUPYTER_TOKEN "$jupyter_token"
 
     chmod 600 "$ENV_FILE"
     log_success "Decrypted secrets to $ENV_FILE"
