@@ -1,0 +1,136 @@
+---
+# =============================================================================
+# Stage 5: Post-Software — Validate, test, report credentials
+# =============================================================================
+
+- name: Post-Software | Validate and report
+  hosts: bastions[0]:certlab[0]
+  become: true
+  become_user: "{{ student_name }}"
+  gather_facts: true
+
+  tasks:
+    # =========================================================================
+    # Health Check Validation
+    # =========================================================================
+
+    - name: Run lab validation (skip E2E for speed)
+      ansible.builtin.command:
+        cmd: ./lab validate --skip-e2e
+        chdir: "{{ cert_lab_deploy_dir }}"
+      register: validate_result
+      changed_when: false
+      ignore_errors: true
+      timeout: "{{ cert_lab_validate_timeout }}"
+
+    - name: Display validation results
+      ansible.builtin.debug:
+        var: validate_result.stdout_lines
+      when: validate_result is defined
+
+    # =========================================================================
+    # E2E Smoke Test
+    # =========================================================================
+
+    - name: Run E2E smoke test (RSA key compromise scenario)
+      ansible.builtin.command:
+        cmd: >-
+          ./lab test --pki-type rsa
+          --scenario "Certificate Private Key Compromise"
+          --wait 60
+        chdir: "{{ cert_lab_deploy_dir }}"
+      register: e2e_result
+      changed_when: false
+      ignore_errors: true
+      timeout: 120
+
+    - name: Display E2E test results
+      ansible.builtin.debug:
+        var: e2e_result.stdout_lines
+      when: e2e_result is defined
+
+    # =========================================================================
+    # Report User Access Information
+    # =========================================================================
+
+- name: Post-Software | Report credentials to RHPDS
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    _lab_host: "{{ groups['bastions'][0] | default(groups['certlab'][0]) }}"
+
+  tasks:
+    - name: Report user access information
+      agnosticd_user_info:
+        msg: "{{ item }}"
+      loop:
+        - ""
+        - "=========================================="
+        - "  Certificate Revocation Lab - Access Info"
+        - "=========================================="
+        - ""
+        - "SSH Access:"
+        - "  ssh {{ student_name }}@{{ _lab_host }}"
+        - "  Password: {{ student_password }}"
+        - ""
+        - "Lab Directory: {{ cert_lab_deploy_dir }}"
+        - ""
+        - "PKI Service URLs:"
+        - "  RSA Root CA:         https://{{ _lab_host }}:8443/ca"
+        - "  RSA Intermediate CA: https://{{ _lab_host }}:8444/ca"
+        - "  RSA IoT CA:          https://{{ _lab_host }}:8445/ca"
+        - "  RSA ACME CA:         https://{{ _lab_host }}:8446/ca"
+        - "  RSA EST CA:          https://{{ _lab_host }}:8447/ca"
+        - "  ECC Root CA:         https://{{ _lab_host }}:8463/ca"
+        - "  ECC Intermediate CA: https://{{ _lab_host }}:8464/ca"
+        - "  ECC IoT CA:          https://{{ _lab_host }}:8465/ca"
+        - "  ECC EST CA:          https://{{ _lab_host }}:8466/ca"
+        - "  PQ Root CA:          https://{{ _lab_host }}:8453/ca"
+        - "  PQ Intermediate CA:  https://{{ _lab_host }}:8454/ca"
+        - "  PQ IoT CA:           https://{{ _lab_host }}:8455/ca"
+        - "  PQ EST CA:           https://{{ _lab_host }}:8456/ca"
+        - ""
+        - "Other Services:"
+        - "  AWX:            http://{{ _lab_host }}:8084"
+        - "  Mock EDR:       http://{{ _lab_host }}:8082"
+        - "  Mock SIEM:      http://{{ _lab_host }}:8083"
+        - "  IoT Client:     http://{{ _lab_host }}:8085"
+        - "  EDA Server:     http://{{ _lab_host }}:5000"
+        - "  Jupyter Lab:    http://{{ _lab_host }}:8888"
+        - "  Grafana:        http://{{ _lab_host }}:3000"
+        - "  Prometheus:     http://{{ _lab_host }}:9090"
+        - ""
+        - "Credentials:"
+        - "  PKI Admin:     caadmin / {{ cert_lab_pki_admin_password }}"
+        - "  AWX Admin:     admin / {{ cert_lab_admin_password }}"
+        - "  Grafana:       admin / {{ cert_lab_admin_password }}"
+        - "  Jupyter Token: {{ cert_lab_jupyter_token }}"
+        - ""
+        - "Quick Start:"
+        - "  cd {{ cert_lab_deploy_dir }}"
+        - "  ./lab status"
+        - "  ./lab scenarios"
+        - "  ./lab test --pki-type rsa --scenario 'Certificate Private Key Compromise'"
+        - "  ./lab test-advanced --suite lifecycle --pki-type rsa"
+        - ""
+
+    - name: Report user data for RHPDS catalog
+      agnosticd_user_info:
+        data:
+          ssh_command: "ssh {{ student_name }}@{{ _lab_host }}"
+          ssh_password: "{{ student_password }}"
+          lab_directory: "{{ cert_lab_deploy_dir }}"
+          awx_url: "http://{{ _lab_host }}:8084"
+          awx_user: admin
+          awx_password: "{{ cert_lab_admin_password }}"
+          grafana_url: "http://{{ _lab_host }}:3000"
+          grafana_user: admin
+          grafana_password: "{{ cert_lab_admin_password }}"
+          jupyter_url: "http://{{ _lab_host }}:8888"
+          jupyter_token: "{{ cert_lab_jupyter_token }}"
+          pki_admin_user: caadmin
+          pki_admin_password: "{{ cert_lab_pki_admin_password }}"
+          edr_url: "http://{{ _lab_host }}:8082"
+          siem_url: "http://{{ _lab_host }}:8083"
