@@ -1,0 +1,51 @@
+---
+# =============================================================================
+# Teardown — Stop lab and destroy infrastructure
+# =============================================================================
+
+- name: Destroy | Stop lab on target host
+  hosts: bastions[0]:certlab[0]
+  become: true
+  gather_facts: false
+  ignore_errors: true
+
+  tasks:
+    - name: Check if lab directory exists
+      ansible.builtin.stat:
+        path: "{{ cert_lab_deploy_dir }}/stop-lab.sh"
+      register: stop_script
+
+    - name: Run stop-lab.sh --clean (non-interactive)
+      ansible.builtin.shell: |
+        cd {{ cert_lab_deploy_dir }}
+        # Auto-confirm cleanup prompts
+        yes y | bash stop-lab.sh --clean
+      when: stop_script.stat.exists | default(false)
+      changed_when: true
+      timeout: 300
+
+    - name: Remove lab directory
+      ansible.builtin.file:
+        path: "{{ cert_lab_deploy_dir }}"
+        state: absent
+
+    - name: Remove DNS configuration
+      ansible.builtin.command:
+        cmd: bash {{ cert_lab_deploy_dir }}/scripts/setup-dns.sh --remove
+      ignore_errors: true
+      changed_when: true
+
+# =============================================================================
+# Destroy cloud infrastructure (EC2 instance, security groups, etc.)
+# =============================================================================
+
+- name: Destroy | Remove cloud resources
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Import cloud provider destroy playbook
+      ansible.builtin.include_role:
+        name: "infra-{{ cloud_provider | default('ec2') }}-destroy"
+      when: cloud_provider is defined

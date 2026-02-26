@@ -1,0 +1,71 @@
+---
+# =============================================================================
+# Stage 0: Pre-Infrastructure — Generate Passwords (runs on localhost)
+# =============================================================================
+#
+# Generates random alphanumeric passwords for all lab services.
+# Only generates if the variable is empty (allows user override).
+# Passwords avoid special characters per pkispawn constraints.
+
+- name: Pre-Infrastructure | Generate deployment credentials
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Generate random admin password
+      ansible.builtin.set_fact:
+        cert_lab_admin_password: "{{ lookup('password', '/dev/null chars=ascii_letters,digits length=16') }}"
+      when: cert_lab_admin_password | default('') | length == 0
+
+    - name: Generate random database password
+      ansible.builtin.set_fact:
+        cert_lab_db_password: "{{ lookup('password', '/dev/null chars=ascii_letters,digits length=16') }}"
+      when: cert_lab_db_password | default('') | length == 0
+
+    - name: Generate random directory server password
+      ansible.builtin.set_fact:
+        cert_lab_ds_password: "{{ lookup('password', '/dev/null chars=ascii_letters,digits length=16') }}"
+      when: cert_lab_ds_password | default('') | length == 0
+
+    - name: Generate random PKI admin password
+      ansible.builtin.set_fact:
+        cert_lab_pki_admin_password: "{{ lookup('password', '/dev/null chars=ascii_letters,digits length=16') }}"
+      when: cert_lab_pki_admin_password | default('') | length == 0
+
+    - name: Generate random PKI PKCS12 password
+      ansible.builtin.set_fact:
+        cert_lab_pki_client_pkcs12_password: "{{ lookup('password', '/dev/null chars=ascii_letters,digits length=16') }}"
+      when: cert_lab_pki_client_pkcs12_password | default('') | length == 0
+
+    - name: Generate random PKI backup password
+      ansible.builtin.set_fact:
+        cert_lab_pki_backup_password: "{{ lookup('password', '/dev/null chars=ascii_letters,digits length=16') }}"
+      when: cert_lab_pki_backup_password | default('') | length == 0
+
+    - name: Generate random PKI token password
+      ansible.builtin.set_fact:
+        cert_lab_pki_token_password: "{{ lookup('password', '/dev/null chars=ascii_letters,digits length=16') }}"
+      when: cert_lab_pki_token_password | default('') | length == 0
+
+    - name: Generate random AWX secret key
+      ansible.builtin.set_fact:
+        cert_lab_awx_secret_key: "{{ lookup('password', '/dev/null chars=hexdigits length=64') | lower }}"
+      when: cert_lab_awx_secret_key | default('') | length == 0
+
+    - name: Generate random Jupyter token
+      ansible.builtin.set_fact:
+        cert_lab_jupyter_token: "{{ lookup('password', '/dev/null chars=ascii_letters,digits length=32') }}"
+      when: cert_lab_jupyter_token | default('') | length == 0
+
+    - name: Generate student password
+      ansible.builtin.set_fact:
+        student_password: "{{ lookup('password', '/dev/null chars=ascii_letters,digits length=16') }}"
+      when: student_password | default('') | length == 0
+
+    - name: Display generated credentials summary
+      ansible.builtin.debug:
+        msg: >-
+          Credentials generated for deployment {{ guid }}.
+          Admin password: {{ cert_lab_admin_password }}
+          Student password: {{ student_password }}

@@ -1,0 +1,176 @@
+---
+# =============================================================================
+# Stage 3: Pre-Software — Install packages, configure host
+# =============================================================================
+
+- name: Pre-Software | Configure lab host
+  hosts: bastions[0]:certlab[0]
+  become: true
+  gather_facts: true
+
+  tasks:
+    # =========================================================================
+    # Package Installation
+    # =========================================================================
+
+    - name: Install container tools
+      ansible.builtin.dnf:
+        name:
+          - podman
+          - podman-compose
+          - buildah
+          - skopeo
+          - slirp4netns
+          - fuse-overlayfs
+          - containernetworking-plugins
+        state: present
+
+    - name: Install system utilities
+      ansible.builtin.dnf:
+        name:
+          - git
+          - curl
+          - wget
+          - jq
+          - openssl
+          - python3
+          - python3-pip
+          - bind-utils
+          - openssh-clients
+        state: present
+
+    - name: Install Python dependencies for lab CLI
+      ansible.builtin.pip:
+        name:
+          - typer
+          - rich
+          - httpx
+        executable: pip3
+
+    # =========================================================================
+    # Student User Setup
+    # =========================================================================
+
+    - name: Create student user
+      ansible.builtin.user:
+        name: "{{ student_name }}"
+        password: "{{ student_password | password_hash('sha512') }}"
+        groups: wheel
+        append: true
+        create_home: true
+      when: install_student_user | default(true)
+
+    - name: Allow student user passwordless sudo
+      ansible.builtin.copy:
+        content: "{{ student_name }} ALL=(ALL) NOPASSWD: ALL\n"
+        dest: "/etc/sudoers.d/{{ student_name }}"
+        mode: "0440"
+        validate: "visudo -cf %s"
+      when: install_student_user | default(true)
+
+    # =========================================================================
+    # Container Runtime Configuration
+    # =========================================================================
+
+    - name: Configure subuid for student user
+      ansible.builtin.lineinfile:
+        path: /etc/subuid
+        regexp: "^{{ student_name }}:"
+        line: "{{ student_name }}:100000:65536"
+        create: true
+        mode: "0644"
+
+    - name: Configure subgid for student user
+      ansible.builtin.lineinfile:
+        path: /etc/subgid
+        regexp: "^{{ student_name }}:"
+        line: "{{ student_name }}:100000:65536"
+        create: true
+        mode: "0644"
+
+    - name: Enable lingering for student user
+      ansible.builtin.command:
+        cmd: "loginctl enable-linger {{ student_name }}"
+      changed_when: true
+
+    # =========================================================================
+    # Kernel Parameters
+    # =========================================================================
+
+    - name: Set kernel parameters for containers
+      ansible.posix.sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        sysctl_file: /etc/sysctl.d/99-containers.conf
+        reload: true
+      loop:
+        - { name: "fs.inotify.max_user_watches", value: "524288" }
+        - { name: "fs.inotify.max_user_instances", value: "512" }
+
+    # =========================================================================
+    # Firewall Configuration
+    # =========================================================================
+
+    - name: Check if firewalld is running
+      ansible.builtin.systemd:
+        name: firewalld
+      register: firewalld_status
+      ignore_errors: true
+
+    - name: Open lab service ports in firewalld
+      ansible.posix.firewalld:
+        port: "{{ item }}"
+        permanent: true
+        immediate: true
+        state: enabled
+      loop:
+        # RSA PKI CAs
+        - 8443/tcp
+        - 8444/tcp
+        - 8445/tcp
+        - 8446/tcp
+        - 8447/tcp
+        # PQ PKI CAs
+        - 8453/tcp
+        - 8454/tcp
+        - 8455/tcp
+        - 8456/tcp
+        # ECC PKI CAs
+        - 8463/tcp
+        - 8464/tcp
+        - 8465/tcp
+        - 8466/tcp
+        # FreeIPA
+        - 4443/tcp
+        # AWX
+        - 8084/tcp
+        # Mock EDR / SIEM
+        - 8082/tcp
+        - 8083/tcp
+        # IoT Client
+        - 8085/tcp
+        # EDA
+        - 5000/tcp
+        # Kafka
+        - 9092/tcp
+        # Jupyter
+        - 8888/tcp
+        # Grafana
+        - 3000/tcp
+        # Prometheus + PKI Exporter
+        - 9090/tcp
+        - 9091/tcp
+        # DNS (dnsmasq)
+        - 5353/tcp
+        - 5353/udp
+      when: firewalld_status.status.ActiveState | default('') == 'active'
+
+    - name: Trust podman network interface in firewalld
+      ansible.posix.firewalld:
+        interface: podman0
+        zone: trusted
+        permanent: true
+        immediate: true
+        state: enabled
+      when: firewalld_status.status.ActiveState | default('') == 'active'
+      ignore_errors: true

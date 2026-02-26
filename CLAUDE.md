@@ -544,6 +544,21 @@ The lab uses a dnsmasq container for wildcard DNS resolution of `*.cert-lab.loca
 │   └── inventory/
 │       └── pki_hosts.yml            # PKI container inventory
 │
+├── agnosticd/                 # AgnosticD config for RHPDS deployment
+│   └── configs/cert-revocation-lab/
+│       ├── README.adoc                  # RHPDS catalog documentation
+│       ├── default_vars.yml             # Config-level defaults (env_type, PKI mode, credentials)
+│       ├── default_vars_ec2.yml         # AWS: instance type, security groups, AMI
+│       ├── sample_vars.yml              # Example user variables
+│       ├── pre_infra.yml                # Stage 0: generate random passwords (localhost)
+│       ├── post_infra.yml               # Stage 2: verify SSH connectivity
+│       ├── pre_software.yml             # Stage 3: install podman, packages, firewall
+│       ├── software.yml                 # Stage 4: clone repo, template .env, run start-lab.sh
+│       ├── post_software.yml            # Stage 5: validate, E2E test, report credentials
+│       ├── destroy_env.yml              # Teardown: stop-lab.sh --clean, destroy EC2
+│       └── templates/
+│           └── env.j2                   # Jinja2 template for .env file
+│
 ├── .archive/                  # Superseded scripts (kept for reference)
 │   └── bash-scripts/
 │       ├── test-revocation.sh     # → ./lab test
@@ -1229,6 +1244,58 @@ IP_PKI_EXPORTER=172.20.0.72
 PROMETHEUS_VERSION=latest
 GRAFANA_VERSION=latest
 ```
+
+## AgnosticD / RHPDS Deployment
+
+The `agnosticd/configs/cert-revocation-lab/` directory contains an AgnosticD config for deploying the lab onto a single AWS EC2 instance via the Red Hat Demo Platform (RHPDS).
+
+### Design
+
+- **Wraps existing scripts** — `start-lab.sh --all` handles the 10-phase deployment; AgnosticD playbooks call it rather than reimplementing the orchestration in Ansible.
+- **Deploy-time password generation** — Random 16-char alphanumeric passwords (no special characters, per pkispawn constraints). No SOPS/age key sharing needed.
+- **Single EC2 instance** — `m5.4xlarge` (16 vCPU, 64 GB RAM, 100 GB gp3 disk) runs all ~25 containers.
+
+### AgnosticD Stages
+
+| Stage | Playbook | Runs On | Purpose |
+|-------|----------|---------|---------|
+| 0 | `pre_infra.yml` | localhost | Generate 9 random passwords + AWX secret key |
+| 2 | `post_infra.yml` | localhost | Wait for SSH connectivity (300s timeout) |
+| 3 | `pre_software.yml` | target host | Install podman, packages, create student user, configure firewalld |
+| 4 | `software.yml` | target host | Clone repo, template `.env`, run `start-lab.sh` (async 3600s), EDA auth/SSH setup |
+| 5 | `post_software.yml` | target host + localhost | `lab validate`, E2E smoke test, report credentials via `agnosticd_user_info` |
+| destroy | `destroy_env.yml` | target host + localhost | `stop-lab.sh --clean`, destroy EC2 |
+
+### Deployment
+
+```bash
+# Copy and customize variables
+cp agnosticd/configs/cert-revocation-lab/sample_vars.yml my_vars.yml
+vi my_vars.yml  # Set guid, aws_region, aws_rhel_ami
+
+# Deploy via AgnosticD
+ansible-playbook main.yml -e @my_vars.yml
+
+# Teardown
+ansible-playbook destroy.yml -e @my_vars.yml
+```
+
+### Key Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `cert_lab_pki_mode` | `all` | PKI types: `rsa`, `ecc`, `pqc`, `dual`, `all` |
+| `cert_lab_deploy_freeipa` | `false` | Deploy FreeIPA identity management |
+| `aws_instance_type` | `m5.4xlarge` | EC2 instance type |
+| `cert_lab_repo_branch` | `main` | Git branch to deploy |
+| `cert_lab_admin_password` | _(auto)_ | Override auto-generated admin password |
+
+### Security Groups
+
+The EC2 security group opens all lab service ports:
+- **PKI CAs**: 8443-8447 (RSA), 8453-8456 (PQ), 8463-8466 (ECC)
+- **Services**: 4443 (FreeIPA), 8084 (AWX), 8082-8083 (EDR/SIEM), 8085 (IoT), 5000 (EDA), 9092 (Kafka)
+- **Tools**: 8888 (Jupyter), 3000 (Grafana), 9090-9091 (Prometheus)
 
 ## PKI Performance Testing
 
