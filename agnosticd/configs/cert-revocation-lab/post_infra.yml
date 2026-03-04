@@ -1,0 +1,23 @@
+---
+# =============================================================================
+# Stage 2: Post-Infrastructure — Verify SSH Connectivity
+# =============================================================================
+
+- name: Post-Infrastructure | Verify SSH access to lab host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Wait for SSH on lab host
+      ansible.builtin.wait_for:
+        host: "{{ groups['bastions'][0] | default(groups['certlab'][0]) }}"
+        port: 22
+        delay: 10
+        timeout: 300
+        state: started
+      register: ssh_wait
+
+    - name: Report SSH connectivity
+      ansible.builtin.debug:
+        msg: "SSH is available on {{ groups['bastions'][0] | default(groups['certlab'][0]) }}"

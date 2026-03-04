@@ -1,0 +1,48 @@
+---
+# =============================================================================
+# Sample Variables for cert-revocation-lab AgnosticD Deployment
+# =============================================================================
+#
+# Copy this file and customize for your deployment:
+#   cp sample_vars.yml my_vars.yml
+#   vi my_vars.yml
+#   ansible-playbook main.yml -e @my_vars.yml
+#
+# Most values have sensible defaults in default_vars.yml / default_vars_ec2.yml.
+# Only override what you need.
+
+# Required: unique deployment identifier
+guid: mylab01
+
+# Required: cloud provider
+cloud_provider: ec2
+
+# Required: AWS region
+aws_region: us-east-2
+
+# Required: RHEL 10 AMI for your region
+# Find RHEL AMIs: aws ec2 describe-images --filters "Name=name,Values=RHEL-10*"
+aws_rhel_ami: ami-0123456789abcdef0
+
+# Required: email for tagging
+email: user@example.com
+
+# Optional: PKI mode (default: all)
+# Options: rsa, ecc, pqc, dual, all
+# cert_lab_pki_mode: all
+
+# Optional: deploy FreeIPA (default: false)
+# cert_lab_deploy_freeipa: false
+
+# Optional: override instance type (default: m5.4xlarge)
+# Use m5.2xlarge (8 vCPU, 32 GB) for RSA-only deployments
+# aws_instance_type: m5.2xlarge
+
+# Optional: override passwords (auto-generated if empty)
+# cert_lab_admin_password: "MySecurePassword123"
+
+# Optional: git branch for development
+# cert_lab_repo_branch: feature/my-branch
+
+# Optional: student user password (auto-generated if empty)
+# student_password: "StudentPass123"

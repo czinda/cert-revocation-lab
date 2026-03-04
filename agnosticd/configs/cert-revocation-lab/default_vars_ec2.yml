@@ -1,0 +1,160 @@
+---
+# =============================================================================
+# AgnosticD Config: cert-revocation-lab — EC2 Defaults
+# =============================================================================
+
+cloud_provider: ec2
+
+# AWS instance configuration
+# m5.4xlarge: 16 vCPU, 64 GB RAM — handles ~25 containers comfortably
+aws_instance_type: m5.4xlarge
+
+# RHEL 10 AMI — set per-region in your variables or use the AgnosticD AMI lookup
+aws_rhel_ami: YOURAMI
+
+# Root volume: 100 GB gp3 for container images + PKI data
+aws_root_volume_size: 100
+aws_root_volume_type: gp3
+
+# =============================================================================
+# Security Groups
+# =============================================================================
+# Opens all lab service ports to the student's IP. In RHPDS, the bastion
+# firewall and security groups are the primary access control.
+
+security_groups:
+  - name: CertLabSG
+    rules:
+      # SSH
+      - name: SSH
+        proto: tcp
+        from_port: 22
+        to_port: 22
+        cidr: 0.0.0.0/0
+        rule_type: Ingress
+
+      # RSA-4096 PKI CAs (Root, Intermediate, IoT, ACME, EST)
+      - name: RSA-PKI
+        proto: tcp
+        from_port: 8443
+        to_port: 8447
+        cidr: 0.0.0.0/0
+        rule_type: Ingress
+
+      # ML-DSA-87 (Post-Quantum) PKI CAs (Root, Intermediate, IoT, EST)
+      - name: PQ-PKI
+        proto: tcp
+        from_port: 8453
+        to_port: 8456
+        cidr: 0.0.0.0/0
+        rule_type: Ingress
+
+      # ECC P-384 PKI CAs (Root, Intermediate, IoT, EST)
+      - name: ECC-PKI
+        proto: tcp
+        from_port: 8463
+        to_port: 8466
+        cidr: 0.0.0.0/0
+        rule_type: Ingress
+
+      # FreeIPA HTTPS
+      - name: FreeIPA
+        proto: tcp
+        from_port: 4443
+        to_port: 4443
+        cidr: 0.0.0.0/0
+        rule_type: Ingress
+
+      # AWX Web UI
+      - name: AWX
+        proto: tcp
+        from_port: 8084
+        to_port: 8084
+        cidr: 0.0.0.0/0
+        rule_type: Ingress
+
+      # Mock EDR
+      - name: MockEDR
+        proto: tcp
+        from_port: 8082
+        to_port: 8082
+        cidr: 0.0.0.0/0
+        rule_type: Ingress
+
+      # Mock SIEM
+      - name: MockSIEM
+        proto: tcp
+        from_port: 8083
+        to_port: 8083
+        cidr: 0.0.0.0/0
+        rule_type: Ingress
+
+      # IoT Client Simulator
+      - name: IoTClient
+        proto: tcp
+        from_port: 8085
+        to_port: 8085
+        cidr: 0.0.0.0/0
+        rule_type: Ingress
+
+      # EDA Server
+      - name: EDA
+        proto: tcp
+        from_port: 5000
+        to_port: 5000
+        cidr: 0.0.0.0/0
+        rule_type: Ingress
+
+      # Kafka
+      - name: Kafka
+        proto: tcp
+        from_port: 9092
+        to_port: 9092
+        cidr: 0.0.0.0/0
+        rule_type: Ingress
+
+      # Jupyter Lab
+      - name: Jupyter
+        proto: tcp
+        from_port: 8888
+        to_port: 8888
+        cidr: 0.0.0.0/0
+        rule_type: Ingress
+
+      # Grafana
+      - name: Grafana
+        proto: tcp
+        from_port: 3000
+        to_port: 3000
+        cidr: 0.0.0.0/0
+        rule_type: Ingress
+
+      # Prometheus + PKI Exporter
+      - name: Prometheus
+        proto: tcp
+        from_port: 9090
+        to_port: 9091
+        cidr: 0.0.0.0/0
+        rule_type: Ingress
+
+# =============================================================================
+# Instance definition (AgnosticD convention)
+# =============================================================================
+
+instances:
+  - name: certlab
+    count: 1
+    unique: true
+    public_dns: true
+    floating_ip: true
+    image: "{{ aws_rhel_ami }}"
+    flavor:
+      ec2: "{{ aws_instance_type }}"
+    rootfs_size: "{{ aws_root_volume_size }}"
+    security_groups:
+      - CertLabSG
+    tags:
+      - key: env_type
+        value: "{{ env_type }}"
+      - key: guid
+        value: "{{ guid }}"

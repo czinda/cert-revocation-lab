@@ -1,0 +1,138 @@
+---
+# =============================================================================
+# Stage 4: Software — Clone repo, configure, deploy lab
+# =============================================================================
+
+- name: Software | Deploy Certificate Revocation Lab
+  hosts: bastions[0]:certlab[0]
+  become: true
+  gather_facts: true
+
+  vars:
+    _pki_mode_flags:
+      rsa: "--rsa"
+      ecc: "--ecc"
+      pqc: "--pqc"
+      dual: "--dual"
+      all: "--all"
+    _pki_flag: "{{ _pki_mode_flags[cert_lab_pki_mode | default('all')] }}"
+
+  tasks:
+    # =========================================================================
+    # Clone Repository
+    # =========================================================================
+
+    - name: Clone cert-revocation-lab repository
+      ansible.builtin.git:
+        repo: "{{ cert_lab_repo_url }}"
+        dest: "{{ cert_lab_deploy_dir }}"
+        version: "{{ cert_lab_repo_branch }}"
+        force: true
+
+    - name: Set ownership of lab directory to student
+      ansible.builtin.file:
+        path: "{{ cert_lab_deploy_dir }}"
+        owner: "{{ student_name }}"
+        group: "{{ student_name }}"
+        recurse: true
+
+    # =========================================================================
+    # Generate .env Configuration
+    # =========================================================================
+
+    - name: Template .env from generated credentials
+      ansible.builtin.template:
+        src: env.j2
+        dest: "{{ cert_lab_deploy_dir }}/.env"
+        owner: "{{ student_name }}"
+        group: "{{ student_name }}"
+        mode: "0600"
+
+    # =========================================================================
+    # Run Prerequisites Script
+    # =========================================================================
+
+    - name: Run setup-prerequisites.sh
+      ansible.builtin.command:
+        cmd: bash setup-prerequisites.sh
+        chdir: "{{ cert_lab_deploy_dir }}"
+      changed_when: true
+
+    # =========================================================================
+    # Configure DNS
+    # =========================================================================
+
+    - name: Configure DNS resolution for cert-lab.local
+      ansible.builtin.command:
+        cmd: bash scripts/setup-dns.sh
+        chdir: "{{ cert_lab_deploy_dir }}"
+      changed_when: true
+
+    # =========================================================================
+    # Deploy Lab (main orchestration)
+    # =========================================================================
+
+    - name: Run start-lab.sh with PKI mode {{ cert_lab_pki_mode }}
+      ansible.builtin.command:
+        cmd: "bash start-lab.sh {{ _pki_flag }}"
+        chdir: "{{ cert_lab_deploy_dir }}"
+      async: "{{ cert_lab_start_timeout }}"
+      poll: 30
+      changed_when: true
+      environment:
+        # Suppress interactive prompts in clean mode
+        DEBIAN_FRONTEND: noninteractive
+
+    # =========================================================================
+    # EDA Authentication Setup
+    # =========================================================================
+
+    - name: Export admin credentials for EDA
+      ansible.builtin.command:
+        cmd: bash scripts/setup-eda-auth.sh
+        chdir: "{{ cert_lab_deploy_dir }}"
+      changed_when: true
+      ignore_errors: true
+
+    - name: Setup EDA SSH access
+      ansible.builtin.command:
+        cmd: bash scripts/setup-eda-ssh.sh
+        chdir: "{{ cert_lab_deploy_dir }}"
+      changed_when: true
+      become: true
+      become_user: "{{ student_name }}"
+      ignore_errors: true
+
+    # =========================================================================
+    # Update .env with EDA SSH settings
+    # =========================================================================
+
+    - name: Set LAB_HOST_IP in .env
+      ansible.builtin.lineinfile:
+        path: "{{ cert_lab_deploy_dir }}/.env"
+        regexp: "^LAB_HOST_IP="
+        line: "LAB_HOST_IP=host.containers.internal"
+
+    - name: Set LAB_HOST_USER in .env
+      ansible.builtin.lineinfile:
+        path: "{{ cert_lab_deploy_dir }}/.env"
+        regexp: "^LAB_HOST_USER="
+        line: "LAB_HOST_USER={{ student_name }}"
+
+    - name: Set LAB_ROOT_DIR in .env
+      ansible.builtin.lineinfile:
+        path: "{{ cert_lab_deploy_dir }}/.env"
+        regexp: "^LAB_ROOT_DIR="
+        line: "LAB_ROOT_DIR={{ cert_lab_deploy_dir }}"
+
+    # =========================================================================
+    # Restart EDA to pick up credentials
+    # =========================================================================
+
+    - name: Restart EDA server to apply credentials
+      ansible.builtin.command:
+        cmd: podman restart eda-server
+      become: true
+      become_user: "{{ student_name }}"
+      changed_when: true
+      ignore_errors: true
