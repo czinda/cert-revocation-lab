@@ -491,6 +491,17 @@ pki -d $CLIENT_DB -U "$CA_URL" \
     )
 
 
+REVOCATION_REASON_NAMES = {
+    0: "Unspecified",
+    1: "Key_Compromise",
+    2: "CA_Compromise",
+    3: "Affiliation_Changed",
+    4: "Superseded",
+    5: "Cessation_of_Operation",
+    6: "Certificate_Hold",
+}
+
+
 def revoke_certificate(
     config: LabConfig,
     serial: str,
@@ -521,6 +532,7 @@ def revoke_certificate(
     pki_type = pki_type or config.pki_type
     ca_level = ca_level or config.ca_level
     ca_config = config.get_ca_config(pki_type, ca_level)
+    reason_name = REVOCATION_REASON_NAMES.get(reason, "Key_Compromise")
 
     revoke_cmd = f"""
 set -e
@@ -555,7 +567,7 @@ fi
 # Revoke the certificate
 pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \\
     --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \\
-    ca-cert-revoke {serial} --reason {reason} --force
+    ca-cert-revoke {serial} --reason {reason_name} --force
 """
 
     rc, stdout, stderr = run_podman_exec(ca_config.container, revoke_cmd)

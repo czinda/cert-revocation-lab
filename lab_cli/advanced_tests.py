@@ -843,6 +843,8 @@ def _check_siem_simulation(
     # not JSON body.  target_device is required by all four endpoints.
     device_id = f"siem-sim-{random.randint(10000, 99999)}"
     params = {"target_device": f"{device_id}.cert-lab.local"}
+    if endpoint == "identity-theft":
+        params["target_user"] = f"user-{device_id}"
 
     try:
         response = httpx.post(
