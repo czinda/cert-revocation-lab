@@ -460,7 +460,8 @@ export_admin_creds() {
     log_info "Exporting admin credentials for REST API..."
 
     mkdir -p "$creds_dir"
-    chmod 700 "$creds_dir"
+    # 755 so rootless EDA container can stat/read admin certs
+    chmod 755 "$creds_dir"
 
     # Find the admin p12 file from client database
     local client_dir="/root/.dogtag/${instance}/ca"
