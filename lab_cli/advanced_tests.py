@@ -71,32 +71,50 @@ def _device_fqdn(config: LabConfig, prefix: str = "advtest") -> tuple[str, str]:
 
 
 def _extract_serial_from_pem(cert_pem: str) -> Optional[str]:
-    """Extract serial number from a PEM or base64-DER certificate.
+    """Extract serial number from a PEM, base64-DER certificate, or PKCS#7 envelope.
 
     Returns hex serial with 0x prefix (e.g. '0x1A2B3C'), or None on failure.
     """
     with tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False) as f:
-        # Ensure PEM format
-        if not cert_pem.strip().startswith("-----BEGIN"):
-            f.write("-----BEGIN CERTIFICATE-----\n")
-            f.write(cert_pem.strip())
-            f.write("\n-----END CERTIFICATE-----\n")
+        stripped = cert_pem.strip()
+        if stripped.startswith("-----BEGIN"):
+            f.write(stripped)
+        elif stripped.startswith("MII"):
+            # Could be raw base64 DER cert or PKCS#7 — try PKCS#7 first
+            f.write("-----BEGIN PKCS7-----\n")
+            f.write(stripped)
+            f.write("\n-----END PKCS7-----\n")
         else:
-            f.write(cert_pem)
+            f.write("-----BEGIN CERTIFICATE-----\n")
+            f.write(stripped)
+            f.write("\n-----END CERTIFICATE-----\n")
         tmp_path = f.name
 
     try:
+        # Try as plain certificate first
         result = subprocess.run(
             ["openssl", "x509", "-in", tmp_path, "-serial", "-noout"],
             capture_output=True, text=True, timeout=10,
         )
-        if result.returncode != 0:
-            return None
-        # Output is like "serial=1A2B3C4D" or "serial=1a2b3c4d"
-        line = result.stdout.strip()
-        if "=" in line:
-            hex_serial = line.split("=", 1)[1].strip()
+        if result.returncode == 0 and "=" in result.stdout:
+            hex_serial = result.stdout.strip().split("=", 1)[1].strip()
             return f"0x{hex_serial.upper()}"
+
+        # Try as PKCS#7 envelope (EST returns CMS SignedData)
+        result = subprocess.run(
+            ["openssl", "pkcs7", "-in", tmp_path, "-print_certs"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0 and "BEGIN CERTIFICATE" in result.stdout:
+            # Extract serial from the first certificate in the PKCS#7
+            cert_result = subprocess.run(
+                ["openssl", "x509", "-serial", "-noout"],
+                input=result.stdout, capture_output=True, text=True, timeout=10,
+            )
+            if cert_result.returncode == 0 and "=" in cert_result.stdout:
+                hex_serial = cert_result.stdout.strip().split("=", 1)[1].strip()
+                return f"0x{hex_serial.upper()}"
+
         return None
     except Exception:
         return None
@@ -383,14 +401,20 @@ def test_est_renewal(
         if "BEGIN CERTIFICATE" not in cert1_text and not cert1_text.startswith("MII"):
             return False, f"SKIP: EST enrollment did not return a certificate: {cert1_text[:200]}"
 
-        # Write enrolled cert to file (ensure PEM format)
-        if not cert1_text.startswith("-----BEGIN"):
-            enroll_cert.write_text(
-                f"-----BEGIN CERTIFICATE-----\n{cert1_text}\n-----END CERTIFICATE-----\n"
+        # EST returns PKCS#7 (CMS SignedData) — extract the certificate
+        if cert1_text.startswith("MII") and "BEGIN CERTIFICATE" not in cert1_text:
+            p7_path = Path(tmpdir) / "response.p7b"
+            p7_path.write_text(f"-----BEGIN PKCS7-----\n{cert1_text}\n-----END PKCS7-----\n")
+            p7_rc = subprocess.run(
+                ["openssl", "pkcs7", "-in", str(p7_path), "-print_certs"],
+                capture_output=True, text=True, timeout=10,
             )
-        else:
-            enroll_cert.write_text(cert1_text)
+            if p7_rc.returncode == 0 and "BEGIN CERTIFICATE" in p7_rc.stdout:
+                cert1_text = p7_rc.stdout.strip()
+            else:
+                return False, "SKIP: Could not extract certificate from PKCS#7 response"
 
+        enroll_cert.write_text(cert1_text)
         serial1 = _extract_serial_from_pem(enroll_cert.read_text())
 
         # Re-enroll using the enrolled cert + its matching key for TLS auth

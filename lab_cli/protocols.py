@@ -270,12 +270,48 @@ def est_enroll_certificate(
 
         response = result.stdout.strip()
 
-        # Check if response looks like a certificate
+        # Check if response looks like a certificate or PKCS#7 envelope
         if "BEGIN CERTIFICATE" in response or response.startswith("MII"):
+            # Try to extract serial — EST returns PKCS#7 (CMS SignedData)
+            serial = None
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False) as pf:
+                if response.startswith("MII"):
+                    pf.write(f"-----BEGIN PKCS7-----\n{response}\n-----END PKCS7-----\n")
+                else:
+                    pf.write(response)
+                pf_path = pf.name
+
+            try:
+                # Try PKCS#7 extraction
+                p7 = subprocess.run(
+                    ["openssl", "pkcs7", "-in", pf_path, "-print_certs"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if p7.returncode == 0 and "BEGIN CERTIFICATE" in p7.stdout:
+                    sr = subprocess.run(
+                        ["openssl", "x509", "-serial", "-noout"],
+                        input=p7.stdout, capture_output=True, text=True, timeout=10,
+                    )
+                    if sr.returncode == 0 and "=" in sr.stdout:
+                        serial = f"0x{sr.stdout.strip().split('=', 1)[1].strip().upper()}"
+                        response = p7.stdout  # use extracted PEM cert
+
+                # Try as plain cert
+                if not serial:
+                    sr = subprocess.run(
+                        ["openssl", "x509", "-in", pf_path, "-serial", "-noout"],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    if sr.returncode == 0 and "=" in sr.stdout:
+                        serial = f"0x{sr.stdout.strip().split('=', 1)[1].strip().upper()}"
+            finally:
+                Path(pf_path).unlink(missing_ok=True)
+
             return ProtocolResult(
                 success=True,
                 message="Certificate enrolled via EST",
                 certificate=response,
+                serial=serial,
                 details={
                     "est_url": est_url,
                     "device": device_fqdn,
