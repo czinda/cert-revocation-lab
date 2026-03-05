@@ -91,13 +91,15 @@ phase1_create_instance() {
 
     # Generate TLS keypair and CSR
     log_info "Generating TLS certificate CSR..."
+    # Pipe /dev/urandom to stdin — certutil reads random data from stdin
+    # when the -z noise file doesn't provide enough entropy (common in containers)
     certutil -R -d "$NSS_DB" \
         -s "CN=${CA_HOSTNAME},OU=EST RA,O=Cert-Lab,C=US" \
         -o "$CSR_FILE" \
         -k rsa -g 2048 \
         -z /dev/urandom \
         --keyUsage digitalSignature,keyEncipherment \
-        -a 2>/dev/null
+        -a < /dev/urandom 2>/dev/null
 
     log_info "TLS CSR generated: $CSR_FILE"
     echo ""
