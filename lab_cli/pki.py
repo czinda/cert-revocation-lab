@@ -873,12 +873,27 @@ ADMIN_NICK=$(certutil -L -d $CLIENT_DB 2>/dev/null | grep -iE "admin|caadmin" | 
 pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \\
     --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \\
     ca-crl-issue --force
+
+# Wait for CRL to be regenerated
+sleep 3
 """
-        run_podman_exec(ca_config.container, force_cmd, timeout=30)
+        run_podman_exec(ca_config.container, force_cmd, timeout=60)
 
     # Fetch and parse CRL
+    # Use pki CLI to get CRL directly (more reliable than getCRL servlet)
     crl_cmd = f"""
 CA_URL=https://{ca_config.hostname}:8443
+
+# Method 1: Use pki ca-crl-show to list revoked serials (most reliable)
+CLIENT_DB=/root/.dogtag/nssdb
+ADMIN_NICK=$(certutil -L -d $CLIENT_DB 2>/dev/null | grep -iE "admin|caadmin" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
+if [ -n "$ADMIN_NICK" ]; then
+    pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \\
+        --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \\
+        ca-cert-find --status REVOKED --size 1000 2>/dev/null && exit 0
+fi
+
+# Method 2: Fetch CRL via HTTP and parse with openssl
 curl -sk "$CA_URL/ca/ee/ca/getCRL?op=getCRL&crlIssuingPoint=MasterCRL" \\
     -o /tmp/crl.der 2>/dev/null
 
@@ -904,11 +919,15 @@ rm -f /tmp/crl.der /tmp/crl2.der
     # Count revoked entries
     entry_count = stdout.lower().count("serial number:")
 
-    # Check if our serial is in the CRL
-    # CRL displays serials in uppercase hex, possibly colon-separated (e.g., DB:1E:C8:...)
+    # Check if our serial is in the output
+    # CRL/pki output may show serials as:
+    #   - Uppercase hex: DB1EC843...
+    #   - Colon-separated: DB:1E:C8:43:...
+    #   - With 0x prefix: 0xDB1EC843...
     stdout_upper = stdout.upper()
-    # Strip colons from CRL output for comparison
     stdout_no_colons = stdout_upper.replace(":", "")
-    found = clean_serial in stdout_upper or clean_serial in stdout_no_colons
+    found = (clean_serial in stdout_upper
+             or clean_serial in stdout_no_colons
+             or f"0X{clean_serial}" in stdout_upper)
 
     return (found, entry_count)
