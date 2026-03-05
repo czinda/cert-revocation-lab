@@ -296,7 +296,12 @@ def test_est_enroll_revoke(
     wait_time: int,
     console: Console,
 ) -> TestOutcome:
-    """EST enroll, extract serial, trigger EDR event, poll for revocation on EST CA."""
+    """EST enroll, extract serial, trigger EDR event, poll for revocation on Intermediate CA.
+
+    EST is a Registration Authority — it proxies enrollment to the Intermediate CA,
+    so the certificate lives in the Intermediate CA's database. Revocation must
+    target the Intermediate CA, not the EST RA.
+    """
     if pki_type not in EST_ENDPOINTS:
         return False, f"SKIP: EST not available for {pki_type.value} PKI"
 
@@ -313,7 +318,10 @@ def test_est_enroll_revoke(
     if not serial:
         return False, "SKIP: EST returned no certificate or serial could not be extracted"
 
-    # Trigger EDR event targeting the EST CA
+    # EST proxies to Intermediate CA — cert lives there, revoke there
+    revoke_ca = CALevel.INTERMEDIATE
+
+    # Trigger EDR event targeting the Intermediate CA
     event_result = trigger_edr_event(
         config=config,
         device_id=fqdn.split(".")[0],
@@ -321,15 +329,15 @@ def test_est_enroll_revoke(
         severity="critical",
         certificate_cn=fqdn,
         certificate_serial=serial,
-        ca_level=CALevel.EST,
+        ca_level=revoke_ca,
         pki_type=pki_type,
     )
     if not event_result.success:
         return False, f"Failed to trigger event: {event_result.message}"
 
-    revoked, elapsed = _poll_for_revocation(config, serial, pki_type, CALevel.EST, wait_time)
+    revoked, elapsed = _poll_for_revocation(config, serial, pki_type, revoke_ca, wait_time)
     if revoked:
-        return True, f"EST cert revoked after {elapsed}s"
+        return True, f"EST cert revoked after {elapsed}s (via Intermediate CA)"
     return False, f"EST cert not revoked within {wait_time}s"
 
 
