@@ -244,8 +244,14 @@ def test_hold_then_revoke(
     if not rev1.success:
         return False, f"Failed to place on hold: {rev1.message}"
 
-    # Permanently revoke
+    # Release hold, then permanently revoke (Dogtag requires release before re-revoke)
+    unhold1 = unhold_certificate(config, cert.serial, pki_type, ca_level)
+    if not unhold1.success:
+        return False, f"Failed to release hold before permanent revoke: {unhold1.message}"
+
     rev2 = revoke_certificate(config, cert.serial, reason=1, pki_type=pki_type, ca_level=ca_level)
+    if not rev2.success:
+        return False, f"Failed to permanently revoke: {rev2.message}"
 
     # Verify REVOKED
     verify = verify_certificate_status(config, cert.serial, pki_type, ca_level)
@@ -253,12 +259,12 @@ def test_hold_then_revoke(
         return False, f"Certificate should be REVOKED, got: {verify.status}"
 
     # Attempt unhold — should fail or certificate should stay REVOKED
-    unhold = unhold_certificate(config, cert.serial, pki_type, ca_level)
+    unhold2 = unhold_certificate(config, cert.serial, pki_type, ca_level)
     verify2 = verify_certificate_status(config, cert.serial, pki_type, ca_level)
     if verify2.success and verify2.status == "VALID":
         return False, "Certificate should not return to VALID after permanent revocation"
 
-    return True, "Certificate held then permanently revoked — cannot be unholded"
+    return True, "Certificate held, released, permanently revoked — cannot be unholded"
 
 
 # ---------------------------------------------------------------------------
@@ -964,10 +970,12 @@ def test_freeipa_identity_event(
     if not event_result.success:
         return False, f"Failed to trigger identity event: {event_result.message}"
 
-    revoked, elapsed = _poll_for_revocation(config, cert.serial, pki_type, ca_level, wait_time)
+    # Identity events traverse Kafka → EDA → Ansible → Dogtag + FreeIPA; allow extra time
+    freeipa_wait = max(wait_time, 60)
+    revoked, elapsed = _poll_for_revocation(config, cert.serial, pki_type, ca_level, freeipa_wait)
     if revoked:
         return True, f"Identity event revoked cert via Dogtag after {elapsed}s"
-    return False, f"Cert not revoked within {wait_time}s after identity event"
+    return False, f"Cert not revoked within {freeipa_wait}s after identity event"
 
 
 # ---------------------------------------------------------------------------

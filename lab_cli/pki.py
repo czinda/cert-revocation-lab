@@ -872,7 +872,10 @@ rm -f /tmp/crl.der /tmp/crl2.der
     entry_count = stdout.lower().count("serial number:")
 
     # Check if our serial is in the CRL
-    # CRL displays serials in uppercase hex without 0x prefix
-    found = clean_serial in stdout.upper()
+    # CRL displays serials in uppercase hex, possibly colon-separated (e.g., DB:1E:C8:...)
+    stdout_upper = stdout.upper()
+    # Strip colons from CRL output for comparison
+    stdout_no_colons = stdout_upper.replace(":", "")
+    found = clean_serial in stdout_upper or clean_serial in stdout_no_colons
 
     return (found, entry_count)
