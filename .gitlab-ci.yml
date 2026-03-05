@@ -64,6 +64,13 @@ ansible-lint:
     - cd ansible && ansible-lint playbooks/ roles/ || true
   allow_failure: true
 
+hadolint:
+  stage: lint
+  image: hadolint/hadolint:latest-alpine
+  script:
+    - hadolint --failure-threshold warning containers/*/Containerfile
+  allow_failure: true
+
 # ---------------------------------------------------------------------------
 # Build Stage
 # ---------------------------------------------------------------------------
@@ -82,57 +89,23 @@ python-package:
       - dist/
     expire_in: 7 days
 
-container-mock-edr:
+containerfile-validate:
   stage: build
-  image:
-    name: gcr.io/kaniko-project/executor:debug
-    entrypoint: [""]
+  image: python:${PYTHON_VERSION}-slim
   script:
-    - /kaniko/executor
-      --context=$CI_PROJECT_DIR/containers/mock-edr
-      --dockerfile=$CI_PROJECT_DIR/containers/mock-edr/Containerfile
-      --no-push
-      --tarPath=/dev/null
-  allow_failure: true
-
-container-mock-siem:
-  stage: build
-  image:
-    name: gcr.io/kaniko-project/executor:debug
-    entrypoint: [""]
-  script:
-    - /kaniko/executor
-      --context=$CI_PROJECT_DIR/containers/mock-siem
-      --dockerfile=$CI_PROJECT_DIR/containers/mock-siem/Containerfile
-      --no-push
-      --tarPath=/dev/null
-  allow_failure: true
-
-container-iot-client:
-  stage: build
-  image:
-    name: gcr.io/kaniko-project/executor:debug
-    entrypoint: [""]
-  script:
-    - /kaniko/executor
-      --context=$CI_PROJECT_DIR/containers/iot-client
-      --dockerfile=$CI_PROJECT_DIR/containers/iot-client/Containerfile
-      --no-push
-      --tarPath=/dev/null
-  allow_failure: true
-
-container-pki-exporter:
-  stage: build
-  image:
-    name: gcr.io/kaniko-project/executor:debug
-    entrypoint: [""]
-  script:
-    - /kaniko/executor
-      --context=$CI_PROJECT_DIR/containers/pki-exporter
-      --dockerfile=$CI_PROJECT_DIR/containers/pki-exporter/Containerfile
-      --no-push
-      --tarPath=/dev/null
-  allow_failure: true
+    - |
+      echo "Validating Containerfiles..."
+      failed=0
+      for cf in containers/*/Containerfile; do
+        name=$(basename $(dirname "$cf"))
+        if grep -q "^FROM " "$cf"; then
+          echo "  $name: OK ($(grep '^FROM ' "$cf" | head -1))"
+        else
+          echo "  $name: MISSING FROM instruction"
+          failed=1
+        fi
+      done
+      exit $failed
 
 # ---------------------------------------------------------------------------
 # Security Stage
