@@ -365,9 +365,11 @@ def test_est_renewal(
             return False, f"SKIP: CSR DER conversion failed: {rc.stderr}"
         csr_b64 = base64.b64encode(rc.stdout).decode("ascii")
 
-        # Submit to EST simpleenroll
+        # Submit to EST simpleenroll with HTTP Basic auth
+        est_password = config.pki_admin_password
         rc = subprocess.run(
             ["curl", "-sk", "-X", "POST",
+             "-u", f"est-client:{est_password}",
              "-H", "Content-Type: application/pkcs10",
              "-H", "Content-Transfer-Encoding: base64",
              "--data", csr_b64,

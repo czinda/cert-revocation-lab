@@ -30,6 +30,7 @@ case "$PKI_TYPE" in
         CA_HOSTNAME="ecc-est-ca.cert-lab.local"
         INTERMEDIATE_CA_LABEL="ECC Intermediate CA"
         EST_PROFILE="caECServerCert"
+        ADMIN_P12_PREFIX="ecc-intermediate"
         ;;
     pq)
         CA_NAME="PQ-EST-RA"
@@ -39,6 +40,7 @@ case "$PKI_TYPE" in
         CA_HOSTNAME="pq-est-ca.cert-lab.local"
         INTERMEDIATE_CA_LABEL="PQ Intermediate CA"
         EST_PROFILE="caMLDSAServerCert"
+        ADMIN_P12_PREFIX="pq-intermediate"
         ;;
     *)
         CA_NAME="EST-RA"
@@ -48,6 +50,7 @@ case "$PKI_TYPE" in
         CA_HOSTNAME="est-ca.cert-lab.local"
         INTERMEDIATE_CA_LABEL="Intermediate CA"
         EST_PROFILE="caServerCert"
+        ADMIN_P12_PREFIX="intermediate"
         ;;
 esac
 
@@ -130,6 +133,16 @@ phase2_deploy_est() {
     fi
     # Also import the chain file for trust fallback
     certutil -A -d "$NSS_DB" -n "CA Chain" -t "CT,C,C" -a -i "$CA_CHAIN" 2>/dev/null || true
+
+    # Import Intermediate CA admin cert for backend authentication
+    local admin_p12="${CERTS_DIR}/admin/${ADMIN_P12_PREFIX}-admin.p12"
+    if [ -f "$admin_p12" ]; then
+        log_info "Importing admin cert for backend CA authentication..."
+        certutil -D -d "$NSS_DB" -n "PKI Administrator for cert-lab.local" 2>/dev/null || true
+        pk12util -i "$admin_p12" -d "$NSS_DB" -W "$PKI_PASSWORD" -K "" 2>/dev/null || true
+    else
+        log_warn "Admin PKCS#12 not found: $admin_p12 — EST enrollment will fail"
+    fi
 
     # Import signed TLS certificate
     log_info "Importing signed TLS certificate..."
@@ -214,25 +227,29 @@ EOF
     # Create EST configuration directory
     mkdir -p "${INSTANCE_DIR}/conf/est"
 
-    # Configure EST backend — proxy to Intermediate CA
+    # Configure EST backend — proxy to Intermediate CA using client cert auth
     log_info "Configuring EST backend to proxy to ${INTERMEDIATE_CA_LABEL}..."
     cat > "${INSTANCE_DIR}/conf/est/backend.conf" << EOF
 class=org.dogtagpki.est.DogtagRABackend
 url=${INTERMEDIATE_CA_URL}
 profile=${EST_PROFILE}
-username=admin
-password=${PKI_PASSWORD}
+nickname=PKI Administrator for cert-lab.local
 EOF
 
-    # Configure EST authentication realm
-    cat > "${INSTANCE_DIR}/conf/est/realm.conf" << 'EOF'
+    # Configure EST authentication realm with user for HTTP Basic auth
+    cat > "${INSTANCE_DIR}/conf/est/realm.conf" << EOF
 class=com.netscape.cms.realm.PKIInMemoryRealm
+username=est-client
+password=${PKI_PASSWORD}
+roles=EST Users
 EOF
 
-    # Configure EST authorization
+    # Configure EST authorization (subject matching disabled for lab use)
     cat > "${INSTANCE_DIR}/conf/est/authorizer.conf" << 'EOF'
 class=org.dogtagpki.est.ExternalProcessRequestAuthorizer
 executable=/usr/share/pki/est/bin/estauthz
+enrollMatchSubjSAN=false
+enrollMatchTLSSubjSAN=false
 EOF
 
     # Fix EST config ownership for pkiuser

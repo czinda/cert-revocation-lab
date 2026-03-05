@@ -253,9 +253,12 @@ def est_enroll_certificate(
             f"{est_url}/simpleenroll"
         ]
 
-        # Add client cert auth if provided
+        # Add client cert auth if provided, otherwise use HTTP Basic auth
         if client_cert and client_key:
             enroll_cmd.extend(["--cert", client_cert, "--key", client_key])
+        else:
+            est_password = config.pki_admin_password if config else "RedHat123"
+            enroll_cmd.extend(["-u", f"est-client:{est_password}"])
 
         result = subprocess.run(enroll_cmd, capture_output=True, text=True, timeout=60)
 
