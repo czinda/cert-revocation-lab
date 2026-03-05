@@ -76,8 +76,15 @@ phase2_deploy_acme() {
     [ -f "$SIGNED_CERT" ] || { log_error "Signed TLS cert not found: $SIGNED_CERT"; return 1; }
     [ -f "$CA_CHAIN" ] || { log_error "CA chain not found: $CA_CHAIN"; return 1; }
 
-    # Import CA chain for trust
-    log_info "Importing CA chain into NSS database..."
+    # Import CA certificates individually for proper chain building
+    log_info "Importing CA certificates into NSS database..."
+    if [ -f "${CERTS_DIR}/root-ca.crt" ]; then
+        certutil -A -d "$NSS_DB" -n "Root CA" -t "CT,C,C" -a -i "${CERTS_DIR}/root-ca.crt" 2>/dev/null || true
+    fi
+    if [ -f "${CERTS_DIR}/intermediate-ca.crt" ]; then
+        certutil -A -d "$NSS_DB" -n "Intermediate CA" -t "CT,C,C" -a -i "${CERTS_DIR}/intermediate-ca.crt" 2>/dev/null || true
+    fi
+    # Also import the chain file for trust fallback
     certutil -A -d "$NSS_DB" -n "CA Chain" -t "CT,C,C" -a -i "$CA_CHAIN" 2>/dev/null || true
 
     # Import signed TLS certificate
@@ -94,6 +101,16 @@ phase2_deploy_acme() {
     # Fix NSS DB ownership for pkiuser (Tomcat runs as pkiuser)
     chown -R pkiuser:pkiuser "${NSS_DB}"
     chmod 755 "${NSS_DB}"
+
+    # Replace conf/alias directory with symlink to alias/
+    # pki-server create puts a separate NSS DB at conf/alias/ but we need
+    # the one at alias/ where our certs are imported
+    if [ -d "${INSTANCE_DIR}/conf/alias" ] && [ ! -L "${INSTANCE_DIR}/conf/alias" ]; then
+        rm -rf "${INSTANCE_DIR}/conf/alias"
+        ln -sf "${NSS_DB}" "${INSTANCE_DIR}/conf/alias"
+    elif [ ! -e "${INSTANCE_DIR}/conf/alias" ]; then
+        ln -sf "${NSS_DB}" "${INSTANCE_DIR}/conf/alias"
+    fi
 
     # Password file for NSS internal token (empty password)
     cat > "${INSTANCE_DIR}/conf/password.conf" << 'EOF'
