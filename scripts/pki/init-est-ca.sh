@@ -133,6 +133,67 @@ phase2_deploy_est() {
     # Save TLS cert for reference
     cp "$SIGNED_CERT" "$TLS_CERT"
 
+    # Configure TLS connector to use NSS database with JSS provider
+    log_info "Configuring TLS connector..."
+
+    # Fix NSS DB ownership for pkiuser (Tomcat runs as pkiuser)
+    chown -R pkiuser:pkiuser "${NSS_DB}"
+    chmod 755 "${NSS_DB}"
+
+    # Password file for NSS internal token (empty password)
+    cat > "${INSTANCE_DIR}/conf/password.conf" << 'EOF'
+internal=
+EOF
+    chown pkiuser:pkiuser "${INSTANCE_DIR}/conf/password.conf"
+
+    # Server cert nickname file
+    cat > "${INSTANCE_DIR}/conf/serverCertNick.conf" << 'EOF'
+sslserver
+EOF
+    chown pkiuser:pkiuser "${INSTANCE_DIR}/conf/serverCertNick.conf"
+
+    # Write proper tomcat.conf with JAVA_OPTS for JSS
+    cat > "${INSTANCE_DIR}/conf/tomcat.conf" << EOF
+JAVA_HOME="/usr/lib/jvm/jre-25-openjdk"
+CATALINA_BASE="${INSTANCE_DIR}"
+CATALINA_TMPDIR="${INSTANCE_DIR}/temp"
+JAVA_OPTS="-Dcom.redhat.fips=false -Dredhat.crypto-policies=false"
+TOMCAT_USER="pkiuser"
+SECURITY_MANAGER="false"
+CATALINA_PID="/var/run/pki/tomcat/${PKI_INSTANCE}.pid"
+PKI_VERSION="11.10.0"
+EOF
+
+    # Write server.xml with PKIListener (initializes JSS/CryptoManager) and
+    # JSS HTTPS connector pointing to the NSS database
+    log_info "Writing server.xml with JSS HTTPS connector..."
+    cat > "${INSTANCE_DIR}/conf/server.xml" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<Server port="8005" shutdown="SHUTDOWN">
+  <Listener className="org.apache.catalina.startup.VersionLoggerListener"/>
+  <Listener className="org.apache.catalina.core.AprLifecycleListener"/>
+  <Listener className="org.apache.catalina.core.JreMemoryLeakPreventionListener"/>
+  <Listener className="org.apache.catalina.mbeans.GlobalResourcesLifecycleListener"/>
+  <Listener className="org.apache.catalina.core.ThreadLocalLeakPreventionListener"/>
+  <Listener className="com.netscape.cms.tomcat.PKIListener"/>
+  <GlobalNamingResources/>
+  <Service name="Catalina">
+    <Connector port="8080" protocol="HTTP/1.1" connectionTimeout="20000" redirectPort="8443" maxParameterCount="1000"/>
+    <Connector name="Secure" port="8443" protocol="org.dogtagpki.jss.tomcat.Http11NioProtocol" SSLEnabled="true" sslImplementationName="org.dogtagpki.jss.tomcat.JSSImplementation" scheme="https" secure="true" maxThreads="150" connectionTimeout="80000" passwordFile="${INSTANCE_DIR}/conf/password.conf" passwordClass="org.dogtagpki.jss.tomcat.PlainPasswordFile" certdbDir="${INSTANCE_DIR}/conf/alias" serverCertNickFile="${INSTANCE_DIR}/conf/serverCertNick.conf">
+      <SSLHostConfig sslProtocol="SSL" certificateVerification="optional">
+        <Certificate certificateKeystoreType="pkcs11" certificateKeystoreProvider="Mozilla-JSS" certificateKeyAlias="sslserver"/>
+      </SSLHostConfig>
+    </Connector>
+    <Engine name="Catalina" defaultHost="localhost">
+      <Host name="localhost" appBase="webapps" unpackWARs="true" autoDeploy="true">
+        <Valve className="org.apache.catalina.valves.AccessLogValve" directory="logs" prefix="localhost_access_log" suffix=".txt" pattern="common"/>
+        <Valve className="org.apache.catalina.valves.rewrite.RewriteValve"/>
+      </Host>
+    </Engine>
+  </Service>
+</Server>
+EOF
+
     # Create EST configuration directory
     mkdir -p "${INSTANCE_DIR}/conf/est"
 
@@ -156,6 +217,9 @@ EOF
 class=org.dogtagpki.est.ExternalProcessRequestAuthorizer
 executable=/usr/share/pki/est/bin/estauthz
 EOF
+
+    # Fix EST config ownership for pkiuser
+    chown -R pkiuser:pkiuser "${INSTANCE_DIR}/conf/est"
 
     # Deploy EST webapp
     log_info "Deploying EST webapp..."
