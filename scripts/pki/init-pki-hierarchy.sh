@@ -219,6 +219,13 @@ sign_csr() {
         fi
     " || true
 
+    # Strip certutil header text from CSR if present (keep only PEM block)
+    $PODMAN exec "$signer_container" bash -c "
+        if grep -q '^Certificate request' '$csr_file' 2>/dev/null; then
+            sed -i -n '/-----BEGIN/,/-----END/p' '$csr_file'
+        fi
+    " 2>/dev/null || true
+
     # Submit CSR
     log_info "Submitting CSR to CA..."
     local request_output=$($PODMAN exec "$signer_container" bash -c "

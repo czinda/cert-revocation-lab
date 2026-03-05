@@ -101,6 +101,11 @@ phase1_create_instance() {
         --keyUsage digitalSignature,keyEncipherment \
         -a < /dev/urandom 2>/dev/null
 
+    # Strip certutil header text — keep only PEM block (pki CLI can't parse the header)
+    if [ -f "$CSR_FILE" ]; then
+        sed -i -n '/-----BEGIN/,/-----END/p' "$CSR_FILE"
+    fi
+
     log_info "TLS CSR generated: $CSR_FILE"
     echo ""
     echo "ACTION REQUIRED: Sign the TLS CSR with the Intermediate CA"
