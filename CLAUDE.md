@@ -26,8 +26,8 @@ Uses Dogtag PKI and FreeIPA, integrated with Event-Driven Ansible for real-time 
 │ Intermediate CA (8444)  │ Intermediate CA (8464)  │ Intermediate CA (8454)  │
 │     ├──┐                │     │                   │     │                   │
 │ IoT Sub-CA (8445)       │ IoT Sub-CA (8465)       │ IoT Sub-CA (8455)       │
-│ EST Sub-CA (8447/EST)   │ EST Sub-CA (8466/EST)   │ EST Sub-CA (8456/EST)   │
-│ ACME Sub-CA (8446)      │                         │                         │
+│ EST RA (8447/EST)       │ EST RA (8466/EST)       │ EST RA (8456/EST)       │
+│ ACME RA (8446)          │                         │                         │
 ├─────────────────────────┼─────────────────────────┼─────────────────────────┤
 │ Network: 172.26.0.0/24  │ Network: 172.28.0.0/24  │ Network: 172.27.0.0/24  │
 │ Security: CERT-LAB      │ Security: CERT-LAB-ECC  │ Security: CERT-LAB-PQ   │
@@ -36,6 +36,13 @@ Uses Dogtag PKI and FreeIPA, integrated with Event-Driven Ansible for real-time 
 
 FreeIPA (172.25.0.10:4443) - Identity Management with internal CA
 ```
+
+### CA vs RA Deployment
+
+The hierarchy uses two deployment models:
+
+- **Full CAs** (Root, Intermediate, IoT): Two-step `pkispawn` deployment with dedicated 389 DS. Generate CSR → parent CA signs → import signed cert. Each has own signing keys and LDAP backend.
+- **Standalone RAs** (EST, ACME): Lightweight `pki-server create` instances with no CA subsystem and no LDAP. Proxy enrollment requests to the Intermediate CA via REST API (`DogtagRABackend` for EST, `PKIIssuer` for ACME). TLS certs signed by Intermediate CA using `caServerCert` profile.
 
 ## Common Commands
 
@@ -120,9 +127,9 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → Ansible Playbook 
 
 ## Key Technologies
 
-- **Dogtag PKI**: Certificate Authority (pkispawn for configuration)
+- **Dogtag PKI**: Certificate Authority (pkispawn for CAs, pki-server create for RAs)
 - **FreeIPA**: Identity Management with internal CA
-- **389 Directory Server**: LDAP backend for Dogtag instances
+- **389 Directory Server**: LDAP backend for Dogtag CA instances (not used by RAs)
 - **Kafka**: Event streaming for security events
 - **Event-Driven Ansible**: Rulebook engine consuming Kafka events
 - **AWX**: Ansible automation platform
@@ -232,9 +239,15 @@ The `ansible/rulebooks/security-events.yml` routes events based on:
 **Revocation:** `dogtag-{rsa,ecc,pqc}-revoke-certificate.yml`, `freeipa-revoke-certificate.yml`
 **Issuance:** `dogtag-{rsa,ecc,pqc}-issue-certificate.yml`
 
-## ACME and EST Subsystems
+## ACME and EST Registration Authorities
 
-ACME (RFC 8555) and EST (RFC 7030) subsystems provide automated certificate enrollment. Both are initialized automatically by `init-pki-hierarchy.sh` and validated by `./lab validate`.
+ACME (RFC 8555) and EST (RFC 7030) are deployed as **standalone Registration Authorities** — lightweight containers that proxy enrollment to the Intermediate CA. They have no local CA subsystem, no signing keys, and no LDAP backend.
+
+**Architecture:**
+- EST uses `DogtagRABackend` → Intermediate CA REST API
+- ACME uses `PKIIssuer` → Intermediate CA REST API + `InMemoryDatabase` for orders/challenges
+- TLS certs for RA containers are signed by Intermediate CA (`caServerCert` profile)
+- Certificates issued via EST/ACME are managed by the Intermediate CA (revocation targets Intermediate CA container)
 
 **Key endpoints:**
 - ACME: `https://acme-ca.cert-lab.local:8446/acme/directory`
