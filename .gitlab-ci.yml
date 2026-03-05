@@ -49,7 +49,10 @@ yaml-lint:
   <<: *python-cache
   script:
     - pip install yamllint
-    - yamllint -d "{extends: relaxed, rules: {line-length: {max: 200}, truthy: disable}}" ansible/ docker-compose.yml pki-compose.yml
+    - >-
+      yamllint -d
+      "{extends: relaxed, rules: {line-length: {max: 200}, truthy: disable}}"
+      ansible/ docker-compose.yml pki-compose.yml
   allow_failure: true
 
 ansible-lint:
