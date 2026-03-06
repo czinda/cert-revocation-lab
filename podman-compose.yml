@@ -576,6 +576,37 @@ services:
       start_period: 60s
 
   # ===========================================================================
+  # mTLS Reverse Proxy (Certificate-based access control demo)
+  # ===========================================================================
+
+  mtls-proxy:
+    build:
+      context: ./containers/mtls-proxy
+      dockerfile: Containerfile
+    container_name: mtls-proxy
+    hostname: mtls-proxy.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      CA_HOST: intermediate-ca.cert-lab.local
+      CA_PORT: "8444"
+      SERVER_CN: mtls-proxy.${LAB_DOMAIN:-cert-lab.local}
+    extra_hosts:
+      - "intermediate-ca.cert-lab.local:host-gateway"
+    volumes:
+      - ./data/certs/rsa:/etc/nginx/certs:ro
+    networks:
+      lab-network:
+        ipv4_address: ${IP_MTLS_PROXY:-172.20.0.54}
+    ports:
+      - "9443:8443"
+      - "8087:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ===========================================================================
   # IoT Client Simulator (EST Enrollment)
   # ===========================================================================
 

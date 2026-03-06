@@ -931,7 +931,7 @@ start_security_tools() {
     log_phase "Phase 8: Starting Mock EDR, SIEM, and IoT Client"
 
     local to_start=()
-    for svc in mock-edr mock-siem mock-ct-log iot-client; do
+    for svc in mock-edr mock-siem mock-ct-log mtls-proxy iot-client; do
         if is_rootless_running "$svc"; then
             log_success "$svc is already running"
         else
@@ -1230,7 +1230,7 @@ quick_start() {
 
     # Start other containers (rootless) - exclude PKI/DS services
     local rootless_to_start=()
-    for svc in dnsmasq postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem mock-ct-log iot-client jupyter prometheus grafana pki-exporter; do
+    for svc in dnsmasq postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem mock-ct-log mtls-proxy iot-client jupyter prometheus grafana pki-exporter; do
         if is_rootless_running "$svc"; then
             log_success "$svc is already running"
         else

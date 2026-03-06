@@ -123,6 +123,7 @@ pip install -e .
 - `lab ct-submit` - Submit certificates from a Dogtag CA to the CT log
 - `lab ct-verify` - Verify a certificate against the CT log
 - `lab ct-stats` - Show CT log statistics
+- `lab mtls-test` - Test mTLS connectivity with the reverse proxy
 
 ## Architecture
 
