@@ -1,0 +1,158 @@
+stages:
+  - lint
+  - build
+  - security
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  PYTHON_VERSION: "3.12"
+
+# Cache pip downloads between jobs
+.python-cache: &python-cache
+  cache:
+    key: pip-${CI_COMMIT_REF_SLUG}
+    paths:
+      - .cache/pip/
+
+# ---------------------------------------------------------------------------
+# Lint Stage
+# ---------------------------------------------------------------------------
+
+ruff:
+  stage: lint
+  image: python:${PYTHON_VERSION}-slim
+  <<: *python-cache
+  script:
+    - pip install ruff
+    - ruff check lab_cli/ scripts/pki-cli.py containers/
+  allow_failure: false
+
+mypy:
+  stage: lint
+  image: python:${PYTHON_VERSION}-slim
+  <<: *python-cache
+  script:
+    - pip install mypy typer rich httpx
+    - mypy lab_cli/ --ignore-missing-imports
+  allow_failure: true
+
+shellcheck:
+  stage: lint
+  image: koalaman/shellcheck-alpine:latest
+  script:
+    - shellcheck -x -s bash scripts/*.sh scripts/pki/*.sh
+  allow_failure: true
+
+yaml-lint:
+  stage: lint
+  image: python:${PYTHON_VERSION}-slim
+  <<: *python-cache
+  script:
+    - pip install yamllint
+    - >-
+      yamllint -d
+      "{extends: relaxed, rules: {line-length: {max: 200}, truthy: disable}}"
+      ansible/ docker-compose.yml pki-compose.yml
+  allow_failure: true
+
+ansible-lint:
+  stage: lint
+  image: python:${PYTHON_VERSION}-slim
+  <<: *python-cache
+  script:
+    - pip install ansible-lint ansible-core
+    - cd ansible && ansible-lint playbooks/ roles/ || true
+  allow_failure: true
+
+hadolint:
+  stage: lint
+  image: hadolint/hadolint:latest-alpine
+  script:
+    - hadolint --failure-threshold warning containers/*/Containerfile
+  allow_failure: true
+
+# ---------------------------------------------------------------------------
+# Build Stage
+# ---------------------------------------------------------------------------
+
+python-package:
+  stage: build
+  image: python:${PYTHON_VERSION}-slim
+  <<: *python-cache
+  script:
+    - pip install build
+    - python -m build
+    - pip install dist/*.whl
+    - lab --help
+  artifacts:
+    paths:
+      - dist/
+    expire_in: 7 days
+
+containerfile-validate:
+  stage: build
+  image: python:${PYTHON_VERSION}-slim
+  script:
+    - |
+      echo "Validating Containerfiles..."
+      failed=0
+      for cf in containers/*/Containerfile; do
+        name=$(basename $(dirname "$cf"))
+        if grep -q "^FROM " "$cf"; then
+          echo "  $name: OK ($(grep '^FROM ' "$cf" | head -1))"
+        else
+          echo "  $name: MISSING FROM instruction"
+          failed=1
+        fi
+      done
+      exit $failed
+
+# ---------------------------------------------------------------------------
+# Security Stage
+# ---------------------------------------------------------------------------
+
+bandit:
+  stage: security
+  image: python:${PYTHON_VERSION}-slim
+  <<: *python-cache
+  script:
+    - pip install bandit
+    - bandit -r lab_cli/ -f json -o bandit-report.json || true
+    - bandit -r lab_cli/ -ll
+  artifacts:
+    paths:
+      - bandit-report.json
+    expire_in: 30 days
+    when: always
+  allow_failure: true
+
+trivy-config:
+  stage: security
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  script:
+    - trivy config --severity HIGH,CRITICAL .
+  allow_failure: true
+
+secret-detection:
+  stage: security
+  image: python:${PYTHON_VERSION}-slim
+  <<: *python-cache
+  script:
+    - pip install detect-secrets
+    - detect-secrets scan --all-files --exclude-files '\.enc\.' --exclude-files '\.example' > secrets-report.json
+    - "python -c \"
+      import json, sys;
+      r = json.load(open('secrets-report.json'));
+      results = r.get('results', {});
+      count = sum(len(v) for v in results.values());
+      print(f'Found {count} potential secrets in {len(results)} files');
+      [print(f'  {f}: {len(v)} findings') for f, v in results.items() if v];
+      \""
+  artifacts:
+    paths:
+      - secrets-report.json
+    expire_in: 30 days
+    when: always
+  allow_failure: true

@@ -6,17 +6,20 @@ Prometheus format. Designed to run alongside the cert-revocation-lab
 monitoring stack.
 
 Metrics exported:
-  pki_ca_up{pki_type,ca_level}                     - CA health (1=up, 0=down)
-  pki_certificates_total{pki_type,ca_level,status}  - Certificate counts
-  pki_ocsp_response_seconds{pki_type,ca_level}      - OCSP query latency
-  pki_crl_last_update_timestamp{pki_type,ca_level}   - CRL last update epoch
-  pki_crl_next_update_timestamp{pki_type,ca_level}   - CRL next update epoch
-  pki_crl_entries_total{pki_type,ca_level}           - Revoked entries in CRL
-  pki_issuance_total{pki_type}                       - Certificates issued (perf test)
-  pki_revocation_total{pki_type}                     - Certificates revoked (perf test)
-  pki_issuance_rate{pki_type}                        - Issuance certs/second
-  pki_revocation_rate{pki_type}                      - Revocation certs/second
-  pki_issuance_duration_seconds{pki_type,quantile}   - Issuance latency percentiles
+  pki_ca_up{pki_type,ca_level}                              - CA health (1=up, 0=down)
+  pki_certificates_total{pki_type,ca_level,status}           - Certificate counts
+  pki_certificates_expiring_total{pki_type,ca_level,window}  - Certs expiring in window
+  pki_ocsp_response_seconds{pki_type,ca_level}               - OCSP query latency
+  pki_ocsp_responder_up{pki_type}                            - Dedicated OCSP health
+  pki_ocsp_responder_response_seconds{pki_type}              - Dedicated OCSP latency
+  pki_crl_last_update_timestamp{pki_type,ca_level}           - CRL last update epoch
+  pki_crl_next_update_timestamp{pki_type,ca_level}           - CRL next update epoch
+  pki_crl_entries_total{pki_type,ca_level}                   - Revoked entries in CRL
+  pki_issuance_total{pki_type}                               - Certificates issued (perf)
+  pki_revocation_total{pki_type}                             - Certificates revoked (perf)
+  pki_issuance_rate{pki_type}                                - Issuance certs/second
+  pki_revocation_rate{pki_type}                              - Revocation certs/second
+  pki_issuance_duration_seconds{pki_type,quantile}           - Issuance latency percentiles
 """
 
 import asyncio
@@ -25,7 +28,7 @@ import logging
 import os
 import subprocess
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -129,6 +132,46 @@ issuance_duration = Gauge(
     registry=registry,
 )
 
+certificates_expiring = Gauge(
+    "pki_certificates_expiring_total",
+    "Certificates expiring within a time window",
+    ["pki_type", "ca_level", "window"],
+    registry=registry,
+)
+
+ocsp_responder_up = Gauge(
+    "pki_ocsp_responder_up",
+    "Whether a dedicated OCSP responder is reachable (1=up, 0=down)",
+    ["pki_type"],
+    registry=registry,
+)
+
+ocsp_responder_response_seconds = Gauge(
+    "pki_ocsp_responder_response_seconds",
+    "Dedicated OCSP responder response latency in seconds",
+    ["pki_type"],
+    registry=registry,
+)
+
+ct_log_up = Gauge(
+    "pki_ct_log_up",
+    "Whether the CT log is reachable (1=up, 0=down)",
+    registry=registry,
+)
+
+ct_log_tree_size = Gauge(
+    "pki_ct_log_tree_size",
+    "Number of certificates in the CT log",
+    registry=registry,
+)
+
+ct_log_entries = Gauge(
+    "pki_ct_log_entries_total",
+    "CT log entries by PKI type",
+    ["pki_type"],
+    registry=registry,
+)
+
 # --- CA Configuration ---
 # Uses host-gateway ports (same pattern as iot-client and eda-server)
 
@@ -149,6 +192,16 @@ CA_TARGETS = {
         "iot": {"host": "pq-iot-ca.cert-lab.local", "port": 8455},
     },
 }
+
+# Dedicated OCSP Responder targets (separate from CA's built-in OCSP)
+OCSP_TARGETS = {
+    "rsa": {"host": "ocsp.cert-lab.local", "port": 8448},
+    "ecc": {"host": "ecc-ocsp.cert-lab.local", "port": 8467},
+    "pqc": {"host": "pq-ocsp.cert-lab.local", "port": 8457},
+}
+
+# CT Log target
+CT_LOG_URL = os.getenv("CT_LOG_URL", "http://ct-log.cert-lab.local:8086")
 
 # Path where perf-test.py writes its metrics JSON
 PERF_METRICS_DIR = Path(os.getenv("PERF_METRICS_DIR", "/data/perf-metrics"))
@@ -216,6 +269,29 @@ async def get_crl_info(host: str, port: int) -> dict:
     return {}
 
 
+async def get_expiring_cert_count(
+    host: str, port: int, days: int
+) -> Optional[int]:
+    """Get count of valid certs expiring within N days from Dogtag REST API."""
+    now = datetime.now(timezone.utc)
+    max_expiry = now + timedelta(days=days)
+    # Dogtag expects ISO 8601 date format
+    max_date = max_expiry.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    url = (
+        f"https://{host}:{port}/ca/rest/certs"
+        f"?size=1&status=VALID&maxExpirationDate={max_date}"
+    )
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=10.0) as client:
+            resp = await client.get(url, headers={"Accept": "application/json"})
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("total", 0)
+    except Exception as e:
+        logger.debug(f"Failed to get expiring certs from {host}:{port}: {e}")
+    return None
+
+
 async def measure_ocsp_time(host: str, port: int) -> Optional[float]:
     """Measure OCSP response time using openssl."""
     ocsp_url = f"https://{host}:{port}/ca/ocsp"
@@ -244,12 +320,69 @@ def load_perf_metrics() -> dict:
     return {}
 
 
+async def check_ocsp_responder(host: str, port: int) -> bool:
+    """Check if a dedicated OCSP responder is running."""
+    url = f"https://{host}:{port}/ocsp/admin/ocsp/getStatus"
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=5.0) as client:
+            resp = await client.get(url)
+            return resp.status_code == 200 and "running" in resp.text.lower()
+    except Exception:
+        return False
+
+
+async def measure_ocsp_responder_time(host: str, port: int) -> Optional[float]:
+    """Measure dedicated OCSP responder response time."""
+    ocsp_url = f"https://{host}:{port}/ocsp/ee/ocsp"
+    try:
+        start = time.monotonic()
+        async with httpx.AsyncClient(verify=False, timeout=10.0) as client:
+            resp = await client.get(ocsp_url)
+            elapsed = time.monotonic() - start
+            if resp.status_code in (200, 400, 405):
+                return elapsed
+    except Exception as e:
+        logger.debug(f"OCSP responder probe failed for {host}:{port}: {e}")
+    return None
+
+
+async def scrape_ocsp_responder(pki_type: str, host: str, port: int):
+    """Scrape a dedicated OCSP responder."""
+    up = await check_ocsp_responder(host, port)
+    ocsp_responder_up.labels(pki_type=pki_type).set(1 if up else 0)
+
+    if up:
+        resp_time = await measure_ocsp_responder_time(host, port)
+        if resp_time is not None:
+            ocsp_responder_response_seconds.labels(pki_type=pki_type).set(resp_time)
+
+
+async def scrape_ct_log():
+    """Scrape the CT log for metrics."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{CT_LOG_URL}/stats")
+            if resp.status_code == 200:
+                data = resp.json()
+                ct_log_up.set(1)
+                ct_log_tree_size.set(data.get("tree_size", 0))
+                for pki_type, count in data.get("entries_by_pki", {}).items():
+                    ct_log_entries.labels(pki_type=pki_type).set(count)
+                return
+    except Exception as e:
+        logger.debug(f"CT log scrape failed: {e}")
+    ct_log_up.set(0)
+
+
 async def scrape_all():
-    """Scrape all CAs and update Prometheus metrics."""
+    """Scrape all CAs, OCSP responders, and CT log. Update Prometheus metrics."""
     tasks = []
     for pki_type, levels in CA_TARGETS.items():
         for ca_level, target in levels.items():
             tasks.append(scrape_ca(pki_type, ca_level, target["host"], target["port"]))
+    for pki_type, target in OCSP_TARGETS.items():
+        tasks.append(scrape_ocsp_responder(pki_type, target["host"], target["port"]))
+    tasks.append(scrape_ct_log())
     await asyncio.gather(*tasks, return_exceptions=True)
 
     # Load perf test metrics from shared volume
@@ -291,6 +424,14 @@ async def scrape_ca(pki_type: str, ca_level: str, host: str, port: int):
         if count is not None:
             certificates_total.labels(
                 pki_type=pki_type, ca_level=ca_level, status=status
+            ).set(count)
+
+    # Expiring certificates (7d, 30d, 90d windows)
+    for days, window in [(7, "7d"), (30, "30d"), (90, "90d")]:
+        count = await get_expiring_cert_count(host, port, days)
+        if count is not None:
+            certificates_expiring.labels(
+                pki_type=pki_type, ca_level=ca_level, window=window
             ).set(count)
 
     # CRL info

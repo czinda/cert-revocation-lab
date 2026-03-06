@@ -117,6 +117,7 @@ setup_directories() {
     mkdir -p data/perf-metrics
     mkdir -p containers/mock-edr
     mkdir -p containers/mock-siem
+    mkdir -p containers/mock-ct-log
     mkdir -p ansible/playbooks
     mkdir -p ansible/rulebooks
     mkdir -p ansible/inventory/group_vars
@@ -284,6 +285,12 @@ setup_volumes() {
         "pki-acme-logs"
         "pki-est-data"
         "pki-est-logs"
+        "ds-ocsp-data"
+        "pki-ocsp-data"
+        "pki-ocsp-logs"
+        "ds-kra-data"
+        "pki-kra-data"
+        "pki-kra-logs"
     )
 
     # Check/create rootless volumes
@@ -525,7 +532,7 @@ start_pki_hierarchy() {
 
     # Check if all PKI containers are already running
     local all_running=true
-    for ctr in ds-root ds-intermediate ds-iot dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-acme-ca dogtag-est-ca; do
+    for ctr in ds-root ds-intermediate ds-iot ds-ocsp ds-kra dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-kra dogtag-acme-ca dogtag-est-ca; do
         if is_rootful_running "$ctr"; then
             log_success "$ctr is already running"
         else
@@ -550,7 +557,7 @@ start_pki_hierarchy() {
 
     # Wait for all containers to be running
     log_info "Waiting for PKI containers to start..."
-    for ctr in ds-root ds-intermediate ds-iot dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-acme-ca dogtag-est-ca; do
+    for ctr in ds-root ds-intermediate ds-iot ds-ocsp ds-kra dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-kra dogtag-acme-ca dogtag-est-ca; do
         local elapsed=0
         while [ $elapsed -lt 60 ]; do
             local status=""
@@ -573,7 +580,7 @@ start_pki_hierarchy() {
 
     # Wait for 389DS to be healthy (able to respond to LDAP queries)
     log_info "Waiting for Directory Servers to be ready..."
-    for ds in ds-root ds-intermediate ds-iot; do
+    for ds in ds-root ds-intermediate ds-iot ds-ocsp; do
         local elapsed=0
         while [ $elapsed -lt 120 ]; do
             if is_running_as_root; then
@@ -665,7 +672,7 @@ start_pq_pki_hierarchy() {
 
     # Check if all PQ PKI containers are already running
     local all_running=true
-    for ctr in ds-pq-root ds-pq-intermediate ds-pq-iot dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-est-ca; do
+    for ctr in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-ocsp ds-pq-kra dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-ocsp dogtag-pq-kra dogtag-pq-est-ca; do
         if is_rootful_running "$ctr"; then
             log_success "$ctr is already running"
         else
@@ -688,7 +695,7 @@ start_pq_pki_hierarchy() {
 
     # Wait for all PQ containers to be running
     log_info "Waiting for PQ PKI containers to start..."
-    for ctr in ds-pq-root ds-pq-intermediate ds-pq-iot dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-est-ca; do
+    for ctr in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-ocsp ds-pq-kra dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-ocsp dogtag-pq-kra dogtag-pq-est-ca; do
         local elapsed=0
         while [ $elapsed -lt 60 ]; do
             local status=""
@@ -711,7 +718,7 @@ start_pq_pki_hierarchy() {
 
     # Wait for PQ 389DS to be healthy
     log_info "Waiting for PQ Directory Servers to be ready..."
-    for ds in ds-pq-root ds-pq-intermediate ds-pq-iot; do
+    for ds in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-ocsp; do
         local elapsed=0
         while [ $elapsed -lt 120 ]; do
             if is_running_as_root; then
@@ -753,7 +760,7 @@ start_ecc_pki_hierarchy() {
 
     # Check if all ECC PKI containers are already running
     local all_running=true
-    for ctr in ds-ecc-root ds-ecc-intermediate ds-ecc-iot dogtag-ecc-root-ca dogtag-ecc-intermediate-ca dogtag-ecc-iot-ca dogtag-ecc-est-ca; do
+    for ctr in ds-ecc-root ds-ecc-intermediate ds-ecc-iot ds-ecc-ocsp ds-ecc-kra dogtag-ecc-root-ca dogtag-ecc-intermediate-ca dogtag-ecc-iot-ca dogtag-ecc-ocsp dogtag-ecc-kra dogtag-ecc-est-ca; do
         if is_rootful_running "$ctr"; then
             log_success "$ctr is already running"
         else
@@ -776,7 +783,7 @@ start_ecc_pki_hierarchy() {
 
     # Wait for all ECC containers to be running
     log_info "Waiting for ECC PKI containers to start..."
-    for ctr in ds-ecc-root ds-ecc-intermediate ds-ecc-iot dogtag-ecc-root-ca dogtag-ecc-intermediate-ca dogtag-ecc-iot-ca dogtag-ecc-est-ca; do
+    for ctr in ds-ecc-root ds-ecc-intermediate ds-ecc-iot ds-ecc-ocsp ds-ecc-kra dogtag-ecc-root-ca dogtag-ecc-intermediate-ca dogtag-ecc-iot-ca dogtag-ecc-ocsp dogtag-ecc-kra dogtag-ecc-est-ca; do
         local elapsed=0
         while [ $elapsed -lt 60 ]; do
             local status=""
@@ -799,7 +806,7 @@ start_ecc_pki_hierarchy() {
 
     # Wait for ECC 389DS to be healthy
     log_info "Waiting for ECC Directory Servers to be ready..."
-    for ds in ds-ecc-root ds-ecc-intermediate ds-ecc-iot; do
+    for ds in ds-ecc-root ds-ecc-intermediate ds-ecc-iot ds-ecc-ocsp; do
         local elapsed=0
         while [ $elapsed -lt 120 ]; do
             if is_running_as_root; then
@@ -927,7 +934,7 @@ start_security_tools() {
     log_phase "Phase 8: Starting Mock EDR, SIEM, and IoT Client"
 
     local to_start=()
-    for svc in mock-edr mock-siem iot-client; do
+    for svc in mock-edr mock-siem mock-ct-log mtls-proxy iot-client; do
         if is_rootless_running "$svc"; then
             log_success "$svc is already running"
         else
@@ -1143,7 +1150,7 @@ quick_start() {
     # Start PKI containers from pki-compose.yml (rootful - has initialized data)
     if [ -f pki-compose.yml ]; then
         local pki_all_running=true
-        for ctr in ds-root ds-intermediate ds-iot dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-acme-ca dogtag-est-ca; do
+        for ctr in ds-root ds-intermediate ds-iot ds-ocsp ds-kra dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-kra dogtag-acme-ca dogtag-est-ca; do
             if is_rootful_running "$ctr"; then
                 log_success "$ctr is already running"
             else
@@ -1167,7 +1174,7 @@ quick_start() {
 
             # Wait for Directory Servers to be ready before starting PKI servers
             log_info "Waiting for Directory Servers to be ready..."
-            for ds in ds-root ds-intermediate ds-iot; do
+            for ds in ds-root ds-intermediate ds-iot ds-ocsp; do
                 local ds_elapsed=0
                 while [ $ds_elapsed -lt 120 ]; do
                     if [ "$RUNNING_AS_ROOT" = true ]; then
@@ -1226,7 +1233,7 @@ quick_start() {
 
     # Start other containers (rootless) - exclude PKI/DS services
     local rootless_to_start=()
-    for svc in dnsmasq postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem iot-client jupyter prometheus grafana pki-exporter; do
+    for svc in dnsmasq postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem mock-ct-log mtls-proxy iot-client jupyter prometheus grafana pki-exporter; do
         if is_rootless_running "$svc"; then
             log_success "$svc is already running"
         else

@@ -1,0 +1,20 @@
+# mTLS Reverse Proxy Container
+# Nginx configured for mutual TLS with CRL-based revocation checking
+
+FROM registry.fedoraproject.org/fedora-minimal:latest
+
+RUN microdnf install -y nginx openssl curl && microdnf clean all
+
+COPY nginx.conf /etc/nginx/nginx.conf
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Create directories for certs
+RUN mkdir -p /etc/nginx/certs /etc/nginx/crl /var/log/nginx /run/nginx
+
+EXPOSE 8443 8080
+
+HEALTHCHECK --interval=10s --timeout=5s --retries=3 \
+    CMD curl -sf http://localhost:8080/health || exit 1
+
+ENTRYPOINT ["/entrypoint.sh"]

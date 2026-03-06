@@ -49,6 +49,7 @@ case "$PKI_TYPE" in
         INTERMEDIATE_PORT="8464"
         IOT_PORT="8465"
         EST_PORT="8466"
+        OCSP_PORT="8467"
         COMPOSE_FILE="pki-ecc-compose.yml"
         ALGO_DESC="ECDSA P-384 with SHA-384"
         SECURITY_DOMAIN="CERT-LAB-ECC"
@@ -65,6 +66,7 @@ case "$PKI_TYPE" in
         INTERMEDIATE_PORT="8454"
         IOT_PORT="8455"
         EST_PORT="8456"
+        OCSP_PORT="8457"
         COMPOSE_FILE="pki-pq-compose.yml"
         ALGO_DESC="ML-DSA-87 (NIST FIPS 204 Level 5)"
         SECURITY_DOMAIN="CERT-LAB-PQ"
@@ -81,6 +83,7 @@ case "$PKI_TYPE" in
         INTERMEDIATE_PORT="8444"
         IOT_PORT="8445"
         EST_PORT="8447"
+        OCSP_PORT="8448"
         COMPOSE_FILE="pki-compose.yml"
         ALGO_DESC=""
         SECURITY_DOMAIN="CERT-LAB"
@@ -93,14 +96,20 @@ ROOT_CONTAINER="${CT_PREFIX}root-ca"
 INTERMEDIATE_CONTAINER="${CT_PREFIX}intermediate-ca"
 IOT_CONTAINER="${CT_PREFIX}iot-ca"
 EST_CONTAINER="${CT_PREFIX}est-ca"
+OCSP_CONTAINER="${CT_PREFIX}ocsp"
+KRA_CONTAINER="${CT_PREFIX}kra"
 ROOT_HOSTNAME="${CA_PREFIX}root-ca.cert-lab.local"
 INTERMEDIATE_HOSTNAME="${CA_PREFIX}intermediate-ca.cert-lab.local"
 IOT_HOSTNAME="${CA_PREFIX}iot-ca.cert-lab.local"
 EST_HOSTNAME="${CA_PREFIX}est-ca.cert-lab.local"
+OCSP_HOSTNAME="${CA_PREFIX}ocsp.cert-lab.local"
+KRA_HOSTNAME="${CA_PREFIX}kra.cert-lab.local"
 ROOT_URL="https://${ROOT_HOSTNAME}:8443"
 INTERMEDIATE_URL="https://${INTERMEDIATE_HOSTNAME}:8443"
 IOT_URL="https://${IOT_HOSTNAME}:8443"
 EST_URL="https://${EST_HOSTNAME}:8443"
+OCSP_URL="https://${OCSP_HOSTNAME}:8443"
+KRA_URL="https://${KRA_HOSTNAME}:8443"
 
 # Override log functions with PKI-type-specific prefix
 log_info() { echo -e "${BLUE}[${LOG_PREFIX}]${NC} $*"; }
@@ -496,6 +505,74 @@ init_est_ca() {
     log_warn "EST RA not responding yet (may need container restart)"
 }
 
+# Initialize OCSP Responder (Dogtag OCSP subsystem)
+init_ocsp() {
+    log_phase "Initializing ${CA_PREFIX}OCSP Responder (Dogtag OCSP Subsystem)"
+
+    # Check if OCSP container exists
+    if ! $PODMAN ps --format '{{.Names}}' | grep -q "^${OCSP_CONTAINER}$"; then
+        log_warn "OCSP container (${OCSP_CONTAINER}) not running, skipping"
+        return 0
+    fi
+
+    # Check if already initialized
+    if $PODMAN exec "$OCSP_CONTAINER" curl -sk https://localhost:8443/ocsp/admin/ocsp/getStatus 2>/dev/null | grep -q "running"; then
+        log_success "${CA_PREFIX}OCSP Responder already initialized and responding"
+        return 0
+    fi
+
+    setup_mock_systemctl "$OCSP_CONTAINER"
+
+    # Run OCSP initialization (single-step pkispawn)
+    log_info "Running OCSP Responder initialization..."
+    $PODMAN exec "$OCSP_CONTAINER" /scripts/init-ocsp.sh "$PKI_TYPE"
+
+    # Verify
+    log_info "Verifying OCSP Responder..."
+    for i in {1..12}; do
+        if $PODMAN exec "$OCSP_CONTAINER" curl -sk https://localhost:8443/ocsp/admin/ocsp/getStatus 2>/dev/null | grep -q "running"; then
+            log_success "${CA_PREFIX}OCSP Responder initialization complete"
+            return 0
+        fi
+        sleep 5
+    done
+    log_warn "OCSP Responder not responding yet (may need container restart)"
+}
+
+# Initialize KRA (Dogtag KRA subsystem)
+init_kra() {
+    log_phase "Initializing ${CA_PREFIX}Key Recovery Authority (Dogtag KRA Subsystem)"
+
+    # Check if KRA container exists
+    if ! $PODMAN ps --format '{{.Names}}' | grep -q "^${KRA_CONTAINER}$"; then
+        log_warn "KRA container (${KRA_CONTAINER}) not running, skipping"
+        return 0
+    fi
+
+    # Check if already initialized
+    if $PODMAN exec "$KRA_CONTAINER" curl -sk https://localhost:8443/kra/admin/kra/getStatus 2>/dev/null | grep -q "running"; then
+        log_success "${CA_PREFIX}KRA already initialized and responding"
+        return 0
+    fi
+
+    setup_mock_systemctl "$KRA_CONTAINER"
+
+    # Run KRA initialization (single-step pkispawn)
+    log_info "Running KRA initialization..."
+    $PODMAN exec "$KRA_CONTAINER" /scripts/init-kra.sh "$PKI_TYPE"
+
+    # Verify
+    log_info "Verifying KRA..."
+    for i in {1..12}; do
+        if $PODMAN exec "$KRA_CONTAINER" curl -sk https://localhost:8443/kra/admin/kra/getStatus 2>/dev/null | grep -q "running"; then
+            log_success "${CA_PREFIX}KRA initialization complete"
+            return 0
+        fi
+        sleep 5
+    done
+    log_warn "KRA not responding yet (may need container restart)"
+}
+
 # Verify EST endpoint on EST RA
 verify_est() {
     log_phase "Verifying EST on ${CA_PREFIX}EST RA"
@@ -553,6 +630,11 @@ verify_hierarchy() {
         echo "IoT Sub-CA:"
         openssl x509 -in /certs/iot-ca.crt -noout -subject -issuer
         echo ""
+        if [ -f /certs/ocsp-signing.crt ]; then
+            echo "OCSP Responder (signing cert):"
+            openssl x509 -in /certs/ocsp-signing.crt -noout -subject -issuer
+            echo ""
+        fi
         if [ -f /certs/est-ra-tls.crt ]; then
             echo "EST RA (TLS cert):"
             openssl x509 -in /certs/est-ra-tls.crt -noout -subject -issuer
@@ -589,6 +671,9 @@ print_summary() {
     echo "  ${CA_PREFIX}Root CA:         https://localhost:${ROOT_PORT}/ca"
     echo "  ${CA_PREFIX}Intermediate CA: https://localhost:${INTERMEDIATE_PORT}/ca"
     echo "  ${CA_PREFIX}IoT CA:          https://localhost:${IOT_PORT}/ca"
+    if $PODMAN ps --format '{{.Names}}' 2>/dev/null | grep -q "^${OCSP_CONTAINER}$"; then
+        echo "  ${CA_PREFIX}OCSP:            https://localhost:${OCSP_PORT} (dedicated responder)"
+    fi
     if $PODMAN ps --format '{{.Names}}' 2>/dev/null | grep -q "^${EST_CONTAINER}$"; then
         echo "  ${CA_PREFIX}EST RA:          https://localhost:${EST_PORT} (standalone RA)"
     fi
@@ -597,6 +682,9 @@ print_summary() {
     fi
     echo ""
     echo "Protocol Endpoints:"
+    if $PODMAN ps --format '{{.Names}}' 2>/dev/null | grep -q "^${OCSP_CONTAINER}$"; then
+        echo "  OCSP:            https://localhost:${OCSP_PORT}/ocsp/ee/ocsp"
+    fi
     if $PODMAN ps --format '{{.Names}}' 2>/dev/null | grep -q "^${EST_CONTAINER}$"; then
         echo "  EST cacerts:     https://localhost:${EST_PORT}/.well-known/est/cacerts"
         echo "  EST enroll:      https://localhost:${EST_PORT}/.well-known/est/simpleenroll"
@@ -625,6 +713,9 @@ print_summary() {
     echo "  ${CA_PREFIX}Root CA (self-signed)"
     echo "    └── ${CA_PREFIX}Intermediate CA"
     echo "        ├── ${CA_PREFIX}IoT Sub-CA"
+    if $PODMAN ps --format '{{.Names}}' 2>/dev/null | grep -q "^${OCSP_CONTAINER}$"; then
+        echo "        ├── ${CA_PREFIX}OCSP Responder (dedicated, own signing key)"
+    fi
     if $PODMAN ps --format '{{.Names}}' 2>/dev/null | grep -q "^${EST_CONTAINER}$"; then
         if [ "$PKI_TYPE" = "rsa" ] && $PODMAN ps --format '{{.Names}}' 2>/dev/null | grep -q "^dogtag-acme-ca$"; then
             echo "        ├── ${CA_PREFIX}EST RA (standalone, proxies to Intermediate)"
@@ -652,6 +743,13 @@ main() {
         fi
     done
 
+    # Check optional OCSP Responder container
+    if $PODMAN ps --format '{{.Names}}' | grep -q "^${OCSP_CONTAINER}$"; then
+        log_info "OCSP Responder container (${OCSP_CONTAINER}) detected, will initialize"
+    else
+        log_info "OCSP Responder container (${OCSP_CONTAINER}) not found (optional), skipping"
+    fi
+
     # Check optional EST RA container
     if $PODMAN ps --format '{{.Names}}' | grep -q "^${EST_CONTAINER}$"; then
         log_info "EST RA container (${EST_CONTAINER}) detected, will initialize"
@@ -671,6 +769,8 @@ main() {
     init_root_ca
     init_intermediate_ca
     init_iot_ca
+    init_ocsp
+    init_kra
     init_est_ca
     init_acme_ca
     verify_est

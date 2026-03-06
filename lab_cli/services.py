@@ -162,6 +162,7 @@ def check_all_services(
     # HTTP services
     results["mock_edr"] = check_http_service("mock_edr", config.edr_url)
     results["mock_siem"] = check_http_service("mock_siem", config.siem_url)
+    results["mock_ct_log"] = check_http_service("mock_ct_log", config.ct_log_url)
 
     # Kafka (via EDR health check)
     results["kafka"] = check_kafka(config)

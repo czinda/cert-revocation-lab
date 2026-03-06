@@ -235,6 +235,7 @@ class LabConfig:
     # URLs
     edr_url: str = "http://localhost:8082"
     siem_url: str = "http://localhost:8083"
+    ct_log_url: str = "http://localhost:8086"
 
     # Domain
     lab_domain: str = "cert-lab.local"
