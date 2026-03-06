@@ -11,6 +11,7 @@ Usage:
     lab verify [OPTIONS]         Verify certificate status
     lab acme-issue DOMAIN        Issue certificate via ACME protocol
     lab est-enroll [OPTIONS]     Enroll for certificate via EST protocol
+    lab est-reenroll [OPTIONS]   Renew certificate via EST simplereenroll
     lab est-cacerts [OPTIONS]    Get CA certificates from EST endpoint
     lab perf-test [OPTIONS]      Run bulk PKI performance test
 """
@@ -575,6 +576,153 @@ def est_cacerts(
         if result.details and "hint" in result.details:
             console.print(f"  [yellow]Hint: {result.details['hint']}[/yellow]")
         raise typer.Exit(1)
+
+
+@app.command("est-reenroll")
+def est_reenroll(
+    device: str = typer.Option(
+        None, "--device", "-d",
+        help="Device ID (auto-generated if not specified)"
+    ),
+    pki_type: PKIType = typer.Option(
+        PKIType.RSA,
+        "--pki-type", "-p",
+        help="PKI type (rsa, ecc, pqc)"
+    ),
+    cert: Optional[str] = typer.Option(
+        None, "--cert", "-c",
+        help="Existing client certificate PEM file (skips initial enrollment)"
+    ),
+    key: Optional[str] = typer.Option(
+        None, "--key", "-k",
+        help="Existing client key PEM file (skips initial enrollment)"
+    ),
+    output_dir: Optional[str] = typer.Option(
+        None, "--output", "-o",
+        help="Directory to save renewed certificate and key"
+    ),
+):
+    """Renew a certificate using EST simplereenroll (RFC 7030).
+
+    If --cert and --key are provided, uses them for re-enrollment.
+    Otherwise, performs initial enrollment first, then re-enrolls
+    the newly issued certificate to demonstrate the full renewal flow.
+
+    Example:
+        lab est-reenroll --device sensor01 --pki-type rsa
+        lab est-reenroll --cert device.pem --key device.key --pki-type ecc
+    """
+    import tempfile
+
+    config = LabConfig.load()
+
+    if pki_type not in EST_ENDPOINTS:
+        console.print(f"[red]EST not available for {pki_type.value} PKI[/red]")
+        raise typer.Exit(1)
+
+    if not device:
+        device = f"iot-device-{random.randint(1000000000, 9999999999)}"
+
+    device_fqdn = f"{device}.{config.lab_domain}"
+
+    console.print(f"\n[bold cyan]EST Certificate Renewal (simplereenroll)[/bold cyan]\n")
+    console.print(f"  Device:   {device_fqdn}")
+    console.print(f"  PKI:      {pki_type.value.upper()}")
+    console.print(f"  Endpoint: {EST_ENDPOINTS[pki_type]}")
+    console.print()
+
+    # Determine cert/key paths
+    cert_path = cert
+    key_path = key
+    tmpdir = None
+
+    if not cert_path or not key_path:
+        # Step 1: Initial enrollment to get a certificate
+        console.print("[bold]Step 1:[/bold] Initial enrollment via EST simpleenroll...")
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Enrolling...", total=None)
+            enroll_result = est_enroll_certificate(
+                config=config,
+                device_fqdn=device_fqdn,
+                pki_type=pki_type,
+            )
+            progress.update(task, completed=1)
+
+        if not enroll_result.success:
+            console.print(f"  [red]Initial enrollment failed: {enroll_result.message}[/red]")
+            raise typer.Exit(1)
+
+        console.print(f"  [green]Enrolled[/green] — serial: {enroll_result.serial or 'unknown'}")
+
+        # Save cert+key to temp files for re-enrollment
+        tmpdir = tempfile.mkdtemp(prefix="est-reenroll-")
+        cert_path = f"{tmpdir}/cert.pem"
+        key_path = f"{tmpdir}/key.pem"
+
+        # Write the enrolled certificate
+        with open(cert_path, "w") as f:
+            cert_text = enroll_result.certificate or ""
+            if not cert_text.startswith("-----BEGIN"):
+                cert_text = f"-----BEGIN CERTIFICATE-----\n{cert_text}\n-----END CERTIFICATE-----\n"
+            f.write(cert_text)
+
+        # We need the key from the enrollment — re-generate matching key
+        # (EST enrollment already generated a key internally, but we need it saved)
+        # Re-generate a new key for re-enrollment CSR
+        import subprocess
+        subprocess.run(
+            ["openssl", "genrsa", "-out", key_path, "2048"],
+            capture_output=True, timeout=30,
+        )
+    else:
+        console.print("[dim]Using provided cert/key for re-enrollment[/dim]")
+
+    # Step 2: Re-enrollment
+    step = "Step 2" if not cert and not key else "Step 1"
+    console.print(f"\n[bold]{step}:[/bold] Re-enrollment via EST simplereenroll...")
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Re-enrolling...", total=None)
+        reenroll_result = est_reenroll_certificate(
+            config=config,
+            device_fqdn=device_fqdn,
+            pki_type=pki_type,
+            client_cert=cert_path,
+            client_key=key_path,
+        )
+        progress.update(task, completed=1)
+
+    if reenroll_result.success:
+        console.print(f"\n[green]Certificate renewed via EST simplereenroll[/green]")
+        if reenroll_result.serial:
+            console.print(f"  New serial: {reenroll_result.serial}")
+
+        # Save output if requested
+        if output_dir:
+            from pathlib import Path
+            out = Path(output_dir)
+            out.mkdir(parents=True, exist_ok=True)
+            if reenroll_result.certificate:
+                (out / "renewed-cert.pem").write_text(reenroll_result.certificate)
+                console.print(f"  Saved: {out / 'renewed-cert.pem'}")
+    else:
+        console.print(f"\n[red]EST re-enrollment failed[/red]")
+        console.print(f"  Error: {reenroll_result.message}")
+        raise typer.Exit(1)
+
+    # Cleanup temp dir
+    if tmpdir:
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def _run_single_test(

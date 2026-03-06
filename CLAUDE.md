@@ -117,6 +117,7 @@ pip install -e .
 - `lab validate` - Run comprehensive lab validation checks (tiers 0-9, `--fix` for auto-remediation)
 - `lab acme-issue` - Issue certificate via ACME protocol (RFC 8555)
 - `lab est-enroll` - Enroll for certificate via EST protocol (RFC 7030)
+- `lab est-reenroll` - Renew certificate via EST simplereenroll (RFC 7030)
 - `lab est-cacerts` - Get CA certificates from EST endpoint
 - `lab perf-test` - Run bulk PKI performance test (issuance + revocation)
 - `lab ct-submit` - Submit certificates from a Dogtag CA to the CT log
