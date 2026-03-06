@@ -1203,6 +1203,119 @@ def validate(
     raise typer.Exit(0 if report.success else 1)
 
 
+@app.command("ct-submit")
+def ct_submit(
+    pki_type: str = typer.Option("rsa", "--pki-type", "-p", help="PKI type (rsa, ecc, pqc)"),
+    ca_level: str = typer.Option("iot", "--ca-level", "-l", help="CA level to import from"),
+    ct_url: str = typer.Option("http://localhost:8086", "--ct-url", help="CT log URL"),
+    max_certs: int = typer.Option(100, "--max", help="Max certificates to import"),
+):
+    """Submit certificates from a Dogtag CA to the CT log."""
+    import httpx
+
+    config = LabConfig.load()
+    ca_cfg = config.get_ca_config(PKIType(pki_type), CALevel(ca_level))
+    ca_url = ca_cfg.host_url
+
+    console.print(f"Submitting certificates from [bold]{ca_level}[/bold] CA ({pki_type}) to CT log...")
+    console.print(f"  CA URL: {ca_url}")
+    console.print(f"  CT URL: {ct_url}")
+
+    try:
+        resp = httpx.post(
+            f"{ct_url}/submit-from-ca",
+            params={"ca_url": ca_url, "pki_type": pki_type, "max_certs": max_certs},
+            timeout=60.0,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            console.print(f"\n[green]Added:[/green] {data['added']}  "
+                          f"[dim]Skipped:[/dim] {data['skipped']}  "
+                          f"[red]Errors:[/red] {data['errors']}")
+            console.print(f"[bold]Tree size:[/bold] {data['tree_size']}")
+        else:
+            console.print(f"[red]Error:[/red] {resp.status_code} — {resp.text}")
+            raise typer.Exit(1)
+    except httpx.ConnectError:
+        console.print("[red]Error:[/red] Cannot connect to CT log. Is mock-ct-log running?")
+        raise typer.Exit(1)
+
+
+@app.command("ct-verify")
+def ct_verify(
+    serial: str = typer.Option(..., "--serial", "-s", help="Certificate serial number (hex)"),
+    device_id: Optional[str] = typer.Option(None, "--device-id", "-d", help="Device hostname (triggers Kafka event if not found)"),
+    pki_type: str = typer.Option("rsa", "--pki-type", "-p", help="PKI type (rsa, ecc, pqc)"),
+    ct_url: str = typer.Option("http://localhost:8086", "--ct-url", help="CT log URL"),
+):
+    """Verify a certificate against the CT log."""
+    import httpx
+
+    console.print(f"Verifying serial [bold]{serial}[/bold] against CT log...")
+
+    try:
+        resp = httpx.post(
+            f"{ct_url}/verify",
+            json={"serial": serial, "device_id": device_id, "pki_type": pki_type},
+            timeout=10.0,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("logged"):
+                console.print(f"[green]FOUND[/green] in CT log")
+                console.print(f"  Index: {data['index']}")
+                console.print(f"  Subject: {data['subject_cn']}")
+                console.print(f"  Issuer: {data['issuer_cn']}")
+            else:
+                console.print(f"[red]NOT FOUND[/red] in CT log")
+                if data.get("event_published"):
+                    console.print(f"  [yellow]ct_log_mismatch event published[/yellow] (event_id: {data['event_id']})")
+        else:
+            console.print(f"[red]Error:[/red] {resp.status_code} — {resp.text}")
+            raise typer.Exit(1)
+    except httpx.ConnectError:
+        console.print("[red]Error:[/red] Cannot connect to CT log. Is mock-ct-log running?")
+        raise typer.Exit(1)
+
+
+@app.command("ct-stats")
+def ct_stats(
+    ct_url: str = typer.Option("http://localhost:8086", "--ct-url", help="CT log URL"),
+):
+    """Show CT log statistics."""
+    import httpx
+
+    try:
+        resp = httpx.get(f"{ct_url}/stats", timeout=10.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            console.print(f"\n[bold]CT Log:[/bold] {data['log_id']}")
+            console.print(f"[bold]Tree Size:[/bold] {data['tree_size']}")
+            console.print(f"[bold]Root Hash:[/bold] {data['root_hash'][:32]}...")
+
+            if data.get("entries_by_pki"):
+                table = Table(title="Entries by PKI Type")
+                table.add_column("PKI Type", style="cyan")
+                table.add_column("Count", justify="right")
+                for pki, count in data["entries_by_pki"].items():
+                    table.add_row(pki, str(count))
+                console.print(table)
+
+            if data.get("entries_by_issuer"):
+                table = Table(title="Entries by Issuer")
+                table.add_column("Issuer CN", style="cyan")
+                table.add_column("Count", justify="right")
+                for issuer, count in data["entries_by_issuer"].items():
+                    table.add_row(issuer, str(count))
+                console.print(table)
+        else:
+            console.print(f"[red]Error:[/red] {resp.status_code} — {resp.text}")
+            raise typer.Exit(1)
+    except httpx.ConnectError:
+        console.print("[red]Error:[/red] Cannot connect to CT log. Is mock-ct-log running?")
+        raise typer.Exit(1)
+
+
 def cli():
     """Entry point for the CLI."""
     app()

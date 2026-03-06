@@ -153,6 +153,25 @@ ocsp_responder_response_seconds = Gauge(
     registry=registry,
 )
 
+ct_log_up = Gauge(
+    "pki_ct_log_up",
+    "Whether the CT log is reachable (1=up, 0=down)",
+    registry=registry,
+)
+
+ct_log_tree_size = Gauge(
+    "pki_ct_log_tree_size",
+    "Number of certificates in the CT log",
+    registry=registry,
+)
+
+ct_log_entries = Gauge(
+    "pki_ct_log_entries_total",
+    "CT log entries by PKI type",
+    ["pki_type"],
+    registry=registry,
+)
+
 # --- CA Configuration ---
 # Uses host-gateway ports (same pattern as iot-client and eda-server)
 
@@ -180,6 +199,9 @@ OCSP_TARGETS = {
     "ecc": {"host": "ecc-ocsp.cert-lab.local", "port": 8467},
     "pqc": {"host": "pq-ocsp.cert-lab.local", "port": 8457},
 }
+
+# CT Log target
+CT_LOG_URL = os.getenv("CT_LOG_URL", "http://ct-log.cert-lab.local:8086")
 
 # Path where perf-test.py writes its metrics JSON
 PERF_METRICS_DIR = Path(os.getenv("PERF_METRICS_DIR", "/data/perf-metrics"))
@@ -335,14 +357,32 @@ async def scrape_ocsp_responder(pki_type: str, host: str, port: int):
             ocsp_responder_response_seconds.labels(pki_type=pki_type).set(resp_time)
 
 
+async def scrape_ct_log():
+    """Scrape the CT log for metrics."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{CT_LOG_URL}/stats")
+            if resp.status_code == 200:
+                data = resp.json()
+                ct_log_up.set(1)
+                ct_log_tree_size.set(data.get("tree_size", 0))
+                for pki_type, count in data.get("entries_by_pki", {}).items():
+                    ct_log_entries.labels(pki_type=pki_type).set(count)
+                return
+    except Exception as e:
+        logger.debug(f"CT log scrape failed: {e}")
+    ct_log_up.set(0)
+
+
 async def scrape_all():
-    """Scrape all CAs and OCSP responders, update Prometheus metrics."""
+    """Scrape all CAs, OCSP responders, and CT log. Update Prometheus metrics."""
     tasks = []
     for pki_type, levels in CA_TARGETS.items():
         for ca_level, target in levels.items():
             tasks.append(scrape_ca(pki_type, ca_level, target["host"], target["port"]))
     for pki_type, target in OCSP_TARGETS.items():
         tasks.append(scrape_ocsp_responder(pki_type, target["host"], target["port"]))
+    tasks.append(scrape_ct_log())
     await asyncio.gather(*tasks, return_exceptions=True)
 
     # Load perf test metrics from shared volume

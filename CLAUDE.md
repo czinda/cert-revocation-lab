@@ -119,6 +119,9 @@ pip install -e .
 - `lab est-enroll` - Enroll for certificate via EST protocol (RFC 7030)
 - `lab est-cacerts` - Get CA certificates from EST endpoint
 - `lab perf-test` - Run bulk PKI performance test (issuance + revocation)
+- `lab ct-submit` - Submit certificates from a Dogtag CA to the CT log
+- `lab ct-verify` - Verify a certificate against the CT log
+- `lab ct-stats` - Show CT log statistics
 
 ## Architecture
 
@@ -135,7 +138,8 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → Ansible Playbook 
 - **Kafka**: Event streaming for security events
 - **Event-Driven Ansible**: Rulebook engine consuming Kafka events
 - **AWX**: Ansible automation platform
-- **FastAPI**: Mock EDR/SIEM implementations and PKI metrics exporter
+- **FastAPI**: Mock EDR/SIEM/CT-log implementations and PKI metrics exporter
+- **Mock CT Log**: RFC 6962 Certificate Transparency log simulation (http://localhost:8086)
 - **Prometheus + Grafana**: PKI performance monitoring (http://localhost:3000, http://localhost:9090)
 
 ## Certificate Profiles
@@ -261,7 +265,7 @@ The IoT Client uses EST-first enrollment (falls back to Dogtag REST API if EST u
 
 ## Monitoring Stack
 
-Prometheus (`:9090`) → Grafana (`:3000`) pipeline with PKI Exporter (`:9091/metrics`) scraping all 9 Dogtag CAs plus 3 dedicated OCSP responders. Auto-provisioned dashboard (uid: `pki-metrics`) with CA health, certificate inventory, issuance/revocation throughput, OCSP response times (built-in and dedicated), and CRL status.
+Prometheus (`:9090`) → Grafana (`:3000`) pipeline with PKI Exporter (`:9091/metrics`) scraping all 9 Dogtag CAs, 3 dedicated OCSP responders, and the CT log. Auto-provisioned dashboard (uid: `pki-metrics`) with CA health, certificate inventory, issuance/revocation throughput, OCSP response times (built-in and dedicated), CRL status, and CT log metrics.
 
 ## AgnosticD / RHPDS Deployment
 

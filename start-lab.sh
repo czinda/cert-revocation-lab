@@ -117,6 +117,7 @@ setup_directories() {
     mkdir -p data/perf-metrics
     mkdir -p containers/mock-edr
     mkdir -p containers/mock-siem
+    mkdir -p containers/mock-ct-log
     mkdir -p ansible/playbooks
     mkdir -p ansible/rulebooks
     mkdir -p ansible/inventory/group_vars
@@ -930,7 +931,7 @@ start_security_tools() {
     log_phase "Phase 8: Starting Mock EDR, SIEM, and IoT Client"
 
     local to_start=()
-    for svc in mock-edr mock-siem iot-client; do
+    for svc in mock-edr mock-siem mock-ct-log iot-client; do
         if is_rootless_running "$svc"; then
             log_success "$svc is already running"
         else
@@ -1229,7 +1230,7 @@ quick_start() {
 
     # Start other containers (rootless) - exclude PKI/DS services
     local rootless_to_start=()
-    for svc in dnsmasq postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem iot-client jupyter prometheus grafana pki-exporter; do
+    for svc in dnsmasq postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem mock-ct-log iot-client jupyter prometheus grafana pki-exporter; do
         if is_rootless_running "$svc"; then
             log_success "$svc is already running"
         else

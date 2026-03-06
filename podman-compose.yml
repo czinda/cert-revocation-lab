@@ -538,6 +538,43 @@ services:
       retries: 5
       start_period: 60s
 
+  mock-ct-log:
+    build:
+      context: ./containers/mock-ct-log
+      dockerfile: Containerfile
+    container_name: mock-ct-log
+    hostname: ct-log.${LAB_DOMAIN:-cert-lab.local}
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka.${LAB_DOMAIN:-cert-lab.local}:9092
+      KAFKA_TOPIC: ${KAFKA_TOPIC_SECURITY:-security-events}
+      LAB_DOMAIN: ${LAB_DOMAIN:-cert-lab.local}
+      CT_LOG_ID: cert-lab-ct-log-001
+    extra_hosts:
+      # Allow connecting to PKI CAs via localhost ports
+      - "root-ca.cert-lab.local:host-gateway"
+      - "intermediate-ca.cert-lab.local:host-gateway"
+      - "iot-ca.cert-lab.local:host-gateway"
+      - "ecc-root-ca.cert-lab.local:host-gateway"
+      - "ecc-intermediate-ca.cert-lab.local:host-gateway"
+      - "ecc-iot-ca.cert-lab.local:host-gateway"
+      - "pq-root-ca.cert-lab.local:host-gateway"
+      - "pq-intermediate-ca.cert-lab.local:host-gateway"
+      - "pq-iot-ca.cert-lab.local:host-gateway"
+    networks:
+      lab-network:
+        ipv4_address: ${IP_CT_LOG:-172.20.0.53}
+    ports:
+      - "8086:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import json, urllib.request; d=json.load(urllib.request.urlopen('http://localhost:8000/health')); exit(0 if d.get('kafka_connected') else 1)\""]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
   # ===========================================================================
   # IoT Client Simulator (EST Enrollment)
   # ===========================================================================
@@ -636,6 +673,7 @@ services:
     hostname: pki-exporter.${LAB_DOMAIN:-cert-lab.local}
     environment:
       PERF_METRICS_DIR: /data/perf-metrics
+      CT_LOG_URL: http://ct-log.${LAB_DOMAIN:-cert-lab.local}:8000
     extra_hosts:
       # PKI CA hostnames - use host-gateway to reach rootful PKI via host ports
       - "root-ca.cert-lab.local:host-gateway"
