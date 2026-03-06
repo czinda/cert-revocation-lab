@@ -1,0 +1,130 @@
+---
+# Backup PKI Data
+#
+# Creates timestamped backups of certificate files and PKI/DS volumes.
+#
+# Variables:
+#   backup_dir: destination for backups (default: {{ lab_root_dir }}/backups)
+#   lab_root_dir: path to lab root (default: /home/czinda/git/cert-revocation-lab)
+
+- name: Backup PKI Data
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    lab_root_dir: "/home/czinda/git/cert-revocation-lab"
+    backup_dir: "{{ lab_root_dir }}/backups"
+    timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
+
+  tasks:
+    - name: Display backup banner
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          PKI DATA BACKUP
+          ============================================================
+          Backup Directory: {{ backup_dir }}
+          Timestamp:        {{ timestamp }}
+          Lab Directory:    {{ lab_root_dir }}
+          ============================================================
+      tags: [always]
+
+    - name: Create backup directory structure
+      ansible.builtin.file:
+        path: "{{ backup_dir }}/{{ timestamp }}/{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - certs
+        - volumes
+      tags: [setup]
+
+    # --- Backup certificate files ---
+    - name: Backup Certificate Files
+      tags: [certs]
+      block:
+        - name: Check if certs directory exists
+          ansible.builtin.stat:
+            path: "{{ lab_root_dir }}/data/certs"
+          register: certs_dir_stat
+
+        - name: Copy certificate files
+          ansible.builtin.shell:
+            cmd: >-
+              cp -a {{ lab_root_dir }}/data/certs/
+              {{ backup_dir }}/{{ timestamp }}/certs/
+          when: certs_dir_stat.stat.exists
+          register: certs_backup
+          ignore_errors: true
+
+        - name: Certificate backup result
+          ansible.builtin.debug:
+            msg: >-
+              {{ 'Certificate files backed up successfully'
+                 if certs_backup is not failed
+                 else 'No certificate files to backup or backup failed' }}
+          tags: [summary]
+
+    # --- Backup PKI volumes ---
+    - name: Backup PKI Volumes
+      tags: [volumes]
+      block:
+        - name: Get list of PKI-related volumes
+          ansible.builtin.shell:
+            cmd: >-
+              sudo podman volume ls --format '{{"{{"}}.Name{{"}}"}}'
+              | grep -E '(pki|ds|dogtag|freeipa)' || true
+          register: pki_volumes
+          ignore_errors: true
+
+        - name: Display volumes to backup
+          ansible.builtin.debug:
+            msg: "Found volumes: {{ pki_volumes.stdout_lines | default([]) | join(', ') | default('none') }}"
+
+        - name: Export each PKI volume
+          ansible.builtin.shell:
+            cmd: >-
+              sudo podman volume export {{ item }}
+              > {{ backup_dir }}/{{ timestamp }}/volumes/{{ item }}.tar
+          loop: "{{ pki_volumes.stdout_lines | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          when: pki_volumes.stdout_lines | default([]) | length > 0
+          register: volume_exports
+          ignore_errors: true
+          tags: [export]
+
+        - name: Volume backup results
+          ansible.builtin.debug:
+            msg: |
+              --- Volume Backup Results ---
+              {% if volume_exports.results is defined %}
+              {% for result in volume_exports.results %}
+              {{ 'OK' if result is not failed else 'FAIL' }} | {{ result.item }}
+              {% endfor %}
+              {% else %}
+              No volumes to backup
+              {% endif %}
+          tags: [summary]
+
+    # --- Calculate backup size ---
+    - name: Get backup size
+      ansible.builtin.shell:
+        cmd: "du -sh {{ backup_dir }}/{{ timestamp }}/ | awk '{print $1}'"
+      register: backup_size
+      ignore_errors: true
+      tags: [summary]
+
+    - name: Backup complete
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          PKI BACKUP COMPLETE
+          ============================================================
+          Location:  {{ backup_dir }}/{{ timestamp }}/
+          Size:      {{ backup_size.stdout | default('unknown') }}
+          Contents:
+            - certs/    : Certificate files from data/certs/
+            - volumes/  : Exported podman volumes
+          ============================================================
+      tags: [always]

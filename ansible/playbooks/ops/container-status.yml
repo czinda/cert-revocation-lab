@@ -1,0 +1,94 @@
+---
+# List all lab containers and their status
+#
+# Shows both rootless and rootful (sudo) podman containers
+# with formatted output for easy reading.
+#
+# Variables:
+#   lab_root_dir: path to lab root (default: /home/czinda/git/cert-revocation-lab)
+
+- name: Container Status Report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    lab_root_dir: "/home/czinda/git/cert-revocation-lab"
+
+  tasks:
+    - name: Display container status banner
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          CONTAINER STATUS REPORT
+          ============================================================
+      tags: [always]
+
+    # --- Rootless containers ---
+    - name: Rootless Container Check
+      tags: [rootless]
+      block:
+        - name: Get rootless container list
+          ansible.builtin.shell:
+            cmd: >-
+              podman ps -a
+              --format 'table {{"{{"}}.Names{{"}}"}}\t{{"{{"}}.Status{{"}}"}}\t{{"{{"}}.Ports{{"}}"}}\t{{"{{"}}.Image{{"}}"}}'
+              --sort names 2>/dev/null || echo "No rootless containers found"
+          register: rootless_containers
+          ignore_errors: true
+
+        - name: Get rootless container counts
+          ansible.builtin.shell:
+            cmd: |
+              total=$(podman ps -a --format json 2>/dev/null | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+              running=$(podman ps --format json 2>/dev/null | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+              echo "Total: $total | Running: $running | Stopped: $((total - running))"
+          register: rootless_counts
+          ignore_errors: true
+
+        - name: Rootless Containers
+          ansible.builtin.debug:
+            msg: |
+              --- Rootless Containers (user podman) ---
+              {{ rootless_counts.stdout | default('Unable to count') }}
+
+              {{ rootless_containers.stdout | default('None found') }}
+          tags: [summary]
+
+    # --- Rootful containers (PKI) ---
+    - name: Rootful Container Check
+      tags: [rootful]
+      block:
+        - name: Get rootful container list
+          ansible.builtin.shell:
+            cmd: >-
+              sudo podman ps -a
+              --format 'table {{"{{"}}.Names{{"}}"}}\t{{"{{"}}.Status{{"}}"}}\t{{"{{"}}.Ports{{"}}"}}\t{{"{{"}}.Image{{"}}"}}'
+              --sort names 2>/dev/null || echo "No rootful containers found"
+          register: rootful_containers
+          ignore_errors: true
+
+        - name: Get rootful container counts
+          ansible.builtin.shell:
+            cmd: |
+              total=$(sudo podman ps -a --format json 2>/dev/null | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+              running=$(sudo podman ps --format json 2>/dev/null | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+              echo "Total: $total | Running: $running | Stopped: $((total - running))"
+          register: rootful_counts
+          ignore_errors: true
+
+        - name: Rootful Containers (PKI / FreeIPA)
+          ansible.builtin.debug:
+            msg: |
+              --- Rootful Containers (sudo podman) ---
+              {{ rootful_counts.stdout | default('Unable to count') }}
+
+              {{ rootful_containers.stdout | default('None found') }}
+          tags: [summary]
+
+    - name: Container report complete
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          CONTAINER STATUS REPORT COMPLETE
+          ============================================================
+      tags: [always]

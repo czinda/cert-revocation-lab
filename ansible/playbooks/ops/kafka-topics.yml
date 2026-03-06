@@ -1,0 +1,156 @@
+---
+# Kafka Topic Management
+#
+# Lists topics, shows consumer groups, and optionally creates
+# the security-events topic if missing.
+#
+# Variables:
+#   create_topic: true | false - create security-events if missing (default: false)
+#   kafka_container: name of kafka container (default: kafka)
+#   lab_root_dir: path to lab root (default: /home/czinda/git/cert-revocation-lab)
+
+- name: Kafka Topic Management
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    create_topic: false
+    kafka_container: "kafka"
+    lab_root_dir: "/home/czinda/git/cert-revocation-lab"
+    bootstrap_server: "localhost:9092"
+
+  tasks:
+    - name: Display Kafka management banner
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          KAFKA TOPIC MANAGEMENT
+          ============================================================
+          Container:    {{ kafka_container }}
+          Create Topic: {{ create_topic | bool }}
+          ============================================================
+      tags: [always]
+
+    # --- List Topics ---
+    - name: List Kafka Topics
+      tags: [topics]
+      block:
+        - name: Get topic list
+          ansible.builtin.shell:
+            cmd: >-
+              podman exec {{ kafka_container }}
+              kafka-topics --bootstrap-server {{ bootstrap_server }}
+              --list 2>/dev/null
+          register: topic_list
+          ignore_errors: true
+
+        - name: Display topics
+          ansible.builtin.debug:
+            msg: |
+              --- Kafka Topics ---
+              {{ topic_list.stdout | default('No topics found or Kafka not running') }}
+          tags: [summary]
+
+    # --- Topic Details ---
+    - name: Get Topic Details
+      tags: [details]
+      block:
+        - name: Describe all topics
+          ansible.builtin.shell:
+            cmd: >-
+              podman exec {{ kafka_container }}
+              kafka-topics --bootstrap-server {{ bootstrap_server }}
+              --describe 2>/dev/null
+          register: topic_details
+          ignore_errors: true
+
+        - name: Display topic details
+          ansible.builtin.debug:
+            msg: |
+              --- Topic Details ---
+              {{ topic_details.stdout | default('No topic details available') }}
+          tags: [summary]
+
+    # --- Consumer Groups ---
+    - name: List Consumer Groups
+      tags: [consumers]
+      block:
+        - name: Get consumer group list
+          ansible.builtin.shell:
+            cmd: >-
+              podman exec {{ kafka_container }}
+              kafka-consumer-groups --bootstrap-server {{ bootstrap_server }}
+              --list 2>/dev/null
+          register: consumer_groups
+          ignore_errors: true
+
+        - name: Display consumer groups
+          ansible.builtin.debug:
+            msg: |
+              --- Consumer Groups ---
+              {{ consumer_groups.stdout | default('No consumer groups found') }}
+          tags: [summary]
+
+        - name: Get consumer group details
+          ansible.builtin.shell:
+            cmd: >-
+              podman exec {{ kafka_container }}
+              kafka-consumer-groups --bootstrap-server {{ bootstrap_server }}
+              --describe --group {{ item }} 2>/dev/null
+          loop: "{{ consumer_groups.stdout_lines | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          register: consumer_details
+          ignore_errors: true
+          when: consumer_groups.stdout_lines | default([]) | length > 0
+
+        - name: Display consumer group details
+          ansible.builtin.debug:
+            msg: |
+              --- Consumer Group: {{ item.item }} ---
+              {{ item.stdout | default('No details available') }}
+          loop: "{{ consumer_details.results | default([]) }}"
+          loop_control:
+            label: "{{ item.item | default('unknown') }}"
+          when: consumer_details.results is defined
+          tags: [summary]
+
+    # --- Create security-events topic if missing ---
+    - name: Create Security Events Topic
+      tags: [create]
+      when: create_topic | bool
+      block:
+        - name: Check if security-events topic exists
+          ansible.builtin.shell:
+            cmd: >-
+              podman exec {{ kafka_container }}
+              kafka-topics --bootstrap-server {{ bootstrap_server }}
+              --list 2>/dev/null | grep -q '^security-events$'
+          register: topic_exists
+          ignore_errors: true
+
+        - name: Create security-events topic
+          ansible.builtin.shell:
+            cmd: >-
+              podman exec {{ kafka_container }}
+              kafka-topics --bootstrap-server {{ bootstrap_server }}
+              --create --topic security-events
+              --partitions 3 --replication-factor 1
+          register: create_result
+          when: topic_exists.rc != 0
+
+        - name: Topic creation result
+          ansible.builtin.debug:
+            msg: >-
+              {{ 'security-events topic created successfully'
+                 if topic_exists.rc != 0 and create_result is not failed
+                 else 'security-events topic already exists' }}
+          tags: [summary]
+
+    - name: Kafka management complete
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          KAFKA TOPIC MANAGEMENT COMPLETE
+          ============================================================
+      tags: [always]

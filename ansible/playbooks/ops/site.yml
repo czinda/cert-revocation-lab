@@ -1,0 +1,17 @@
+---
+# Site Playbook - Full Lab Deployment
+#
+# Master playbook that starts the complete Certificate Revocation Lab.
+# This is the "full deploy" equivalent for Semaphore UI.
+#
+# Variables:
+#   pki_mode: rsa | ecc | pqc | dual | all (default: all)
+#   clean: true | false - wipe all data before starting (default: false)
+#   lab_root_dir: path to lab root (default: /home/czinda/git/cert-revocation-lab)
+
+- name: Full Lab Deployment
+  ansible.builtin.import_playbook: lab-start.yml
+  vars:
+    pki_mode: "{{ pki_mode | default('all') }}"
+    clean: "{{ clean | default(false) }}"
+    lab_root_dir: "{{ lab_root_dir | default('/home/czinda/git/cert-revocation-lab') }}"

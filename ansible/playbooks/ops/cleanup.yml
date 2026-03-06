@@ -1,0 +1,200 @@
+---
+# Clean Up Old Lab Data
+#
+# Removes old log files, expired certificates from temp directories,
+# and old incident reports.
+#
+# Variables:
+#   days_old: remove files older than N days (default: 30)
+#   lab_root_dir: path to lab root (default: /home/czinda/git/cert-revocation-lab)
+#   dry_run: true | false - show what would be removed without deleting (default: false)
+
+- name: Clean Up Old Lab Data
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    days_old: 30
+    dry_run: false
+    lab_root_dir: "/home/czinda/git/cert-revocation-lab"
+
+  tasks:
+    - name: Display cleanup banner
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          LAB DATA CLEANUP
+          ============================================================
+          Max Age:       {{ days_old }} days
+          Dry Run:       {{ dry_run | bool }}
+          Lab Directory: {{ lab_root_dir }}
+          ============================================================
+      tags: [always]
+
+    # --- Find old log files ---
+    - name: Clean Old Log Files
+      tags: [logs]
+      block:
+        - name: Find old log files
+          ansible.builtin.find:
+            paths:
+              - "{{ lab_root_dir }}/logs"
+              - "/opt/cert-lab/logs"
+              - "/tmp"
+            patterns:
+              - "*.log"
+              - "dogtag-*.log"
+              - "cert-lab-*.log"
+            age: "{{ days_old }}d"
+            recurse: true
+          register: old_logs
+          ignore_errors: true
+
+        - name: Display old log files
+          ansible.builtin.debug:
+            msg: |
+              --- Old Log Files ({{ old_logs.files | default([]) | length }} found) ---
+              {% for f in old_logs.files | default([]) %}
+              {{ f.path }} ({{ f.size }} bytes)
+              {% endfor %}
+              {% if old_logs.files | default([]) | length == 0 %}
+              No log files older than {{ days_old }} days found.
+              {% endif %}
+          tags: [summary]
+
+        - name: Remove old log files
+          ansible.builtin.file:
+            path: "{{ item.path }}"
+            state: absent
+          loop: "{{ old_logs.files | default([]) }}"
+          loop_control:
+            label: "{{ item.path }}"
+          when: not dry_run | bool and old_logs.files | default([]) | length > 0
+
+    # --- Find old temp certificates ---
+    - name: Clean Old Temp Certificates
+      tags: [certs]
+      block:
+        - name: Find old temp certificate files
+          ansible.builtin.find:
+            paths:
+              - "/tmp"
+              - "{{ lab_root_dir }}/data/certs"
+            patterns:
+              - "*.csr"
+              - "*.pem.tmp"
+              - "test-*.crt"
+              - "test-*.key"
+              - "perf-test-*.pem"
+            age: "{{ days_old }}d"
+            recurse: true
+          register: old_certs
+          ignore_errors: true
+
+        - name: Display old temp certificates
+          ansible.builtin.debug:
+            msg: |
+              --- Old Temp Certificates ({{ old_certs.files | default([]) | length }} found) ---
+              {% for f in old_certs.files | default([]) %}
+              {{ f.path }} ({{ f.size }} bytes)
+              {% endfor %}
+              {% if old_certs.files | default([]) | length == 0 %}
+              No temp certificate files older than {{ days_old }} days found.
+              {% endif %}
+          tags: [summary]
+
+        - name: Remove old temp certificates
+          ansible.builtin.file:
+            path: "{{ item.path }}"
+            state: absent
+          loop: "{{ old_certs.files | default([]) }}"
+          loop_control:
+            label: "{{ item.path }}"
+          when: not dry_run | bool and old_certs.files | default([]) | length > 0
+
+    # --- Find old incident reports ---
+    - name: Clean Old Incident Reports
+      tags: [incidents]
+      block:
+        - name: Find old incident report files
+          ansible.builtin.find:
+            paths:
+              - "{{ lab_root_dir }}/data"
+              - "{{ lab_root_dir }}/logs"
+            patterns:
+              - "incident-*.json"
+              - "incident-*.yml"
+              - "incident-*.yaml"
+              - "report-*.json"
+            age: "{{ days_old }}d"
+            recurse: true
+          register: old_incidents
+          ignore_errors: true
+
+        - name: Display old incident reports
+          ansible.builtin.debug:
+            msg: |
+              --- Old Incident Reports ({{ old_incidents.files | default([]) | length }} found) ---
+              {% for f in old_incidents.files | default([]) %}
+              {{ f.path }} ({{ f.size }} bytes)
+              {% endfor %}
+              {% if old_incidents.files | default([]) | length == 0 %}
+              No incident reports older than {{ days_old }} days found.
+              {% endif %}
+          tags: [summary]
+
+        - name: Remove old incident reports
+          ansible.builtin.file:
+            path: "{{ item.path }}"
+            state: absent
+          loop: "{{ old_incidents.files | default([]) }}"
+          loop_control:
+            label: "{{ item.path }}"
+          when: not dry_run | bool and old_incidents.files | default([]) | length > 0
+
+    # --- Clean old backups ---
+    - name: Clean Old Backups
+      tags: [backups]
+      block:
+        - name: Find old backup directories
+          ansible.builtin.find:
+            paths: "{{ lab_root_dir }}/backups"
+            file_type: directory
+            age: "{{ days_old }}d"
+          register: old_backups
+          ignore_errors: true
+
+        - name: Display old backups
+          ansible.builtin.debug:
+            msg: |
+              --- Old Backups ({{ old_backups.files | default([]) | length }} found) ---
+              {% for f in old_backups.files | default([]) %}
+              {{ f.path }}
+              {% endfor %}
+              {% if old_backups.files | default([]) | length == 0 %}
+              No backup directories older than {{ days_old }} days found.
+              {% endif %}
+          tags: [summary]
+
+        - name: Remove old backup directories
+          ansible.builtin.file:
+            path: "{{ item.path }}"
+            state: absent
+          loop: "{{ old_backups.files | default([]) }}"
+          loop_control:
+            label: "{{ item.path }}"
+          when: not dry_run | bool and old_backups.files | default([]) | length > 0
+
+    # --- Summary ---
+    - name: Cleanup Summary
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          CLEANUP {{ 'DRY RUN ' if dry_run | bool else '' }}COMPLETE
+          ============================================================
+          Log files:        {{ old_logs.files | default([]) | length }} {{ 'would be' if dry_run | bool else '' }} removed
+          Temp certs:       {{ old_certs.files | default([]) | length }} {{ 'would be' if dry_run | bool else '' }} removed
+          Incident reports: {{ old_incidents.files | default([]) | length }} {{ 'would be' if dry_run | bool else '' }} removed
+          Old backups:      {{ old_backups.files | default([]) | length }} {{ 'would be' if dry_run | bool else '' }} removed
+          ============================================================
+      tags: [always, summary]

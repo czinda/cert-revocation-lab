@@ -1,0 +1,79 @@
+---
+# Start the Certificate Revocation Lab
+#
+# Variables:
+#   pki_mode: rsa | ecc | pqc | dual | all (default: rsa)
+#   clean: true | false - wipe all data before starting (default: false)
+#   lab_root_dir: path to lab root (default: /home/czinda/git/cert-revocation-lab)
+
+- name: Start Certificate Revocation Lab
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    pki_mode: "rsa"
+    clean: false
+    lab_root_dir: "/home/czinda/git/cert-revocation-lab"
+
+  tasks:
+    - name: Display startup parameters
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          CERTIFICATE REVOCATION LAB - STARTING
+          ============================================================
+          PKI Mode:      {{ pki_mode }}
+          Clean Start:   {{ clean | bool }}
+          Lab Directory: {{ lab_root_dir }}
+          ============================================================
+      tags: [always]
+
+    - name: Validate pki_mode
+      ansible.builtin.assert:
+        that:
+          - pki_mode in ['rsa', 'ecc', 'pqc', 'dual', 'all']
+        fail_msg: "Invalid pki_mode '{{ pki_mode }}'. Must be one of: rsa, ecc, pqc, dual, all"
+      tags: [validation]
+
+    - name: Verify lab directory exists
+      ansible.builtin.stat:
+        path: "{{ lab_root_dir }}/start-lab.sh"
+      register: start_script
+      tags: [validation]
+
+    - name: Fail if lab directory not found
+      ansible.builtin.fail:
+        msg: "start-lab.sh not found at {{ lab_root_dir }}. Check lab_root_dir variable."
+      when: not start_script.stat.exists
+      tags: [validation]
+
+    - name: Build start command
+      ansible.builtin.set_fact:
+        start_cmd: >-
+          ./start-lab.sh
+          {{ '--clean' if clean | bool else '' }}
+          --{{ pki_mode }}
+      tags: [start]
+
+    - name: Start the lab
+      ansible.builtin.shell:
+        cmd: "{{ start_cmd }}"
+        chdir: "{{ lab_root_dir }}"
+      register: start_result
+      timeout: 600
+      tags: [start]
+
+    - name: Display startup output
+      ansible.builtin.debug:
+        msg: "{{ start_result.stdout_lines | default([]) }}"
+      tags: [start]
+
+    - name: Startup complete
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          LAB STARTED SUCCESSFULLY
+          ============================================================
+          PKI Mode: {{ pki_mode }}
+          ============================================================
+      tags: [always]

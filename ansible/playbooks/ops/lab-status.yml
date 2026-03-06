@@ -1,0 +1,165 @@
+---
+# Check health of all Certificate Revocation Lab services
+#
+# Checks PKI CAs, infrastructure, mock services, monitoring, and support services.
+# All checks use ignore_errors so the full status is always displayed.
+#
+# Variables:
+#   lab_root_dir: path to lab root (default: /home/czinda/git/cert-revocation-lab)
+
+- name: Certificate Revocation Lab - Service Health Check
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    lab_root_dir: "/home/czinda/git/cert-revocation-lab"
+
+    # PKI CA endpoints (name, port, hierarchy)
+    pki_endpoints:
+      - { name: "RSA Root CA",           port: 8443, hierarchy: "rsa" }
+      - { name: "RSA Intermediate CA",   port: 8444, hierarchy: "rsa" }
+      - { name: "RSA IoT CA",            port: 8445, hierarchy: "rsa" }
+      - { name: "RSA ACME RA",           port: 8446, hierarchy: "rsa" }
+      - { name: "RSA EST RA",            port: 8447, hierarchy: "rsa" }
+      - { name: "PQ Root CA",            port: 8453, hierarchy: "pq" }
+      - { name: "PQ Intermediate CA",    port: 8454, hierarchy: "pq" }
+      - { name: "PQ IoT CA",             port: 8455, hierarchy: "pq" }
+      - { name: "PQ EST RA",             port: 8456, hierarchy: "pq" }
+      - { name: "ECC Root CA",           port: 8463, hierarchy: "ecc" }
+      - { name: "ECC Intermediate CA",   port: 8464, hierarchy: "ecc" }
+      - { name: "ECC IoT CA",            port: 8465, hierarchy: "ecc" }
+      - { name: "ECC EST RA",            port: 8466, hierarchy: "ecc" }
+
+    # HTTP service endpoints
+    http_services:
+      - { name: "Mock EDR",          url: "http://localhost:8082/health" }
+      - { name: "Mock SIEM",         url: "http://localhost:8083/health" }
+      - { name: "IoT Client",        url: "http://localhost:8085/health" }
+      - { name: "CT Log Monitor",    url: "http://localhost:8086/health" }
+      - { name: "CRL Server",        url: "http://localhost:8088/health" }
+      - { name: "Policy Engine",     url: "http://localhost:8089/health" }
+      - { name: "Chain Visualizer",  url: "http://localhost:8090/health" }
+      - { name: "Pin Validator",     url: "http://localhost:8091/health" }
+
+    monitoring_services:
+      - { name: "Prometheus",   url: "http://localhost:9090/-/ready" }
+      - { name: "Grafana",      url: "http://localhost:3000/api/health" }
+      - { name: "Loki",         url: "http://localhost:3100/ready" }
+
+  tasks:
+    - name: Display status check banner
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          CERTIFICATE REVOCATION LAB - SERVICE HEALTH CHECK
+          ============================================================
+      tags: [always]
+
+    # --- PKI CA Health Checks ---
+    - name: "PKI CA Health Checks"
+      tags: [pki]
+      block:
+        - name: Check PKI CA status endpoints
+          ansible.builtin.uri:
+            url: "https://localhost:{{ item.port }}/ca/admin/ca/getStatus"
+            method: GET
+            validate_certs: false
+            timeout: 10
+            return_content: true
+          loop: "{{ pki_endpoints }}"
+          loop_control:
+            label: "{{ item.name }} (:{{ item.port }})"
+          register: pki_results
+          ignore_errors: true
+
+        - name: PKI CA Status Summary
+          ansible.builtin.debug:
+            msg: |
+              --- PKI Certificate Authorities ---
+              {% for result in pki_results.results %}
+              {{ '  UP  ' if result is not failed else ' DOWN ' }} | {{ result.item.name | ljust(25) }} | :{{ result.item.port }} | {{ result.item.hierarchy | upper }}
+              {% endfor %}
+          tags: [summary]
+
+    # --- Infrastructure Health Checks ---
+    - name: "Infrastructure Health Checks"
+      tags: [infra]
+      block:
+        - name: Check Kafka connectivity
+          ansible.builtin.shell:
+            cmd: >-
+              podman exec kafka
+              kafka-broker-api-versions --bootstrap-server localhost:9092
+              2>&1 | head -1
+          register: kafka_result
+          ignore_errors: true
+
+        - name: Infrastructure Status Summary
+          ansible.builtin.debug:
+            msg: |
+              --- Infrastructure ---
+              {{ '  UP  ' if kafka_result is not failed else ' DOWN ' }} | Kafka                     | :9092
+          tags: [summary]
+
+    # --- Mock Services Health Checks ---
+    - name: "Mock Services Health Checks"
+      tags: [services]
+      block:
+        - name: Check HTTP service endpoints
+          ansible.builtin.uri:
+            url: "{{ item.url }}"
+            method: GET
+            timeout: 5
+            return_content: true
+          loop: "{{ http_services }}"
+          loop_control:
+            label: "{{ item.name }}"
+          register: http_results
+          ignore_errors: true
+
+        - name: Mock Services Status Summary
+          ansible.builtin.debug:
+            msg: |
+              --- Mock / Support Services ---
+              {% for result in http_results.results %}
+              {{ '  UP  ' if result is not failed else ' DOWN ' }} | {{ result.item.name | ljust(25) }} | {{ result.item.url }}
+              {% endfor %}
+          tags: [summary]
+
+    # --- Monitoring Health Checks ---
+    - name: "Monitoring Health Checks"
+      tags: [monitoring]
+      block:
+        - name: Check monitoring service endpoints
+          ansible.builtin.uri:
+            url: "{{ item.url }}"
+            method: GET
+            timeout: 5
+            return_content: true
+          loop: "{{ monitoring_services }}"
+          loop_control:
+            label: "{{ item.name }}"
+          register: monitoring_results
+          ignore_errors: true
+
+        - name: Monitoring Status Summary
+          ansible.builtin.debug:
+            msg: |
+              --- Monitoring ---
+              {% for result in monitoring_results.results %}
+              {{ '  UP  ' if result is not failed else ' DOWN ' }} | {{ result.item.name | ljust(25) }} | {{ result.item.url }}
+              {% endfor %}
+          tags: [summary]
+
+    # --- Final Summary ---
+    - name: Overall Status
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          HEALTH CHECK COMPLETE
+          ============================================================
+          PKI CAs checked:     {{ pki_results.results | length }}
+          Services checked:    {{ http_results.results | length }}
+          Monitoring checked:  {{ monitoring_results.results | length }}
+          ============================================================
+      tags: [always, summary]

@@ -1,0 +1,119 @@
+---
+# Verify DNS Resolution for Lab Hostnames
+#
+# Tests resolution of all key lab hostnames against dnsmasq on port 5353.
+#
+# Variables:
+#   dns_port: dnsmasq port (default: 5353)
+#   dns_server: DNS server address (default: 127.0.0.1)
+#   lab_root_dir: path to lab root (default: /home/czinda/git/cert-revocation-lab)
+
+- name: DNS Resolution Check
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    dns_port: 5353
+    dns_server: "127.0.0.1"
+    lab_root_dir: "/home/czinda/git/cert-revocation-lab"
+
+    # Lab hostnames to verify
+    lab_hostnames:
+      # RSA PKI
+      - { name: "root-ca.cert-lab.local",           expected: "172.26.0.10" }
+      - { name: "intermediate-ca.cert-lab.local",    expected: "172.26.0.11" }
+      - { name: "iot-ca.cert-lab.local",             expected: "172.26.0.12" }
+      - { name: "acme-ca.cert-lab.local",            expected: "172.26.0.13" }
+      - { name: "est-ca.cert-lab.local",             expected: "172.26.0.14" }
+      # ECC PKI
+      - { name: "ecc-root-ca.cert-lab.local",        expected: "172.28.0.10" }
+      - { name: "ecc-intermediate-ca.cert-lab.local", expected: "172.28.0.11" }
+      - { name: "ecc-iot-ca.cert-lab.local",          expected: "172.28.0.12" }
+      - { name: "ecc-est-ca.cert-lab.local",          expected: "172.28.0.13" }
+      # PQ PKI
+      - { name: "pq-root-ca.cert-lab.local",         expected: "172.27.0.10" }
+      - { name: "pq-intermediate-ca.cert-lab.local",  expected: "172.27.0.11" }
+      - { name: "pq-iot-ca.cert-lab.local",           expected: "172.27.0.12" }
+      - { name: "pq-est-ca.cert-lab.local",           expected: "172.27.0.13" }
+
+  tasks:
+    - name: Display DNS check banner
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          DNS RESOLUTION CHECK
+          ============================================================
+          DNS Server: {{ dns_server }}:{{ dns_port }}
+          Hostnames:  {{ lab_hostnames | length }}
+          ============================================================
+      tags: [always]
+
+    # --- Check if dig is available ---
+    - name: Check for dig command
+      ansible.builtin.shell:
+        cmd: which dig 2>/dev/null || which host 2>/dev/null || echo "none"
+      register: dns_tool
+      tags: [setup]
+
+    # --- Check dnsmasq is running ---
+    - name: Check dnsmasq availability
+      ansible.builtin.shell:
+        cmd: "dig @{{ dns_server }} -p {{ dns_port }} +short version.bind txt ch 2>/dev/null || echo 'dnsmasq not responding'"
+      register: dnsmasq_check
+      ignore_errors: true
+      when: "'dig' in dns_tool.stdout"
+      tags: [setup]
+
+    - name: Display dnsmasq status
+      ansible.builtin.debug:
+        msg: "dnsmasq status: {{ dnsmasq_check.stdout | default('check skipped - dig not available') }}"
+      tags: [setup]
+
+    # --- Resolve each hostname ---
+    - name: Resolve lab hostnames via dig
+      ansible.builtin.shell:
+        cmd: "dig @{{ dns_server }} -p {{ dns_port }} +short {{ item.name }} A 2>/dev/null || echo 'UNRESOLVED'"
+      loop: "{{ lab_hostnames }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: dns_results
+      ignore_errors: true
+      when: "'dig' in dns_tool.stdout"
+      tags: [resolve]
+
+    - name: Resolve lab hostnames via host command (fallback)
+      ansible.builtin.shell:
+        cmd: "host {{ item.name }} {{ dns_server }} 2>/dev/null | grep 'has address' | awk '{print $NF}' || echo 'UNRESOLVED'"
+      loop: "{{ lab_hostnames }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: dns_results_host
+      ignore_errors: true
+      when: "'dig' not in dns_tool.stdout and 'host' in dns_tool.stdout"
+      tags: [resolve]
+
+    # --- Select results ---
+    - name: Select DNS results
+      ansible.builtin.set_fact:
+        final_dns_results: "{{ dns_results if dns_results.results is defined and dns_results.results | length > 0 else dns_results_host }}"
+      tags: [summary]
+
+    # --- DNS Resolution Summary ---
+    - name: DNS Resolution Summary
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          DNS RESOLUTION RESULTS
+          ============================================================
+          {% if final_dns_results.results is defined %}
+          {% for result in final_dns_results.results %}
+          {% set resolved = result.stdout | default('UNRESOLVED') | trim %}
+          {% set expected = result.item.expected %}
+          {% set match = 'OK' if resolved == expected else 'MISMATCH' if resolved != 'UNRESOLVED' else 'FAIL' %}
+          {{ match | ljust(8) }} | {{ result.item.name | ljust(45) }} | Got: {{ resolved | ljust(15) }} | Expected: {{ expected }}
+          {% endfor %}
+          {% else %}
+          No DNS resolution tool (dig/host) available. Install bind-utils or dnsutils.
+          {% endif %}
+          ============================================================
+      tags: [always, summary]
