@@ -1,0 +1,86 @@
+groups:
+  - name: pki_ocsp_alerts
+    rules:
+      # OCSP built-in responder (on each CA) is slow
+      - alert: OCSPResponseSlow
+        expr: pki_ocsp_response_seconds > 2
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "OCSP response slow on {{ $labels.pki_type }}/{{ $labels.ca_level }}"
+          description: "OCSP response time is {{ $value | humanizeDuration }} (threshold: 2s)"
+
+      # OCSP built-in responder is very slow (critical)
+      - alert: OCSPResponseCritical
+        expr: pki_ocsp_response_seconds > 5
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "OCSP response critically slow on {{ $labels.pki_type }}/{{ $labels.ca_level }}"
+          description: "OCSP response time is {{ $value | humanizeDuration }} (threshold: 5s)"
+
+      # Dedicated OCSP responder is down
+      - alert: OCSPResponderDown
+        expr: pki_ocsp_responder_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Dedicated OCSP responder down for {{ $labels.pki_type }}"
+          description: "OCSP responder has been unreachable for more than 2 minutes"
+
+      # Dedicated OCSP responder is slow
+      - alert: OCSPResponderSlow
+        expr: pki_ocsp_responder_response_seconds > 2
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Dedicated OCSP responder slow for {{ $labels.pki_type }}"
+          description: "Response time is {{ $value | humanizeDuration }} (threshold: 2s)"
+
+  - name: pki_ca_alerts
+    rules:
+      # CA is down
+      - alert: CADown
+        expr: pki_ca_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "CA down: {{ $labels.pki_type }}/{{ $labels.ca_level }}"
+          description: "Certificate Authority has been unreachable for more than 2 minutes"
+
+      # Certificates expiring within 7 days
+      - alert: CertificatesExpiringSoon
+        expr: pki_certificates_expiring_total{window="7d"} > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} certs expiring within 7 days on {{ $labels.pki_type }}/{{ $labels.ca_level }}"
+          description: "Certificates approaching expiration require renewal"
+
+      # High revocation count
+      - alert: HighRevocationRate
+        expr: pki_revocation_rate > 10
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High revocation rate for {{ $labels.pki_type }}"
+          description: "Revocation rate is {{ $value }} certs/second"
+
+  - name: pki_ct_log_alerts
+    rules:
+      # CT log is down
+      - alert: CTLogDown
+        expr: pki_ct_log_up == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Certificate Transparency log is down"
+          description: "CT log has been unreachable for more than 2 minutes"
