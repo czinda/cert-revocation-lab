@@ -345,6 +345,72 @@ services:
       retries: 5
       start_period: 120s
 
+  ds-ecc-kra:
+    image: quay.io/389ds/dirsrv:${DS_VERSION:-latest}
+    container_name: ds-ecc-kra
+    hostname: ds-ecc-kra.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      DS_SUFFIX_NAME: kra
+    volumes:
+      - ds-ecc-kra-data:/data
+    networks:
+      pki-ecc-net:
+        ipv4_address: 172.28.0.24
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/libexec/dirsrv/dscontainer -H || ldapsearch -x -H ldap://localhost:3389 -b '' -s base > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      start_period: 120s
+      retries: 10
+
+  dogtag-ecc-kra:
+    image: quay.io/dogtagpki/pki-ca:${PKI_VERSION:-latest}
+    container_name: dogtag-ecc-kra
+    hostname: ecc-kra.${LAB_DOMAIN:-cert-lab.local}
+    privileged: true
+    depends_on:
+      ds-ecc-kra:
+        condition: service_healthy
+      dogtag-ecc-intermediate-ca:
+        condition: service_started
+    environment:
+      PKI_DS_URL: ldap://ds-ecc-kra.cert-lab.local:3389
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_INSTANCE_NAME: pki-ecc-kra
+      DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+    volumes:
+      - ./configs/pki:/etc/pki-configs:ro
+      - ./scripts/pki:/scripts:ro
+      - ./data/certs:/certs
+      - pki-ecc-kra-data:/var/lib/pki
+      - pki-ecc-kra-logs:/var/log/pki
+    extra_hosts:
+      - "ds-ecc-root.cert-lab.local:172.28.0.14"
+      - "ds-ecc-intermediate.cert-lab.local:172.28.0.15"
+      - "ds-ecc-kra.cert-lab.local:172.28.0.24"
+      - "ecc-root-ca.cert-lab.local:172.28.0.12"
+      - "ecc-intermediate-ca.cert-lab.local:172.28.0.11"
+      - "ecc-iot-ca.cert-lab.local:172.28.0.13"
+      - "ecc-kra.cert-lab.local:172.28.0.23"
+    networks:
+      pki-ecc-net:
+        ipv4_address: 172.28.0.23
+    ports:
+      - "8468:8443"
+      - "8498:8080"
+    command: ["/bin/bash", "-c", "sleep infinity"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk https://localhost:8443/kra/admin/kra/getStatus 2>/dev/null | grep -q running || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
 networks:
   pki-ecc-net:
     external: true
@@ -365,3 +431,6 @@ volumes:
   ds-ecc-ocsp-data:
   pki-ecc-ocsp-data:
   pki-ecc-ocsp-logs:
+  ds-ecc-kra-data:
+  pki-ecc-kra-data:
+  pki-ecc-kra-logs:

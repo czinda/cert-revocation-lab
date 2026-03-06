@@ -27,6 +27,7 @@ Uses Dogtag PKI and FreeIPA, integrated with Event-Driven Ansible for real-time 
 │     ├──┐                │     ├──┐                │     ├──┐                │
 │ IoT Sub-CA (8445)       │ IoT Sub-CA (8465)       │ IoT Sub-CA (8455)       │
 │ OCSP Responder (8448)   │ OCSP Responder (8467)   │ OCSP Responder (8457)   │
+│ KRA (8449)              │ KRA (8468)              │ KRA (8458)              │
 │ EST RA (8447/EST)       │ EST RA (8466/EST)       │ EST RA (8456/EST)       │
 │ ACME RA (8446)          │                         │                         │
 ├─────────────────────────┼─────────────────────────┼─────────────────────────┤
@@ -38,12 +39,13 @@ Uses Dogtag PKI and FreeIPA, integrated with Event-Driven Ansible for real-time 
 FreeIPA (172.25.0.10:4443) - Identity Management with internal CA
 ```
 
-### CA vs RA vs OCSP Deployment
+### CA vs RA vs Subsystem Deployment
 
-The hierarchy uses three deployment models:
+The hierarchy uses four deployment models:
 
 - **Full CAs** (Root, Intermediate, IoT): Two-step `pkispawn` deployment with dedicated 389 DS. Generate CSR → parent CA signs → import signed cert. Each has own signing keys and LDAP backend.
 - **OCSP Responders**: Single-step `pkispawn -s OCSP` deployment with dedicated 389 DS. Joins Root CA's security domain, gets OCSP signing cert from Intermediate CA automatically. Validates certificate revocation status independently of the CA's built-in OCSP.
+- **KRA (Key Recovery Authority)**: Single-step `pkispawn -s KRA` deployment with dedicated 389 DS. Provides key archival and recovery services. Gets storage/transport certs from Intermediate CA.
 - **Standalone RAs** (EST, ACME): Lightweight `pki-server create` instances with no CA subsystem and no LDAP. Proxy enrollment requests to the Intermediate CA via REST API (`DogtagRABackend` for EST, `PKIIssuer` for ACME). TLS certs signed by Intermediate CA using `caServerCert` profile.
 
 ## Common Commands

@@ -288,6 +288,9 @@ setup_volumes() {
         "ds-ocsp-data"
         "pki-ocsp-data"
         "pki-ocsp-logs"
+        "ds-kra-data"
+        "pki-kra-data"
+        "pki-kra-logs"
     )
 
     # Check/create rootless volumes
@@ -529,7 +532,7 @@ start_pki_hierarchy() {
 
     # Check if all PKI containers are already running
     local all_running=true
-    for ctr in ds-root ds-intermediate ds-iot ds-ocsp dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-acme-ca dogtag-est-ca; do
+    for ctr in ds-root ds-intermediate ds-iot ds-ocsp ds-kra dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-kra dogtag-acme-ca dogtag-est-ca; do
         if is_rootful_running "$ctr"; then
             log_success "$ctr is already running"
         else
@@ -554,7 +557,7 @@ start_pki_hierarchy() {
 
     # Wait for all containers to be running
     log_info "Waiting for PKI containers to start..."
-    for ctr in ds-root ds-intermediate ds-iot ds-ocsp dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-acme-ca dogtag-est-ca; do
+    for ctr in ds-root ds-intermediate ds-iot ds-ocsp ds-kra dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-kra dogtag-acme-ca dogtag-est-ca; do
         local elapsed=0
         while [ $elapsed -lt 60 ]; do
             local status=""
@@ -669,7 +672,7 @@ start_pq_pki_hierarchy() {
 
     # Check if all PQ PKI containers are already running
     local all_running=true
-    for ctr in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-ocsp dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-ocsp dogtag-pq-est-ca; do
+    for ctr in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-ocsp ds-pq-kra dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-ocsp dogtag-pq-kra dogtag-pq-est-ca; do
         if is_rootful_running "$ctr"; then
             log_success "$ctr is already running"
         else
@@ -692,7 +695,7 @@ start_pq_pki_hierarchy() {
 
     # Wait for all PQ containers to be running
     log_info "Waiting for PQ PKI containers to start..."
-    for ctr in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-ocsp dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-ocsp dogtag-pq-est-ca; do
+    for ctr in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-ocsp ds-pq-kra dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-ocsp dogtag-pq-kra dogtag-pq-est-ca; do
         local elapsed=0
         while [ $elapsed -lt 60 ]; do
             local status=""
@@ -757,7 +760,7 @@ start_ecc_pki_hierarchy() {
 
     # Check if all ECC PKI containers are already running
     local all_running=true
-    for ctr in ds-ecc-root ds-ecc-intermediate ds-ecc-iot ds-ecc-ocsp dogtag-ecc-root-ca dogtag-ecc-intermediate-ca dogtag-ecc-iot-ca dogtag-ecc-ocsp dogtag-ecc-est-ca; do
+    for ctr in ds-ecc-root ds-ecc-intermediate ds-ecc-iot ds-ecc-ocsp ds-ecc-kra dogtag-ecc-root-ca dogtag-ecc-intermediate-ca dogtag-ecc-iot-ca dogtag-ecc-ocsp dogtag-ecc-kra dogtag-ecc-est-ca; do
         if is_rootful_running "$ctr"; then
             log_success "$ctr is already running"
         else
@@ -780,7 +783,7 @@ start_ecc_pki_hierarchy() {
 
     # Wait for all ECC containers to be running
     log_info "Waiting for ECC PKI containers to start..."
-    for ctr in ds-ecc-root ds-ecc-intermediate ds-ecc-iot ds-ecc-ocsp dogtag-ecc-root-ca dogtag-ecc-intermediate-ca dogtag-ecc-iot-ca dogtag-ecc-ocsp dogtag-ecc-est-ca; do
+    for ctr in ds-ecc-root ds-ecc-intermediate ds-ecc-iot ds-ecc-ocsp ds-ecc-kra dogtag-ecc-root-ca dogtag-ecc-intermediate-ca dogtag-ecc-iot-ca dogtag-ecc-ocsp dogtag-ecc-kra dogtag-ecc-est-ca; do
         local elapsed=0
         while [ $elapsed -lt 60 ]; do
             local status=""
@@ -1147,7 +1150,7 @@ quick_start() {
     # Start PKI containers from pki-compose.yml (rootful - has initialized data)
     if [ -f pki-compose.yml ]; then
         local pki_all_running=true
-        for ctr in ds-root ds-intermediate ds-iot ds-ocsp dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-acme-ca dogtag-est-ca; do
+        for ctr in ds-root ds-intermediate ds-iot ds-ocsp ds-kra dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-kra dogtag-acme-ca dogtag-est-ca; do
             if is_rootful_running "$ctr"; then
                 log_success "$ctr is already running"
             else

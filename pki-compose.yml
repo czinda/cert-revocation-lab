@@ -371,6 +371,76 @@ services:
       retries: 5
       start_period: 120s
 
+  # 389DS for KRA (RSA-4096)
+  ds-kra:
+    image: quay.io/389ds/dirsrv:${DS_VERSION:-latest}
+    container_name: ds-kra
+    hostname: ds-kra.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      DS_SUFFIX_NAME: kra
+    volumes:
+      - ds-kra-data:/data
+    networks:
+      pki-net:
+        ipv4_address: 172.26.0.24
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/libexec/dirsrv/dscontainer -H || ldapsearch -x -H ldap://localhost:3389 -b '' -s base > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      start_period: 120s
+      retries: 10
+
+  # Dogtag KRA - Key Recovery Authority (RSA-4096)
+  # Full Dogtag KRA instance for key archival and recovery.
+  # Joins Root CA security domain, gets certs from Intermediate CA.
+  dogtag-kra:
+    image: quay.io/dogtagpki/pki-ca:${PKI_VERSION:-latest}
+    container_name: dogtag-kra
+    hostname: kra.${LAB_DOMAIN:-cert-lab.local}
+    privileged: true
+    depends_on:
+      ds-kra:
+        condition: service_healthy
+      dogtag-intermediate-ca:
+        condition: service_started
+    environment:
+      PKI_DS_URL: ldap://ds-kra.cert-lab.local:3389
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_INSTANCE_NAME: pki-kra
+      DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+    volumes:
+      - ./configs/pki:/etc/pki-configs:ro
+      - ./scripts/pki:/scripts:ro
+      - ./data/certs:/certs
+      - pki-kra-data:/var/lib/pki
+      - pki-kra-logs:/var/log/pki
+    extra_hosts:
+      - "ds-root.cert-lab.local:172.26.0.14"
+      - "ds-intermediate.cert-lab.local:172.26.0.15"
+      - "ds-kra.cert-lab.local:172.26.0.24"
+      - "root-ca.cert-lab.local:172.26.0.12"
+      - "intermediate-ca.cert-lab.local:172.26.0.11"
+      - "iot-ca.cert-lab.local:172.26.0.13"
+      - "kra.cert-lab.local:172.26.0.23"
+    networks:
+      pki-net:
+        ipv4_address: 172.26.0.23
+    ports:
+      - "8449:8443"
+      - "8489:8080"
+    command: ["/bin/bash", "-c", "sleep infinity"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk https://localhost:8443/kra/admin/kra/getStatus 2>/dev/null | grep -q running || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
 networks:
   pki-net:
     external: true
@@ -392,3 +462,6 @@ volumes:
   ds-ocsp-data:
   pki-ocsp-data:
   pki-ocsp-logs:
+  ds-kra-data:
+  pki-kra-data:
+  pki-kra-logs:

@@ -97,16 +97,19 @@ INTERMEDIATE_CONTAINER="${CT_PREFIX}intermediate-ca"
 IOT_CONTAINER="${CT_PREFIX}iot-ca"
 EST_CONTAINER="${CT_PREFIX}est-ca"
 OCSP_CONTAINER="${CT_PREFIX}ocsp"
+KRA_CONTAINER="${CT_PREFIX}kra"
 ROOT_HOSTNAME="${CA_PREFIX}root-ca.cert-lab.local"
 INTERMEDIATE_HOSTNAME="${CA_PREFIX}intermediate-ca.cert-lab.local"
 IOT_HOSTNAME="${CA_PREFIX}iot-ca.cert-lab.local"
 EST_HOSTNAME="${CA_PREFIX}est-ca.cert-lab.local"
 OCSP_HOSTNAME="${CA_PREFIX}ocsp.cert-lab.local"
+KRA_HOSTNAME="${CA_PREFIX}kra.cert-lab.local"
 ROOT_URL="https://${ROOT_HOSTNAME}:8443"
 INTERMEDIATE_URL="https://${INTERMEDIATE_HOSTNAME}:8443"
 IOT_URL="https://${IOT_HOSTNAME}:8443"
 EST_URL="https://${EST_HOSTNAME}:8443"
 OCSP_URL="https://${OCSP_HOSTNAME}:8443"
+KRA_URL="https://${KRA_HOSTNAME}:8443"
 
 # Override log functions with PKI-type-specific prefix
 log_info() { echo -e "${BLUE}[${LOG_PREFIX}]${NC} $*"; }
@@ -536,6 +539,40 @@ init_ocsp() {
     log_warn "OCSP Responder not responding yet (may need container restart)"
 }
 
+# Initialize KRA (Dogtag KRA subsystem)
+init_kra() {
+    log_phase "Initializing ${CA_PREFIX}Key Recovery Authority (Dogtag KRA Subsystem)"
+
+    # Check if KRA container exists
+    if ! $PODMAN ps --format '{{.Names}}' | grep -q "^${KRA_CONTAINER}$"; then
+        log_warn "KRA container (${KRA_CONTAINER}) not running, skipping"
+        return 0
+    fi
+
+    # Check if already initialized
+    if $PODMAN exec "$KRA_CONTAINER" curl -sk https://localhost:8443/kra/admin/kra/getStatus 2>/dev/null | grep -q "running"; then
+        log_success "${CA_PREFIX}KRA already initialized and responding"
+        return 0
+    fi
+
+    setup_mock_systemctl "$KRA_CONTAINER"
+
+    # Run KRA initialization (single-step pkispawn)
+    log_info "Running KRA initialization..."
+    $PODMAN exec "$KRA_CONTAINER" /scripts/init-kra.sh "$PKI_TYPE"
+
+    # Verify
+    log_info "Verifying KRA..."
+    for i in {1..12}; do
+        if $PODMAN exec "$KRA_CONTAINER" curl -sk https://localhost:8443/kra/admin/kra/getStatus 2>/dev/null | grep -q "running"; then
+            log_success "${CA_PREFIX}KRA initialization complete"
+            return 0
+        fi
+        sleep 5
+    done
+    log_warn "KRA not responding yet (may need container restart)"
+}
+
 # Verify EST endpoint on EST RA
 verify_est() {
     log_phase "Verifying EST on ${CA_PREFIX}EST RA"
@@ -733,6 +770,7 @@ main() {
     init_intermediate_ca
     init_iot_ca
     init_ocsp
+    init_kra
     init_est_ca
     init_acme_ca
     verify_est
