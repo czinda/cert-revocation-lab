@@ -6,17 +6,20 @@ Prometheus format. Designed to run alongside the cert-revocation-lab
 monitoring stack.
 
 Metrics exported:
-  pki_ca_up{pki_type,ca_level}                     - CA health (1=up, 0=down)
-  pki_certificates_total{pki_type,ca_level,status}  - Certificate counts
-  pki_ocsp_response_seconds{pki_type,ca_level}      - OCSP query latency
-  pki_crl_last_update_timestamp{pki_type,ca_level}   - CRL last update epoch
-  pki_crl_next_update_timestamp{pki_type,ca_level}   - CRL next update epoch
-  pki_crl_entries_total{pki_type,ca_level}           - Revoked entries in CRL
-  pki_issuance_total{pki_type}                       - Certificates issued (perf test)
-  pki_revocation_total{pki_type}                     - Certificates revoked (perf test)
-  pki_issuance_rate{pki_type}                        - Issuance certs/second
-  pki_revocation_rate{pki_type}                      - Revocation certs/second
-  pki_issuance_duration_seconds{pki_type,quantile}   - Issuance latency percentiles
+  pki_ca_up{pki_type,ca_level}                              - CA health (1=up, 0=down)
+  pki_certificates_total{pki_type,ca_level,status}           - Certificate counts
+  pki_certificates_expiring_total{pki_type,ca_level,window}  - Certs expiring in window
+  pki_ocsp_response_seconds{pki_type,ca_level}               - OCSP query latency
+  pki_ocsp_responder_up{pki_type}                            - Dedicated OCSP health
+  pki_ocsp_responder_response_seconds{pki_type}              - Dedicated OCSP latency
+  pki_crl_last_update_timestamp{pki_type,ca_level}           - CRL last update epoch
+  pki_crl_next_update_timestamp{pki_type,ca_level}           - CRL next update epoch
+  pki_crl_entries_total{pki_type,ca_level}                   - Revoked entries in CRL
+  pki_issuance_total{pki_type}                               - Certificates issued (perf)
+  pki_revocation_total{pki_type}                             - Certificates revoked (perf)
+  pki_issuance_rate{pki_type}                                - Issuance certs/second
+  pki_revocation_rate{pki_type}                              - Revocation certs/second
+  pki_issuance_duration_seconds{pki_type,quantile}           - Issuance latency percentiles
 """
 
 import asyncio
@@ -25,7 +28,7 @@ import logging
 import os
 import subprocess
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -126,6 +129,13 @@ issuance_duration = Gauge(
     "pki_issuance_duration_seconds",
     "Certificate issuance latency percentiles",
     ["pki_type", "quantile"],
+    registry=registry,
+)
+
+certificates_expiring = Gauge(
+    "pki_certificates_expiring_total",
+    "Certificates expiring within a time window",
+    ["pki_type", "ca_level", "window"],
     registry=registry,
 )
 
@@ -235,6 +245,29 @@ async def get_crl_info(host: str, port: int) -> dict:
     except Exception as e:
         logger.debug(f"Failed to get CRL info from {host}:{port}: {e}")
     return {}
+
+
+async def get_expiring_cert_count(
+    host: str, port: int, days: int
+) -> Optional[int]:
+    """Get count of valid certs expiring within N days from Dogtag REST API."""
+    now = datetime.now(timezone.utc)
+    max_expiry = now + timedelta(days=days)
+    # Dogtag expects ISO 8601 date format
+    max_date = max_expiry.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    url = (
+        f"https://{host}:{port}/ca/rest/certs"
+        f"?size=1&status=VALID&maxExpirationDate={max_date}"
+    )
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=10.0) as client:
+            resp = await client.get(url, headers={"Accept": "application/json"})
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("total", 0)
+    except Exception as e:
+        logger.debug(f"Failed to get expiring certs from {host}:{port}: {e}")
+    return None
 
 
 async def measure_ocsp_time(host: str, port: int) -> Optional[float]:
@@ -351,6 +384,14 @@ async def scrape_ca(pki_type: str, ca_level: str, host: str, port: int):
         if count is not None:
             certificates_total.labels(
                 pki_type=pki_type, ca_level=ca_level, status=status
+            ).set(count)
+
+    # Expiring certificates (7d, 30d, 90d windows)
+    for days, window in [(7, "7d"), (30, "30d"), (90, "90d")]:
+        count = await get_expiring_cert_count(host, port, days)
+        if count is not None:
+            certificates_expiring.labels(
+                pki_type=pki_type, ca_level=ca_level, window=window
             ).set(count)
 
     # CRL info
