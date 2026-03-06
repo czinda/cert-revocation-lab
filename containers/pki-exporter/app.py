@@ -129,6 +129,20 @@ issuance_duration = Gauge(
     registry=registry,
 )
 
+ocsp_responder_up = Gauge(
+    "pki_ocsp_responder_up",
+    "Whether a dedicated OCSP responder is reachable (1=up, 0=down)",
+    ["pki_type"],
+    registry=registry,
+)
+
+ocsp_responder_response_seconds = Gauge(
+    "pki_ocsp_responder_response_seconds",
+    "Dedicated OCSP responder response latency in seconds",
+    ["pki_type"],
+    registry=registry,
+)
+
 # --- CA Configuration ---
 # Uses host-gateway ports (same pattern as iot-client and eda-server)
 
@@ -148,6 +162,13 @@ CA_TARGETS = {
         "intermediate": {"host": "pq-intermediate-ca.cert-lab.local", "port": 8454},
         "iot": {"host": "pq-iot-ca.cert-lab.local", "port": 8455},
     },
+}
+
+# Dedicated OCSP Responder targets (separate from CA's built-in OCSP)
+OCSP_TARGETS = {
+    "rsa": {"host": "ocsp.cert-lab.local", "port": 8448},
+    "ecc": {"host": "ecc-ocsp.cert-lab.local", "port": 8467},
+    "pqc": {"host": "pq-ocsp.cert-lab.local", "port": 8457},
 }
 
 # Path where perf-test.py writes its metrics JSON
@@ -244,12 +265,51 @@ def load_perf_metrics() -> dict:
     return {}
 
 
+async def check_ocsp_responder(host: str, port: int) -> bool:
+    """Check if a dedicated OCSP responder is running."""
+    url = f"https://{host}:{port}/ocsp/admin/ocsp/getStatus"
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=5.0) as client:
+            resp = await client.get(url)
+            return resp.status_code == 200 and "running" in resp.text.lower()
+    except Exception:
+        return False
+
+
+async def measure_ocsp_responder_time(host: str, port: int) -> Optional[float]:
+    """Measure dedicated OCSP responder response time."""
+    ocsp_url = f"https://{host}:{port}/ocsp/ee/ocsp"
+    try:
+        start = time.monotonic()
+        async with httpx.AsyncClient(verify=False, timeout=10.0) as client:
+            resp = await client.get(ocsp_url)
+            elapsed = time.monotonic() - start
+            if resp.status_code in (200, 400, 405):
+                return elapsed
+    except Exception as e:
+        logger.debug(f"OCSP responder probe failed for {host}:{port}: {e}")
+    return None
+
+
+async def scrape_ocsp_responder(pki_type: str, host: str, port: int):
+    """Scrape a dedicated OCSP responder."""
+    up = await check_ocsp_responder(host, port)
+    ocsp_responder_up.labels(pki_type=pki_type).set(1 if up else 0)
+
+    if up:
+        resp_time = await measure_ocsp_responder_time(host, port)
+        if resp_time is not None:
+            ocsp_responder_response_seconds.labels(pki_type=pki_type).set(resp_time)
+
+
 async def scrape_all():
-    """Scrape all CAs and update Prometheus metrics."""
+    """Scrape all CAs and OCSP responders, update Prometheus metrics."""
     tasks = []
     for pki_type, levels in CA_TARGETS.items():
         for ca_level, target in levels.items():
             tasks.append(scrape_ca(pki_type, ca_level, target["host"], target["port"]))
+    for pki_type, target in OCSP_TARGETS.items():
+        tasks.append(scrape_ocsp_responder(pki_type, target["host"], target["port"]))
     await asyncio.gather(*tasks, return_exceptions=True)
 
     # Load perf test metrics from shared volume

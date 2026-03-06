@@ -24,8 +24,9 @@ Uses Dogtag PKI and FreeIPA, integrated with Event-Driven Ansible for real-time 
 │ Root CA (8443)          │ Root CA (8463)          │ Root CA (8453)          │
 │     │                   │     │                   │     │                   │
 │ Intermediate CA (8444)  │ Intermediate CA (8464)  │ Intermediate CA (8454)  │
-│     ├──┐                │     │                   │     │                   │
+│     ├──┐                │     ├──┐                │     ├──┐                │
 │ IoT Sub-CA (8445)       │ IoT Sub-CA (8465)       │ IoT Sub-CA (8455)       │
+│ OCSP Responder (8448)   │ OCSP Responder (8467)   │ OCSP Responder (8457)   │
 │ EST RA (8447/EST)       │ EST RA (8466/EST)       │ EST RA (8456/EST)       │
 │ ACME RA (8446)          │                         │                         │
 ├─────────────────────────┼─────────────────────────┼─────────────────────────┤
@@ -37,11 +38,12 @@ Uses Dogtag PKI and FreeIPA, integrated with Event-Driven Ansible for real-time 
 FreeIPA (172.25.0.10:4443) - Identity Management with internal CA
 ```
 
-### CA vs RA Deployment
+### CA vs RA vs OCSP Deployment
 
-The hierarchy uses two deployment models:
+The hierarchy uses three deployment models:
 
 - **Full CAs** (Root, Intermediate, IoT): Two-step `pkispawn` deployment with dedicated 389 DS. Generate CSR → parent CA signs → import signed cert. Each has own signing keys and LDAP backend.
+- **OCSP Responders**: Single-step `pkispawn -s OCSP` deployment with dedicated 389 DS. Joins Root CA's security domain, gets OCSP signing cert from Intermediate CA automatically. Validates certificate revocation status independently of the CA's built-in OCSP.
 - **Standalone RAs** (EST, ACME): Lightweight `pki-server create` instances with no CA subsystem and no LDAP. Proxy enrollment requests to the Intermediate CA via REST API (`DogtagRABackend` for EST, `PKIIssuer` for ACME). TLS certs signed by Intermediate CA using `caServerCert` profile.
 
 ## Common Commands
@@ -204,7 +206,7 @@ cp .env.example .env && vi .env  # Set all CHANGEME values
 ./scripts/pki-cli.py test --ca iot                    # End-to-end test
 ```
 
-**Supported CA levels:** `root`, `intermediate`, `iot`, `est`, `acme`
+**Supported CA levels:** `root`, `intermediate`, `iot`, `ocsp`, `est`, `acme`
 
 **Notes:**
 - Uses `pki` CLI via `sudo podman exec` (bypasses REST API nonce/CSRF issue)
@@ -253,12 +255,13 @@ ACME (RFC 8555) and EST (RFC 7030) are deployed as **standalone Registration Aut
 - ACME: `https://acme-ca.cert-lab.local:8446/acme/directory`
 - EST cacerts: `https://est-ca.cert-lab.local:8447/.well-known/est/cacerts`
 - EST enroll: `https://est-ca.cert-lab.local:8447/.well-known/est/simpleenroll`
+- OCSP: `https://ocsp.cert-lab.local:8448/ocsp/ee/ocsp`
 
 The IoT Client uses EST-first enrollment (falls back to Dogtag REST API if EST unavailable).
 
 ## Monitoring Stack
 
-Prometheus (`:9090`) → Grafana (`:3000`) pipeline with PKI Exporter (`:9091/metrics`) scraping all 9 Dogtag CAs. Auto-provisioned dashboard (uid: `pki-metrics`) with CA health, certificate inventory, issuance/revocation throughput, OCSP response times, and CRL status.
+Prometheus (`:9090`) → Grafana (`:3000`) pipeline with PKI Exporter (`:9091/metrics`) scraping all 9 Dogtag CAs plus 3 dedicated OCSP responders. Auto-provisioned dashboard (uid: `pki-metrics`) with CA health, certificate inventory, issuance/revocation throughput, OCSP response times (built-in and dedicated), and CRL status.
 
 ## AgnosticD / RHPDS Deployment
 
