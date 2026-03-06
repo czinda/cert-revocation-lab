@@ -1,0 +1,12 @@
+# Certificate Pinning Validator — Default Pin Store
+# Pins are loaded at startup and updated at runtime via the /pin endpoint.
+# Each entry maps a hostname to its SPKI SHA-256 pin and metadata.
+
+pins:
+  root-ca.cert-lab.local:
+    pin_sha256: "placeholder-will-be-set-at-runtime"
+    backup_pins: []
+    max_age: 31536000
+    include_subdomains: false
+    pki_type: rsa
+    created_at: "2024-01-01T00:00:00Z"

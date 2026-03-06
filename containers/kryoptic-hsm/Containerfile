@@ -1,0 +1,77 @@
+# Kryoptic HSM (PKCS#11) Simulation Container
+#
+# Provides a software PKCS#11 token using Kryoptic (Rust-based HSM simulator)
+# for certificate key management across all three PKI hierarchies.
+#
+# Build with:
+#   podman build -t localhost/kryoptic-hsm:latest -f Containerfile .
+
+FROM registry.fedoraproject.org/fedora:latest AS builder
+
+LABEL maintainer="cert-revocation-lab"
+LABEL description="Kryoptic PKCS#11 HSM simulator for PKI key management"
+
+# Install Rust toolchain and build dependencies
+RUN dnf install -y \
+    rust \
+    cargo \
+    gcc \
+    gcc-c++ \
+    make \
+    openssl-devel \
+    sqlite-devel \
+    git \
+    clang-devel \
+    && dnf clean all
+
+# Clone and build Kryoptic
+WORKDIR /build
+RUN git clone --depth 1 https://github.com/latchset/kryoptic.git
+
+WORKDIR /build/kryoptic
+RUN cargo build --release --features all
+
+# --- Final image ---
+FROM registry.fedoraproject.org/fedora:latest
+
+LABEL maintainer="cert-revocation-lab"
+LABEL description="Kryoptic PKCS#11 HSM simulator for PKI key management"
+
+# Install runtime dependencies and PKCS#11 tools
+RUN dnf install -y \
+    openssl \
+    sqlite \
+    opensc \
+    softhsm \
+    p11-kit \
+    pkcs11-provider \
+    jq \
+    && dnf clean all
+
+# Copy built Kryoptic PKCS#11 module from builder
+COPY --from=builder /build/kryoptic/target/release/libkryoptic_pkcs11.so /usr/lib64/pkcs11/
+
+# Create required directories
+RUN mkdir -p /var/lib/kryoptic/tokens \
+             /etc/kryoptic \
+             /var/run/kryoptic
+
+# Copy configuration and entrypoint
+COPY kryoptic.conf /etc/kryoptic/kryoptic.conf
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Environment variables for token PINs
+ENV HSM_SO_PIN=12345678
+ENV HSM_USER_PIN=1234
+ENV KRYOPTIC_CONF=/etc/kryoptic/kryoptic.conf
+
+# No ports exposed - library-only, used via volume mount
+# The PKCS#11 .so and token storage are shared with PKI containers
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD [ -f /var/lib/kryoptic/status.json ] && \
+        python3 -c "import json,sys; d=json.load(open('/var/lib/kryoptic/status.json')); sys.exit(0 if d.get('initialized') else 1)" \
+        || exit 1
+
+ENTRYPOINT ["/entrypoint.sh"]

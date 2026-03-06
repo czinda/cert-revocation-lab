@@ -239,6 +239,8 @@ class LabConfig:
     crl_cdp_url: str = "http://localhost:8088"
     policy_engine_url: str = "http://localhost:8089"
     chain_visualizer_url: str = "http://localhost:8090"
+    pin_validator_url: str = "http://localhost:8091"
+    kmip_server_url: str = "http://localhost:8092"
 
     # Domain
     lab_domain: str = "cert-lab.local"

@@ -1,0 +1,149 @@
+---
+# Incident Response - Phase 5: Re-key and Re-issue
+# Generates a new key pair and issues a replacement certificate.
+#
+# Expected variables from parent playbook:
+#   device_fqdn, incident_id, pki_type, pki_name, ca_level,
+#   container_prefix, cert_profile, incident_log, lab_root_dir
+
+- name: "Re-issue - Begin"
+  ansible.builtin.debug:
+    msg: |
+      ----------------------------------------------------------------
+      PHASE 5: RE-KEY AND RE-ISSUE - {{ device_fqdn }}
+      ----------------------------------------------------------------
+      PKI Type:   {{ pki_type }} ({{ pki_name }})
+      CA Level:   {{ ca_level }}
+      Profile:    {{ cert_profile }}
+      ----------------------------------------------------------------
+
+# --- Key generation parameters per PKI type ---
+- name: Set key generation parameters for RSA
+  ansible.builtin.set_fact:
+    keygen_cmd: "openssl genrsa -out /tmp/ir-reissue-{{ device_fqdn }}.key 4096"
+    csr_extra_args: ""
+  when: pki_type == 'rsa'
+
+- name: Set key generation parameters for ECC
+  ansible.builtin.set_fact:
+    keygen_cmd: "openssl ecparam -name secp384r1 -genkey -out /tmp/ir-reissue-{{ device_fqdn }}.key"
+    csr_extra_args: "-sha384"
+  when: pki_type == 'ecc'
+
+- name: Set key generation parameters for PQC (ML-DSA-87)
+  ansible.builtin.set_fact:
+    keygen_cmd: "openssl genpkey -algorithm mldsa87 -out /tmp/ir-reissue-{{ device_fqdn }}.key"
+    csr_extra_args: ""
+  when: pki_type == 'pqc'
+
+# --- File paths ---
+- name: Set certificate file paths
+  ansible.builtin.set_fact:
+    ir_new_key_file: "/tmp/ir-reissue-{{ device_fqdn }}.key"
+    ir_new_csr_file: "/tmp/ir-reissue-{{ device_fqdn }}.csr"
+    ir_new_cert_file: "/tmp/ir-reissue-{{ device_fqdn }}.crt"
+
+# --- Generate new key pair ---
+- name: Generate new private key on lab host
+  ansible.builtin.shell:
+    cmd: "{{ keygen_cmd }}"
+  delegate_to: lab-host
+  register: keygen_result
+
+- name: Set key file permissions
+  ansible.builtin.file:
+    path: "{{ ir_new_key_file }}"
+    mode: '0600'
+  delegate_to: lab-host
+
+- name: Display key generation status
+  ansible.builtin.debug:
+    msg: "New {{ pki_name }} private key generated: {{ ir_new_key_file }}"
+
+# --- Generate CSR ---
+- name: Generate CSR with same subject
+  ansible.builtin.shell:
+    cmd: >
+      openssl req -new
+      -key {{ ir_new_key_file }}
+      -out {{ ir_new_csr_file }}
+      -subj "/CN={{ device_fqdn }}"
+      {{ csr_extra_args }}
+  delegate_to: lab-host
+  register: csr_result
+
+- name: Display CSR generation status
+  ansible.builtin.debug:
+    msg: "CSR generated for {{ device_fqdn }}: {{ ir_new_csr_file }}"
+
+# --- Submit CSR to CA ---
+- name: Issue new certificate via pki-cli.py
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ lab_root_dir }}
+      ./scripts/pki-cli.py issue \
+        --ca {{ ca_level }} \
+        --pki {{ pki_type }} \
+        --cn "{{ device_fqdn }}" 2>&1
+  delegate_to: lab-host
+  register: issue_result
+
+- name: Display issuance output
+  ansible.builtin.debug:
+    msg: "{{ issue_result.stdout_lines | default(['Issuance command executed']) }}"
+
+# --- Extract new certificate serial ---
+- name: Extract new certificate serial from output
+  ansible.builtin.set_fact:
+    ir_new_cert_serial: >-
+      {{ issue_result.stdout | default('') |
+         regex_search('Serial[:\s]+(?:Number[:\s]+)?(?:0x)?([0-9a-fA-F]+)', '\1') |
+         default([''], true) | first | default('') }}
+
+- name: Verify new certificate was issued
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'New certificate issued with serial: 0x' + ir_new_cert_serial
+         if ir_new_cert_serial | default('') != ''
+         else 'WARNING: Could not extract serial from issuance output' }}
+
+# --- Verify new certificate status ---
+- name: Verify new certificate status
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ lab_root_dir }}
+      sudo podman exec {{ container_prefix }}-{{ ca_level }}-ca pki -d /root/.dogtag/nssdb -c '' \
+        ca-cert-show 0x{{ ir_new_cert_serial }} 2>/dev/null | grep "Status:" | awk '{print $2}'
+  delegate_to: lab-host
+  register: new_cert_status
+  when: ir_new_cert_serial | default('') != ''
+  ignore_errors: true
+
+- name: Set reissue facts
+  ansible.builtin.set_fact:
+    ir_new_cert_status: "{{ new_cert_status.stdout | default('UNKNOWN') | trim }}"
+    ir_reissue_success: "{{ (new_cert_status.stdout | default('') | trim) == 'VALID' }}"
+
+- name: Log reissue to incident log
+  ansible.builtin.lineinfile:
+    path: "{{ incident_log }}"
+    line: "{{ lookup('pipe', 'date -Iseconds') }} | PHASE=REISSUE | INCIDENT={{ incident_id }} | DEVICE={{ device_fqdn }} | NEW_SERIAL={{ ir_new_cert_serial | default('NONE') }} | STATUS={{ ir_new_cert_status | default('UNKNOWN') }} | PKI={{ pki_type }} | PROFILE={{ cert_profile }}"
+    create: true
+    mode: '0644'
+
+- name: Display reissue summary
+  ansible.builtin.debug:
+    msg: |
+      ----------------------------------------------------------------
+      RE-ISSUE SUMMARY - {{ device_fqdn }}
+      ----------------------------------------------------------------
+      New Serial:    0x{{ ir_new_cert_serial | default('N/A') }}
+      Status:        {{ ir_new_cert_status | default('UNKNOWN') }}
+      PKI Type:      {{ pki_type }} ({{ pki_name }})
+      Profile:       {{ cert_profile }}
+      Key File:      {{ ir_new_key_file }}
+      ----------------------------------------------------------------
+
+- name: Set reissue timestamp
+  ansible.builtin.set_fact:
+    ir_reissue_time: "{{ lookup('pipe', 'date -Iseconds') }}"

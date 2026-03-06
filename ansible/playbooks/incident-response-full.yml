@@ -1,0 +1,167 @@
+---
+# Full Incident Response Playbook
+# Orchestrates: Quarantine -> Investigate -> Revoke -> Re-key -> Re-issue -> Verify -> Notify
+#
+# Usage (manual):
+#   ansible-playbook playbooks/incident-response-full.yml \
+#     -e "device_fqdn=compromised.cert-lab.local" \
+#     -e "incident_type=key_compromise" \
+#     -e "pki_type=rsa" \
+#     -e "severity=critical"
+#
+# Usage (from EDA):
+#   Triggered automatically by security-events rulebook for critical incidents
+
+- name: "Incident Response - Full Workflow"
+  hosts: localhost
+  gather_facts: false
+  vars:
+    pki_type: "{{ pki_type | default('rsa') }}"
+    device_fqdn: "{{ device_fqdn | default('unknown.cert-lab.local') }}"
+    incident_type: "{{ incident_type | default('key_compromise') }}"
+    severity: "{{ severity | default('critical') }}"
+    incident_id: "IR-{{ lookup('pipe', 'date +%Y%m%d%H%M%S') }}-{{ 999999 | random }}"
+    log_dir: "{{ lookup('env', 'LAB_LOG_DIR') | default('/opt/cert-lab/logs', true) }}"
+    incident_log: "{{ log_dir }}/incidents/{{ incident_id }}.log"
+    ca_level: "{{ ca_level | default('intermediate') }}"
+    auto_reissue: "{{ auto_reissue | default(true) | bool }}"
+    notify_channels: "{{ notify_channels | default(['log', 'kafka']) }}"
+    lab_root_dir: "{{ hostvars['lab-host'].lab_root_dir | default('/home/cert-revoke/git/cert-revocation-lab', true) }}"
+
+    # PKI-type-specific settings
+    pki_name_map:
+      rsa: "RSA-4096"
+      ecc: "ECC P-384"
+      pqc: "ML-DSA-87"
+    pki_name: "{{ pki_name_map[pki_type] | default('RSA-4096') }}"
+
+    # Container name prefixes per PKI type
+    container_prefix_map:
+      rsa: "dogtag"
+      ecc: "dogtag-ecc"
+      pqc: "dogtag-pq"
+    container_prefix: "{{ container_prefix_map[pki_type] | default('dogtag') }}"
+
+    # Profile selection per PKI type
+    cert_profile_map:
+      rsa: "caServerCert"
+      ecc: "caECServerCert"
+      pqc: "caMLDSAServerCert"
+    cert_profile: "{{ cert_profile_map[pki_type] | default('caServerCert') }}"
+
+    # Revocation reason mapping from incident type
+    incident_reason_map:
+      key_compromise: "key_compromise"
+      ca_compromise: "ca_compromise"
+      affiliation_changed: "affiliation_changed"
+      decommission: "cessation"
+      cessation_of_operation: "cessation"
+      privilege_withdrawn: "privilege_withdrawn"
+      malware_detection: "key_compromise"
+      credential_theft: "key_compromise"
+      ransomware: "key_compromise"
+      c2_communication: "key_compromise"
+      device_cloning: "key_compromise"
+      mitm_detected: "key_compromise"
+
+    # Revocation reason code mapping
+    reason_code_map:
+      key_compromise: 1
+      ca_compromise: 2
+      affiliation_changed: 3
+      superseded: 4
+      cessation: 5
+      privilege_withdrawn: 9
+
+    # Mock service URLs
+    edr_url: "http://mock-edr:8000"
+    siem_url: "http://mock-siem:8000"
+
+  tasks:
+    # ================================================================
+    # Phase 1: Initialize Incident Response
+    # ================================================================
+    - name: "Phase 1 - Initialize Incident Response"
+      block:
+        - name: Record start timestamp
+          ansible.builtin.set_fact:
+            ir_start_time: "{{ lookup('pipe', 'date -Iseconds') }}"
+            ir_start_epoch: "{{ lookup('pipe', 'date +%s') }}"
+
+        - name: Create incident log directory
+          ansible.builtin.file:
+            path: "{{ log_dir }}/incidents"
+            state: directory
+            mode: '0755'
+
+        - name: Log incident start
+          ansible.builtin.lineinfile:
+            path: "{{ incident_log }}"
+            line: "{{ ir_start_time }} | PHASE=INIT | INCIDENT={{ incident_id }} | DEVICE={{ device_fqdn }} | TYPE={{ incident_type }} | SEVERITY={{ severity }} | PKI={{ pki_type }}"
+            create: true
+            mode: '0644'
+
+        - name: Resolve revocation reason from incident type
+          ansible.builtin.set_fact:
+            revocation_reason: "{{ incident_reason_map[incident_type] | default('key_compromise') }}"
+            revocation_reason_code: "{{ reason_code_map[incident_reason_map[incident_type] | default('key_compromise')] | default(1) }}"
+
+        - name: Display incident banner
+          ansible.builtin.debug:
+            msg: |
+              ================================================================
+              INCIDENT RESPONSE INITIATED
+              ================================================================
+              Incident ID:   {{ incident_id }}
+              Device:        {{ device_fqdn }}
+              Type:          {{ incident_type }}
+              Severity:      {{ severity }}
+              PKI Type:      {{ pki_type }} ({{ pki_name }})
+              CA Level:      {{ ca_level }}
+              Reason:        {{ revocation_reason }} (code {{ revocation_reason_code }})
+              Auto Re-issue: {{ auto_reissue }}
+              ================================================================
+      tags: [init]
+
+    # ================================================================
+    # Phase 2: Quarantine
+    # ================================================================
+    - name: "Phase 2 - Quarantine"
+      ansible.builtin.include_tasks: incident-tasks/quarantine.yml
+      tags: [quarantine]
+
+    # ================================================================
+    # Phase 3: Investigate
+    # ================================================================
+    - name: "Phase 3 - Investigate"
+      ansible.builtin.include_tasks: incident-tasks/investigate.yml
+      tags: [investigate]
+
+    # ================================================================
+    # Phase 4: Revoke Certificates
+    # ================================================================
+    - name: "Phase 4 - Revoke Certificates"
+      ansible.builtin.include_tasks: incident-tasks/revoke.yml
+      tags: [revoke]
+
+    # ================================================================
+    # Phase 5: Re-key and Re-issue (conditional)
+    # ================================================================
+    - name: "Phase 5 - Re-key and Re-issue"
+      ansible.builtin.include_tasks: incident-tasks/reissue.yml
+      when: auto_reissue | bool
+      tags: [reissue]
+
+    # ================================================================
+    # Phase 6: Verify Resolution
+    # ================================================================
+    - name: "Phase 6 - Verify Resolution"
+      ansible.builtin.include_tasks: incident-tasks/verify.yml
+      tags: [verify]
+
+    # ================================================================
+    # Phase 7: Notify and Close
+    # ================================================================
+    - name: "Phase 7 - Notify and Close"
+      ansible.builtin.include_tasks: incident-tasks/notify.yml
+      tags: [notify]

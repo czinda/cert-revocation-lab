@@ -1,0 +1,28 @@
+# KMIP Key Management Server
+# Provides centralized key lifecycle management across all PKI hierarchies
+# using a PyKMIP-based server with a FastAPI management API.
+#
+# Ports:
+#   5696 - KMIP protocol (TLS)
+#   8000 - FastAPI management API (HTTP)
+
+FROM quay.io/hummingbird/python:3.12-builder
+
+WORKDIR /app
+
+USER 0
+RUN dnf install -y gcc python3-devel openssl && dnf clean all
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app.py .
+COPY kmip_server.conf .
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
+
+USER 65532
+
+EXPOSE 5696 8000
+
+ENTRYPOINT ["/app/entrypoint.sh"]

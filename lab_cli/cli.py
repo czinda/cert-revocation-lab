@@ -1726,6 +1726,291 @@ def crl_check(
         raise typer.Exit(1)
 
 
+@app.command("pin-register")
+def pin_register(
+    hostname: str = typer.Argument(..., help="Hostname to pin"),
+    cert_pem: str = typer.Option("", "--cert", help="Path to PEM certificate file"),
+    pin: str = typer.Option("", "--pin", help="SHA-256 pin (base64)"),
+    pki_type: str = typer.Option("rsa", "--pki-type", help="PKI type"),
+):
+    """Register a certificate pin for a hostname."""
+    config = LabConfig.load()
+    import json
+
+    body: dict = {"hostname": hostname, "pki_type": pki_type, "backup_pins": []}
+
+    if cert_pem:
+        # Extract pin from certificate
+        with open(cert_pem) as f:
+            pem_data = f.read()
+        body["certificate_pem"] = pem_data
+    elif pin:
+        body["pin_sha256"] = pin
+    else:
+        console.print("[red]Provide --cert or --pin[/red]")
+        raise typer.Exit(1)
+
+    try:
+        response = httpx.post(f"{config.pin_validator_url}/pin", json=body, timeout=10.0)
+        if response.status_code == 200:
+            data = response.json()
+            console.print(f"[green]Pin registered[/green] for {hostname}")
+            console.print(f"  SHA-256: {data.get('pin_sha256', 'N/A')}")
+        else:
+            console.print(f"[red]Failed[/red]: {response.text}")
+    except httpx.ConnectError:
+        console.print("[red]Cannot connect to pin-validator. Is it running?[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("pin-validate")
+def pin_validate(
+    hostname: str = typer.Argument(..., help="Hostname to validate"),
+    cert_pem: str = typer.Option("", "--cert", help="Path to PEM certificate file"),
+):
+    """Validate a certificate against stored pins."""
+    config = LabConfig.load()
+
+    body: dict = {"hostname": hostname}
+    if cert_pem:
+        with open(cert_pem) as f:
+            body["certificate_pem"] = f.read()
+
+    try:
+        response = httpx.post(f"{config.pin_validator_url}/validate", json=body, timeout=10.0)
+        data = response.json()
+        status = data.get("status", "unknown")
+        if status == "valid":
+            console.print(f"[green]VALID[/green] — Pin matches for {hostname}")
+        elif status == "violation":
+            console.print(f"[red]VIOLATION[/red] — Pin mismatch for {hostname}")
+            console.print(f"  Expected: {data.get('expected', [])}")
+            console.print(f"  Got:      {data.get('got', 'N/A')}")
+        elif status == "unpinned":
+            console.print(f"[yellow]UNPINNED[/yellow] — No pin registered for {hostname}")
+        else:
+            console.print(f"[yellow]{status}[/yellow] — {data.get('message', '')}")
+    except httpx.ConnectError:
+        console.print("[red]Cannot connect to pin-validator. Is it running?[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("pin-list")
+def pin_list():
+    """List all registered certificate pins."""
+    config = LabConfig.load()
+
+    try:
+        response = httpx.get(f"{config.pin_validator_url}/pins", timeout=10.0)
+        data = response.json()
+        pins = data.get("pins", {})
+
+        if not pins:
+            console.print("[yellow]No pins registered[/yellow]")
+            return
+
+        table = Table(title="Certificate Pins")
+        table.add_column("Hostname")
+        table.add_column("SHA-256 Pin")
+        table.add_column("PKI Type")
+        table.add_column("Created")
+
+        for hostname, info in pins.items():
+            pin_short = info.get("pin_sha256", "")[:24] + "..."
+            table.add_row(
+                hostname,
+                pin_short,
+                info.get("pki_type", ""),
+                info.get("created_at", ""),
+            )
+
+        console.print(table)
+    except httpx.ConnectError:
+        console.print("[red]Cannot connect to pin-validator. Is it running?[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("kmip-list")
+def kmip_list():
+    """List all KMIP-managed keys."""
+    config = LabConfig.load()
+
+    try:
+        response = httpx.get(f"{config.kmip_server_url}/keys", timeout=10.0)
+        data = response.json()
+        keys = data.get("keys", [])
+
+        if not keys:
+            console.print("[yellow]No KMIP keys found[/yellow]")
+            return
+
+        table = Table(title="KMIP Managed Keys")
+        table.add_column("UID")
+        table.add_column("Name")
+        table.add_column("Algorithm")
+        table.add_column("Length")
+        table.add_column("State")
+
+        for key in keys:
+            state = key.get("state", "unknown")
+            style = "green" if state == "Active" else "yellow" if state == "Pre-Active" else "red"
+            table.add_row(
+                key.get("uid", ""),
+                key.get("name", ""),
+                key.get("algorithm", ""),
+                str(key.get("length", "")),
+                f"[{style}]{state}[/{style}]",
+            )
+
+        console.print(table)
+    except httpx.ConnectError:
+        console.print("[red]Cannot connect to KMIP server. Is it running?[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("kmip-create")
+def kmip_create(
+    name: str = typer.Argument(..., help="Key name"),
+    algorithm: str = typer.Option("RSA", "--algorithm", help="Key algorithm (RSA, AES, EC)"),
+    length: int = typer.Option(4096, "--length", help="Key length in bits"),
+    pki_type: str = typer.Option("rsa", "--pki-type", help="Associated PKI type"),
+    ca_level: str = typer.Option("intermediate", "--ca-level", help="Associated CA level"),
+):
+    """Create a KMIP-managed key."""
+    config = LabConfig.load()
+
+    body = {
+        "name": name,
+        "algorithm": algorithm,
+        "length": length,
+        "usage_mask": ["Sign", "Verify"],
+        "pki_type": pki_type,
+        "ca_level": ca_level,
+    }
+
+    try:
+        response = httpx.post(f"{config.kmip_server_url}/keys", json=body, timeout=30.0)
+        if response.status_code == 200:
+            data = response.json()
+            console.print(f"[green]Key created[/green]: {data.get('uid', 'N/A')}")
+            console.print(f"  Name: {name}")
+            console.print(f"  Algorithm: {algorithm}-{length}")
+        else:
+            console.print(f"[red]Failed[/red]: {response.text}")
+    except httpx.ConnectError:
+        console.print("[red]Cannot connect to KMIP server. Is it running?[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("kmip-lifecycle")
+def kmip_lifecycle():
+    """Show KMIP key lifecycle summary."""
+    config = LabConfig.load()
+
+    try:
+        response = httpx.get(f"{config.kmip_server_url}/lifecycle", timeout=10.0)
+        data = response.json()
+
+        table = Table(title="KMIP Key Lifecycle Summary")
+        table.add_column("State")
+        table.add_column("Count")
+
+        for state, count in data.items():
+            if state == "total":
+                continue
+            style = "green" if state == "Active" else "yellow" if state == "Pre-Active" else "red"
+            table.add_row(f"[{style}]{state}[/{style}]", str(count))
+
+        if "total" in data:
+            table.add_row("[bold]Total[/bold]", str(data["total"]))
+
+        console.print(table)
+    except httpx.ConnectError:
+        console.print("[red]Cannot connect to KMIP server. Is it running?[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("hsm-status")
+def hsm_status():
+    """Show Kryoptic HSM status and token slots."""
+    import json as json_mod
+
+    try:
+        result = subprocess.run(
+            ["podman", "exec", "kryoptic-hsm", "cat", "/var/lib/kryoptic/status.json"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            console.print("[red]HSM not responding. Is kryoptic-hsm running?[/red]")
+            raise typer.Exit(1)
+
+        data = json_mod.loads(result.stdout)
+        console.print(f"[green]HSM Status: {data.get('status', 'unknown')}[/green]")
+        console.print(f"  Module: {data.get('module', 'kryoptic')}")
+        console.print(f"  Initialized: {data.get('initialized', False)}")
+
+        slots = data.get("slots", [])
+        if slots:
+            table = Table(title="Token Slots")
+            table.add_column("Slot")
+            table.add_column("Label")
+            table.add_column("Status")
+
+            for slot in slots:
+                table.add_row(
+                    str(slot.get("id", "")),
+                    slot.get("label", ""),
+                    slot.get("status", ""),
+                )
+            console.print(table)
+
+    except subprocess.TimeoutExpired:
+        console.print("[red]HSM command timed out[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("incident-response")
+def incident_response(
+    device_fqdn: str = typer.Argument(..., help="Device FQDN to respond to"),
+    incident_type: str = typer.Option("key_compromise", "--type", help="Incident type"),
+    pki_type: str = typer.Option("rsa", "--pki-type", help="PKI type"),
+    severity: str = typer.Option("critical", "--severity", help="Severity level"),
+    ca_level: str = typer.Option("intermediate", "--ca-level", help="CA level"),
+    no_reissue: bool = typer.Option(False, "--no-reissue", help="Skip automatic re-issuance"),
+):
+    """Run full incident response workflow for a device."""
+    console.print(f"[bold]Initiating incident response for {device_fqdn}[/bold]")
+    console.print(f"  Type: {incident_type}, Severity: {severity}, PKI: {pki_type}")
+
+    cmd = [
+        "ansible-playbook",
+        "ansible/playbooks/incident-response-full.yml",
+        "-e", f"device_fqdn={device_fqdn}",
+        "-e", f"incident_type={incident_type}",
+        "-e", f"pki_type={pki_type}",
+        "-e", f"severity={severity}",
+        "-e", f"ca_level={ca_level}",
+        "-e", f"auto_reissue={'false' if no_reissue else 'true'}",
+    ]
+
+    try:
+        result = subprocess.run(cmd, timeout=300)
+        if result.returncode == 0:
+            console.print(f"[green]Incident response completed successfully[/green]")
+        else:
+            console.print(f"[red]Incident response failed (exit code {result.returncode})[/red]")
+            raise typer.Exit(1)
+    except subprocess.TimeoutExpired:
+        console.print("[red]Incident response timed out[/red]")
+        raise typer.Exit(1)
+    except FileNotFoundError:
+        console.print("[red]ansible-playbook not found. Install ansible first.[/red]")
+        raise typer.Exit(1)
+
+
 def cli():
     """Entry point for the CLI."""
     app()

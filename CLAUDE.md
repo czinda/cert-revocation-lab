@@ -125,6 +125,14 @@ pip install -e .
 - `lab policy-check CN` - Validate certificate request against policy engine
 - `lab crl-list` - List available CRLs from CDP server
 - `lab crl-check SERIAL` - Check if serial appears in a CRL
+- `lab pin-register HOSTNAME` - Register certificate pin for a hostname
+- `lab pin-validate HOSTNAME` - Validate certificate against stored pins
+- `lab pin-list` - List all registered certificate pins
+- `lab kmip-list` - List KMIP-managed keys
+- `lab kmip-create NAME` - Create a KMIP-managed key
+- `lab kmip-lifecycle` - Show KMIP key lifecycle summary
+- `lab hsm-status` - Show Kryoptic HSM status and token slots
+- `lab incident-response DEVICE_FQDN` - Run full incident response workflow
 - `lab ct-submit` - Submit certificates from a Dogtag CA to the CT log
 - `lab ct-verify` - Verify a certificate against the CT log
 - `lab ct-stats` - Show CT log statistics
@@ -152,6 +160,11 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → Ansible Playbook 
 - **Chain Visualizer**: Interactive PKI trust chain web UI (http://localhost:8090)
 - **Loki + Promtail**: Log aggregation for Dogtag audit logs (http://localhost:3100)
 - **Prometheus + Grafana**: PKI performance monitoring (http://localhost:3000, http://localhost:9090)
+- **Certificate Pinning Validator**: SPKI pin verification with Kafka event integration (http://localhost:8091)
+- **KMIP Server**: PyKMIP-based key lifecycle management (http://localhost:8092, KMIP on port 5696)
+- **Kryoptic HSM**: PKCS#11 software token for CA key storage simulation
+- **Federated PKI**: Partner Organization + Bridge CA for cross-organization trust (federation-compose.yml)
+- **Incident Response**: Full IR playbooks — quarantine, investigate, revoke, re-key, verify, notify
 
 ## Certificate Profiles
 
@@ -311,6 +324,54 @@ python scripts/load-test.py --target all --concurrency 5 --count 50
 ```bash
 python scripts/compliance-scan.py --pki-type rsa --ca-level intermediate
 python scripts/compliance-scan.py --all
+```
+
+### Kryoptic HSM (PKCS#11)
+```bash
+# HSM status and token slots
+lab hsm-status
+bash scripts/pki/hsm-manage.sh list-slots
+bash scripts/pki/hsm-manage.sh list-objects --slot 0
+bash scripts/pki/hsm-manage.sh generate-key --slot 0 --type RSA --size 4096 --label my-key
+```
+
+### Certificate Pinning
+```bash
+lab pin-register web-server.cert-lab.local --cert data/certs/rsa/web-server.pem
+lab pin-validate web-server.cert-lab.local --cert data/certs/rsa/web-server.pem
+lab pin-list
+```
+
+### Federated PKI Trust
+```bash
+# Start Partner Org + Bridge CA infrastructure
+sudo podman-compose -f federation-compose.yml up -d
+sudo bash scripts/pki/init-federation.sh
+# Establish bilateral trust
+sudo bash scripts/pki/federate-trust.sh setup
+sudo bash scripts/pki/federate-trust.sh verify
+```
+
+### KMIP Key Management
+```bash
+lab kmip-create "rsa-signing-key" --algorithm RSA --length 4096
+lab kmip-list
+lab kmip-lifecycle
+python scripts/kmip-manage.py list
+python scripts/kmip-manage.py rotate --uid <uid>
+```
+
+### Incident Response
+```bash
+# Full IR workflow: quarantine → investigate → revoke → re-key → verify → notify
+lab incident-response compromised.cert-lab.local --type key_compromise --severity critical
+# Or via Ansible directly
+ansible-playbook ansible/playbooks/incident-response-full.yml \
+  -e "device_fqdn=compromised.cert-lab.local" \
+  -e "incident_type=key_compromise" -e "pki_type=rsa"
+# Bulk incident response
+ansible-playbook ansible/playbooks/incident-response-bulk.yml \
+  -e "devices=host1.cert-lab.local,host2.cert-lab.local"
 ```
 
 ## Monitoring Stack

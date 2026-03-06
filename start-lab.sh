@@ -117,6 +117,8 @@ setup_directories() {
     mkdir -p data/perf-metrics
     mkdir -p data/audit-logs
     mkdir -p data/security-events
+    mkdir -p data/incidents
+    mkdir -p data/certs/federation
     mkdir -p containers/mock-edr
     mkdir -p containers/mock-siem
     mkdir -p containers/mock-ct-log
@@ -937,7 +939,7 @@ start_security_tools() {
     log_phase "Phase 8: Starting Mock EDR, SIEM, and IoT Client"
 
     local to_start=()
-    for svc in mock-edr mock-siem mock-ct-log policy-engine crl-server chain-visualizer mtls-proxy iot-client; do
+    for svc in mock-edr mock-siem mock-ct-log policy-engine crl-server chain-visualizer mtls-proxy iot-client pin-validator kryoptic-hsm; do
         if is_rootless_running "$svc"; then
             log_success "$svc is already running"
         else
@@ -1014,7 +1016,7 @@ start_monitoring() {
     log_phase "Phase 10: Starting Monitoring Stack (Prometheus + Grafana)"
 
     local to_start=()
-    for svc in loki promtail prometheus grafana pki-exporter; do
+    for svc in loki promtail prometheus grafana pki-exporter kmip-server; do
         if is_rootless_running "$svc"; then
             log_success "$svc is already running"
         else
@@ -1236,7 +1238,7 @@ quick_start() {
 
     # Start other containers (rootless) - exclude PKI/DS services
     local rootless_to_start=()
-    for svc in dnsmasq postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem mock-ct-log policy-engine crl-server chain-visualizer mtls-proxy iot-client jupyter loki promtail prometheus grafana pki-exporter; do
+    for svc in dnsmasq postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem mock-ct-log policy-engine crl-server chain-visualizer mtls-proxy iot-client pin-validator kryoptic-hsm kmip-server jupyter loki promtail prometheus grafana pki-exporter; do
         if is_rootless_running "$svc"; then
             log_success "$svc is already running"
         else

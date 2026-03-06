@@ -1,0 +1,118 @@
+---
+# Incident Response - Phase 4: Revoke Certificates
+# Revokes all valid certificates for the compromised device.
+#
+# Expected variables from parent playbook:
+#   device_fqdn, incident_id, pki_type, pki_name, ca_level,
+#   container_prefix, revocation_reason, revocation_reason_code,
+#   ir_findings, ir_cert_statuses, incident_log, lab_root_dir
+
+- name: "Revoke - Begin"
+  ansible.builtin.debug:
+    msg: |
+      ----------------------------------------------------------------
+      PHASE 4: REVOKE CERTIFICATES - {{ device_fqdn }}
+      ----------------------------------------------------------------
+      Reason:        {{ revocation_reason }} (code {{ revocation_reason_code }})
+      Valid certs:   {{ ir_findings.valid_certs | length }}
+      ----------------------------------------------------------------
+
+# --- Identify certificates to revoke ---
+- name: Build list of certificate serials to revoke
+  ansible.builtin.set_fact:
+    certs_to_revoke: "{{ ir_findings.valid_certs | map(attribute='serial') | list }}"
+
+- name: Skip revocation if no valid certificates
+  ansible.builtin.debug:
+    msg: "No valid certificates found for {{ device_fqdn }} - skipping revocation"
+  when: certs_to_revoke | length == 0
+
+# --- Revoke each certificate ---
+- name: Revoke certificate via pki-cli.py
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ lab_root_dir }}
+      ./scripts/pki-cli.py revoke 0x{{ item }} \
+        --ca {{ ca_level }} \
+        --pki {{ pki_type }} \
+        --reason {{ revocation_reason }}
+  delegate_to: lab-host
+  register: revoke_results
+  loop: "{{ certs_to_revoke }}"
+  loop_control:
+    label: "Revoking 0x{{ item }}"
+  ignore_errors: true
+  when: certs_to_revoke | length > 0
+
+- name: Display revocation results
+  ansible.builtin.debug:
+    msg: >-
+      Certificate 0x{{ item.item }} -
+      {{ 'REVOKED' if item is succeeded else 'FAILED: ' + (item.stderr | default(item.msg | default('unknown error'))) }}
+  loop: "{{ revoke_results.results | default([]) }}"
+  loop_control:
+    label: "0x{{ item.item | default('N/A') }}"
+  when: revoke_results is defined and revoke_results.results is defined
+
+# --- Wait for revocation to propagate ---
+- name: Wait for revocation to propagate
+  ansible.builtin.pause:
+    seconds: 3
+  when: certs_to_revoke | length > 0
+
+# --- Verify revocation for each certificate ---
+- name: Verify revocation status via SSH
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ lab_root_dir }}
+      sudo podman exec {{ container_prefix }}-{{ ca_level }}-ca pki -d /root/.dogtag/nssdb -c '' \
+        ca-cert-show 0x{{ item }} 2>/dev/null | grep "Status:" | awk '{print $2}'
+  delegate_to: lab-host
+  register: revoke_verify_results
+  loop: "{{ certs_to_revoke }}"
+  loop_control:
+    label: "Verifying 0x{{ item }}"
+  ignore_errors: true
+  when: certs_to_revoke | length > 0
+
+- name: Compile revocation outcomes
+  ansible.builtin.set_fact:
+    ir_revoked_serials: >-
+      {{ ir_revoked_serials | default([]) + [{
+        'serial': item.item,
+        'post_status': item.stdout | default('UNKNOWN') | trim,
+        'success': (item.stdout | default('') | trim) == 'REVOKED'
+      }] }}
+  loop: "{{ revoke_verify_results.results | default([]) }}"
+  loop_control:
+    label: "0x{{ item.item | default('N/A') }}"
+  when: revoke_verify_results is defined and revoke_verify_results.results is defined
+
+- name: Set revocation summary facts
+  ansible.builtin.set_fact:
+    ir_revoked_serials: "{{ ir_revoked_serials | default([]) }}"
+    ir_revoke_success_count: "{{ (ir_revoked_serials | default([]) | selectattr('success', 'equalto', true) | list | length) | default(0) }}"
+    ir_revoke_fail_count: "{{ (ir_revoked_serials | default([]) | rejectattr('success', 'equalto', true) | list | length) | default(0) }}"
+
+- name: Log revocation to incident log
+  ansible.builtin.lineinfile:
+    path: "{{ incident_log }}"
+    line: "{{ lookup('pipe', 'date -Iseconds') }} | PHASE=REVOKE | INCIDENT={{ incident_id }} | DEVICE={{ device_fqdn }} | REASON={{ revocation_reason }} | ATTEMPTED={{ certs_to_revoke | length }} | SUCCESS={{ ir_revoke_success_count }} | FAILED={{ ir_revoke_fail_count }}{{ ' | SERIALS=' + (certs_to_revoke | map('regex_replace', '^', '0x') | join(',')) if certs_to_revoke | length > 0 else '' }}"
+    create: true
+    mode: '0644'
+
+- name: Display revocation summary
+  ansible.builtin.debug:
+    msg: |
+      ----------------------------------------------------------------
+      REVOCATION SUMMARY - {{ device_fqdn }}
+      ----------------------------------------------------------------
+      Certificates targeted: {{ certs_to_revoke | length }}
+      Successfully revoked:  {{ ir_revoke_success_count }}
+      Failed:                {{ ir_revoke_fail_count }}
+      Reason:                {{ revocation_reason }}
+      ----------------------------------------------------------------
+
+- name: Set revocation timestamp
+  ansible.builtin.set_fact:
+    ir_revoke_time: "{{ lookup('pipe', 'date -Iseconds') }}"
