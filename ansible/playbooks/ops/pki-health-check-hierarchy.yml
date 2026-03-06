@@ -1,0 +1,134 @@
+---
+# Included tasks for checking a single PKI hierarchy
+# Called by pki-health.yml with hierarchy_key and hierarchy variables
+
+- name: "--- {{ hierarchy.name }} PKI Hierarchy ---"
+  ansible.builtin.debug:
+    msg: "Checking {{ hierarchy.name }} PKI components..."
+  tags: [health]
+
+# CA Status checks
+- name: "Check {{ hierarchy.name }} Root CA status"
+  ansible.builtin.uri:
+    url: "https://localhost:{{ hierarchy.root_port }}/ca/admin/ca/getStatus"
+    method: GET
+    validate_certs: false
+    timeout: 10
+    return_content: true
+  register: root_ca_status
+  ignore_errors: true
+  tags: [health, ca]
+
+- name: "Check {{ hierarchy.name }} Intermediate CA status"
+  ansible.builtin.uri:
+    url: "https://localhost:{{ hierarchy.intermediate_port }}/ca/admin/ca/getStatus"
+    method: GET
+    validate_certs: false
+    timeout: 10
+    return_content: true
+  register: intermediate_ca_status
+  ignore_errors: true
+  tags: [health, ca]
+
+- name: "Check {{ hierarchy.name }} IoT CA status"
+  ansible.builtin.uri:
+    url: "https://localhost:{{ hierarchy.iot_port }}/ca/admin/ca/getStatus"
+    method: GET
+    validate_certs: false
+    timeout: 10
+    return_content: true
+  register: iot_ca_status
+  ignore_errors: true
+  tags: [health, ca]
+
+# OCSP check (via Intermediate CA)
+- name: "Check {{ hierarchy.name }} OCSP responder"
+  ansible.builtin.uri:
+    url: "https://localhost:{{ hierarchy.intermediate_port }}/ca/ocsp"
+    method: GET
+    validate_certs: false
+    timeout: 10
+    status_code: [200, 400, 405]
+  register: ocsp_status
+  ignore_errors: true
+  tags: [health, ocsp]
+
+# EST RA check
+- name: "Check {{ hierarchy.name }} EST RA cacerts endpoint"
+  ansible.builtin.uri:
+    url: "https://localhost:{{ hierarchy.est_port }}/.well-known/est/cacerts"
+    method: GET
+    validate_certs: false
+    timeout: 10
+    status_code: [200]
+  register: est_status
+  ignore_errors: true
+  tags: [health, est]
+
+# Certificate count via podman exec
+- name: "Get {{ hierarchy.name }} Root CA certificate count"
+  ansible.builtin.shell:
+    cmd: >-
+      sudo podman exec {{ hierarchy.root_container }}
+      pki -d /root/.dogtag/nssdb -c ''
+      ca-cert-find --size 0 2>/dev/null
+      | grep 'Number of entries' | awk '{print $NF}'
+  register: root_cert_count
+  ignore_errors: true
+  tags: [health, certs]
+
+- name: "Get {{ hierarchy.name }} Intermediate CA certificate count"
+  ansible.builtin.shell:
+    cmd: >-
+      sudo podman exec {{ hierarchy.intermediate_container }}
+      pki -d /root/.dogtag/nssdb -c ''
+      ca-cert-find --size 0 2>/dev/null
+      | grep 'Number of entries' | awk '{print $NF}'
+  register: intermediate_cert_count
+  ignore_errors: true
+  tags: [health, certs]
+
+- name: "Get {{ hierarchy.name }} IoT CA certificate count"
+  ansible.builtin.shell:
+    cmd: >-
+      sudo podman exec {{ hierarchy.iot_container }}
+      pki -d /root/.dogtag/nssdb -c ''
+      ca-cert-find --size 0 2>/dev/null
+      | grep 'Number of entries' | awk '{print $NF}'
+  register: iot_cert_count
+  ignore_errors: true
+  tags: [health, certs]
+
+# CRL freshness check
+- name: "Check {{ hierarchy.name }} CRL freshness"
+  ansible.builtin.shell:
+    cmd: >-
+      curl -sk https://localhost:{{ hierarchy.intermediate_port }}/ca/ee/ca/getCRL
+      | openssl crl -inform DER -noout -lastupdate -nextupdate 2>/dev/null
+      || echo "CRL not available"
+  register: crl_status
+  ignore_errors: true
+  tags: [health, crl]
+
+# Summary for this hierarchy
+- name: "{{ hierarchy.name }} PKI Health Summary"
+  ansible.builtin.debug:
+    msg: |
+      ============================================================
+      {{ hierarchy.name }} PKI HEALTH SUMMARY
+      ============================================================
+      Root CA:           {{ 'UP' if root_ca_status is not failed else 'DOWN' }} (port {{ hierarchy.root_port }})
+      Intermediate CA:   {{ 'UP' if intermediate_ca_status is not failed else 'DOWN' }} (port {{ hierarchy.intermediate_port }})
+      IoT CA:            {{ 'UP' if iot_ca_status is not failed else 'DOWN' }} (port {{ hierarchy.iot_port }})
+      OCSP Responder:    {{ 'UP' if ocsp_status is not failed else 'DOWN' }}
+      EST RA:            {{ 'UP' if est_status is not failed else 'DOWN' }} (port {{ hierarchy.est_port }})
+
+      Certificate Counts:
+        Root CA:         {{ root_cert_count.stdout | default('N/A') | trim }}
+        Intermediate CA: {{ intermediate_cert_count.stdout | default('N/A') | trim }}
+        IoT CA:          {{ iot_cert_count.stdout | default('N/A') | trim }}
+
+      CRL Status:
+        {{ crl_status.stdout | default('Not available') | trim }}
+      ============================================================
+  tags: [health, summary]

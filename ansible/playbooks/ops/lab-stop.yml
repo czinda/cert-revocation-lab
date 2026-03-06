@@ -1,0 +1,73 @@
+---
+# Stop the Certificate Revocation Lab
+#
+# Variables:
+#   pki_mode: rsa | ecc | pqc | all (default: all, stops everything)
+#   clean: true | false - remove all volumes and data (default: false)
+#   lab_root_dir: path to lab root (default: /home/czinda/git/cert-revocation-lab)
+
+- name: Stop Certificate Revocation Lab
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    pki_mode: "all"
+    clean: false
+    lab_root_dir: "/home/czinda/git/cert-revocation-lab"
+
+  tasks:
+    - name: Display stop parameters
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          CERTIFICATE REVOCATION LAB - STOPPING
+          ============================================================
+          PKI Mode:      {{ pki_mode }}
+          Clean Stop:    {{ clean | bool }}
+          Lab Directory: {{ lab_root_dir }}
+          ============================================================
+      tags: [always]
+
+    - name: Verify lab directory exists
+      ansible.builtin.stat:
+        path: "{{ lab_root_dir }}/stop-lab.sh"
+      register: stop_script
+      tags: [validation]
+
+    - name: Fail if lab directory not found
+      ansible.builtin.fail:
+        msg: "stop-lab.sh not found at {{ lab_root_dir }}. Check lab_root_dir variable."
+      when: not stop_script.stat.exists
+      tags: [validation]
+
+    - name: Build stop command
+      ansible.builtin.set_fact:
+        stop_cmd: >-
+          ./stop-lab.sh
+          {{ '--' + pki_mode if pki_mode != 'all' else '' }}
+          {{ '--clean' if clean | bool else '' }}
+      tags: [stop]
+
+    - name: Stop the lab
+      ansible.builtin.shell:
+        cmd: "{{ stop_cmd }}"
+        chdir: "{{ lab_root_dir }}"
+      register: stop_result
+      timeout: 300
+      tags: [stop]
+
+    - name: Display stop output
+      ansible.builtin.debug:
+        msg: "{{ stop_result.stdout_lines | default([]) }}"
+      tags: [stop]
+
+    - name: Stop complete
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          LAB STOPPED SUCCESSFULLY
+          ============================================================
+          PKI Mode: {{ pki_mode }}
+          Clean:    {{ clean | bool }}
+          ============================================================
+      tags: [always]

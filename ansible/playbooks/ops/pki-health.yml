@@ -1,0 +1,98 @@
+---
+# Deep PKI Health Check
+#
+# Performs detailed health checks on each PKI hierarchy including:
+# CA status, OCSP, EST, certificate counts, and CRL freshness.
+#
+# Variables:
+#   pki_type: rsa | ecc | pqc | all (default: all)
+#   lab_root_dir: path to lab root (default: /home/czinda/git/cert-revocation-lab)
+
+- name: Deep PKI Health Check
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    pki_type: "all"
+    lab_root_dir: "/home/czinda/git/cert-revocation-lab"
+
+    # PKI hierarchy definitions
+    pki_hierarchies:
+      rsa:
+        name: "RSA-4096"
+        root_port: 8443
+        intermediate_port: 8444
+        iot_port: 8445
+        est_port: 8447
+        root_container: "dogtag-root-ca"
+        intermediate_container: "dogtag-intermediate-ca"
+        iot_container: "dogtag-iot-ca"
+      ecc:
+        name: "ECC P-384"
+        root_port: 8463
+        intermediate_port: 8464
+        iot_port: 8465
+        est_port: 8466
+        root_container: "dogtag-ecc-root-ca"
+        intermediate_container: "dogtag-ecc-intermediate-ca"
+        iot_container: "dogtag-ecc-iot-ca"
+      pqc:
+        name: "ML-DSA-87"
+        root_port: 8453
+        intermediate_port: 8454
+        iot_port: 8455
+        est_port: 8456
+        root_container: "dogtag-pq-root-ca"
+        intermediate_container: "dogtag-pq-intermediate-ca"
+        iot_container: "dogtag-pq-iot-ca"
+
+  tasks:
+    - name: Display PKI health check banner
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          DEEP PKI HEALTH CHECK
+          ============================================================
+          PKI Type: {{ pki_type }}
+          ============================================================
+      tags: [always]
+
+    - name: Build list of hierarchies to check
+      ansible.builtin.set_fact:
+        check_hierarchies: >-
+          {{
+            pki_hierarchies.keys() | list
+            if pki_type == 'all'
+            else [pki_type]
+          }}
+      tags: [always]
+
+    - name: Validate pki_type
+      ansible.builtin.assert:
+        that:
+          - pki_type in ['rsa', 'ecc', 'pqc', 'all']
+        fail_msg: "Invalid pki_type '{{ pki_type }}'. Must be one of: rsa, ecc, pqc, all"
+      tags: [validation]
+
+    # --- Check each hierarchy ---
+    - name: "Check PKI Hierarchy"
+      ansible.builtin.include_tasks:
+        file: pki-health-check-hierarchy.yml
+      loop: "{{ check_hierarchies }}"
+      loop_control:
+        loop_var: hierarchy_key
+        label: "{{ pki_hierarchies[hierarchy_key].name if hierarchy_key in pki_hierarchies else hierarchy_key }}"
+      vars:
+        hierarchy: "{{ pki_hierarchies[hierarchy_key] }}"
+      when: hierarchy_key in pki_hierarchies
+      tags: [health]
+
+    - name: Health check complete
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          PKI HEALTH CHECK COMPLETE
+          ============================================================
+          Hierarchies checked: {{ check_hierarchies | join(', ') | upper }}
+          ============================================================
+      tags: [always]

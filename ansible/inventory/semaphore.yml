@@ -1,0 +1,100 @@
+---
+# Semaphore Inventory for Certificate Revocation Lab
+# Used when playbooks run directly on the lab host via Semaphore
+# (no SSH bridge needed - Semaphore executes on the lab host itself)
+
+all:
+  hosts:
+    localhost:
+      ansible_connection: local
+      ansible_python_interpreter: /usr/bin/python3
+
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    lab_domain: cert-lab.local
+    ipa_realm: CERT-LAB.LOCAL
+    lab_root_dir: "{{ lookup('env', 'LAB_ROOT_DIR') | default('/home/czinda/git/cert-revocation-lab', true) }}"
+
+    # Semaphore runs on the lab host, so lab-host == localhost
+    lab_host_ip: localhost
+    lab_host_user: "{{ lookup('env', 'LAB_HOST_USER') | default('czinda', true) }}"
+
+    # PKI service ports (host-mapped)
+    rsa_pki_ports:
+      root_ca: 8443
+      intermediate_ca: 8444
+      iot_ca: 8445
+      acme_ra: 8446
+      est_ra: 8447
+      ocsp: 8448
+      kra: 8449
+
+    ecc_pki_ports:
+      root_ca: 8463
+      intermediate_ca: 8464
+      iot_ca: 8465
+      est_ra: 8466
+      ocsp: 8467
+      kra: 8468
+
+    pq_pki_ports:
+      root_ca: 8453
+      intermediate_ca: 8454
+      iot_ca: 8455
+      est_ra: 8456
+      ocsp: 8457
+      kra: 8458
+
+    federation_pki_ports:
+      partner_root_ca: 8473
+      partner_intermediate_ca: 8474
+      bridge_ca: 8475
+
+    # Infrastructure service ports
+    infra_ports:
+      kafka: 9092
+      grafana: 3000
+      prometheus: 9090
+      loki: 3100
+      awx: 8084
+      eda: 5000
+      jupyter: 8888
+
+    # Application service ports
+    app_ports:
+      mock_edr: 8082
+      mock_siem: 8083
+      iot_client: 8085
+      mock_ct_log: 8086
+      mtls_proxy_http: 8087
+      crl_server: 8088
+      policy_engine: 8089
+      chain_visualizer: 8090
+      pin_validator: 8091
+      kmip_server: 8092
+      pki_exporter: 9091
+
+    # Container name mappings per PKI type
+    container_names:
+      rsa:
+        root: dogtag-root-ca
+        intermediate: dogtag-intermediate-ca
+        iot: dogtag-iot-ca
+        est: dogtag-est-ca
+        acme: dogtag-acme-ca
+        ocsp: dogtag-ocsp
+        kra: dogtag-kra
+      ecc:
+        root: dogtag-ecc-root-ca
+        intermediate: dogtag-ecc-intermediate-ca
+        iot: dogtag-ecc-iot-ca
+        est: dogtag-ecc-est-ca
+        ocsp: dogtag-ecc-ocsp
+        kra: dogtag-ecc-kra
+      pq:
+        root: dogtag-pq-root-ca
+        intermediate: dogtag-pq-intermediate-ca
+        iot: dogtag-pq-iot-ca
+        est: dogtag-pq-est-ca
+        ocsp: dogtag-pq-ocsp
+        kra: dogtag-pq-kra
