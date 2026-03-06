@@ -1,0 +1,66 @@
+# Certificate Policy Engine Configuration
+# Defines policies for certificate issuance validation.
+
+naming:
+  # Allowed domain suffixes
+  allowed_domains:
+    - cert-lab.local
+    - iot.cert-lab.local
+    - users.cert-lab.local
+  # Forbidden patterns in CN/SAN
+  forbidden_patterns:
+    - "*"       # No wildcard certs
+    - "admin"   # No admin in CN
+    - "root"    # No root in CN
+  # Required organizational fields
+  required_fields:
+    - O    # Organization
+    - C    # Country
+  allowed_org:
+    - Cert-Lab
+  allowed_country:
+    - US
+
+key_usage:
+  server:
+    required:
+      - digitalSignature
+      - keyEncipherment
+    forbidden:
+      - keyCertSign  # Only CAs can sign certs
+    min_key_size:
+      rsa: 2048
+      ecc: 256
+    max_validity_days: 397  # CA/B Forum limit
+
+  client:
+    required:
+      - digitalSignature
+    forbidden:
+      - keyCertSign
+    min_key_size:
+      rsa: 2048
+      ecc: 256
+    max_validity_days: 825
+
+  iot:
+    required:
+      - digitalSignature
+    forbidden:
+      - keyCertSign
+    min_key_size:
+      rsa: 2048
+      ecc: 256
+    max_validity_days: 365  # Short-lived for IoT devices
+    required_extensions:
+      - subjectAltName
+
+validity:
+  min_days: 1
+  max_days: 825       # CA/B Forum max
+  ca_max_days: 7300   # ~20 years for CA certs
+  warn_long_validity_days: 397
+
+rate_limits:
+  max_certs_per_domain_per_hour: 50
+  max_certs_per_ip_per_hour: 100

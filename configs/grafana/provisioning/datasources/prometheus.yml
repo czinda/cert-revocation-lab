@@ -7,3 +7,9 @@ datasources:
     url: http://prometheus.cert-lab.local:9090
     isDefault: true
     editable: true
+
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki.cert-lab.local:3100
+    editable: true

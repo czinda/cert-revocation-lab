@@ -163,6 +163,9 @@ def check_all_services(
     results["mock_edr"] = check_http_service("mock_edr", config.edr_url)
     results["mock_siem"] = check_http_service("mock_siem", config.siem_url)
     results["mock_ct_log"] = check_http_service("mock_ct_log", config.ct_log_url)
+    results["crl_server"] = check_http_service("crl_server", config.crl_cdp_url)
+    results["policy_engine"] = check_http_service("policy_engine", config.policy_engine_url)
+    results["chain_visualizer"] = check_http_service("chain_visualizer", config.chain_visualizer_url)
 
     # Kafka (via EDR health check)
     results["kafka"] = check_kafka(config)

@@ -1,0 +1,222 @@
+# AWX Job Templates for Certificate Lifecycle Management
+#
+# Import these templates into AWX using:
+#   awx-cli import < configs/awx/job-templates.yml
+#
+# Or manually create them via the AWX API / web UI.
+
+---
+# Organization
+organization:
+  name: Cert-Lab
+  description: Certificate Revocation Lab
+
+# Project (points to the lab's Ansible content)
+project:
+  name: cert-revocation-lab
+  organization: Cert-Lab
+  scm_type: manual
+  local_path: project
+
+# Inventory
+inventory:
+  name: Lab Hosts
+  organization: Cert-Lab
+  source: project
+  source_path: inventory/hosts.yml
+
+# Credentials
+credentials:
+  - name: PKI Admin
+    organization: Cert-Lab
+    credential_type: Machine
+    inputs:
+      username: cert-revoke
+      become_method: sudo
+
+# Job Templates
+job_templates:
+  # === Certificate Issuance ===
+
+  - name: "Issue RSA Certificate"
+    description: "Issue a TLS certificate from the RSA-4096 PKI hierarchy"
+    job_type: run
+    inventory: Lab Hosts
+    project: cert-revocation-lab
+    playbook: playbooks/dogtag-rsa-issue-certificate.yml
+    credential: PKI Admin
+    ask_variables_on_launch: true
+    extra_vars:
+      device_fqdn: "device.cert-lab.local"
+      cert_profile: caServerCert
+    survey_spec:
+      name: Certificate Details
+      description: Provide certificate parameters
+      spec:
+        - question_name: "Device FQDN"
+          variable: device_fqdn
+          type: text
+          required: true
+          default: "device.cert-lab.local"
+        - question_name: "Certificate Profile"
+          variable: cert_profile
+          type: multiplechoice
+          choices: ["caServerCert", "caUserCert"]
+          default: "caServerCert"
+
+  - name: "Issue ECC Certificate"
+    description: "Issue a TLS certificate from the ECC P-384 PKI hierarchy"
+    job_type: run
+    inventory: Lab Hosts
+    project: cert-revocation-lab
+    playbook: playbooks/dogtag-ecc-issue-certificate.yml
+    credential: PKI Admin
+    ask_variables_on_launch: true
+    extra_vars:
+      device_fqdn: "device.cert-lab.local"
+      cert_profile: caECServerCert
+
+  - name: "Issue PQ Certificate"
+    description: "Issue a TLS certificate from the ML-DSA-87 PKI hierarchy"
+    job_type: run
+    inventory: Lab Hosts
+    project: cert-revocation-lab
+    playbook: playbooks/dogtag-pqc-issue-certificate.yml
+    credential: PKI Admin
+    ask_variables_on_launch: true
+    extra_vars:
+      device_fqdn: "device.cert-lab.local"
+      cert_profile: caMLDSAServerCert
+
+  # === Certificate Revocation ===
+
+  - name: "Revoke RSA Certificate"
+    description: "Revoke a certificate from the RSA-4096 PKI hierarchy"
+    job_type: run
+    inventory: Lab Hosts
+    project: cert-revocation-lab
+    playbook: playbooks/dogtag-rsa-revoke-certificate.yml
+    credential: PKI Admin
+    ask_variables_on_launch: true
+    survey_spec:
+      name: Revocation Details
+      spec:
+        - question_name: "Certificate Serial"
+          variable: cert_serial
+          type: text
+          required: true
+        - question_name: "Revocation Reason"
+          variable: revocation_reason
+          type: multiplechoice
+          choices:
+            - key_compromise
+            - ca_compromise
+            - affiliation_changed
+            - superseded
+            - cessation_of_operation
+            - certificate_hold
+            - remove_from_crl
+            - privilege_withdrawn
+          default: "key_compromise"
+        - question_name: "CA Level"
+          variable: ca_level
+          type: multiplechoice
+          choices: ["root", "intermediate", "iot"]
+          default: "iot"
+
+  - name: "Revoke ECC Certificate"
+    description: "Revoke a certificate from the ECC P-384 PKI hierarchy"
+    job_type: run
+    inventory: Lab Hosts
+    project: cert-revocation-lab
+    playbook: playbooks/dogtag-ecc-revoke-certificate.yml
+    credential: PKI Admin
+    ask_variables_on_launch: true
+
+  - name: "Revoke PQ Certificate"
+    description: "Revoke a certificate from the ML-DSA-87 PKI hierarchy"
+    job_type: run
+    inventory: Lab Hosts
+    project: cert-revocation-lab
+    playbook: playbooks/dogtag-pqc-revoke-certificate.yml
+    credential: PKI Admin
+    ask_variables_on_launch: true
+
+  # === Bulk Operations ===
+
+  - name: "Bulk Issue Certificates"
+    description: "Issue multiple certificates for performance testing"
+    job_type: run
+    inventory: Lab Hosts
+    project: cert-revocation-lab
+    playbook: playbooks/dogtag-rsa-issue-certificate.yml
+    credential: PKI Admin
+    ask_variables_on_launch: true
+    extra_vars:
+      batch_count: 10
+      batch_prefix: "perf-test"
+
+  - name: "Bulk Revoke Expired"
+    description: "Revoke all expired certificates across all CA levels"
+    job_type: run
+    inventory: Lab Hosts
+    project: cert-revocation-lab
+    playbook: playbooks/dogtag-rsa-revoke-certificate.yml
+    credential: PKI Admin
+    extra_vars:
+      revoke_expired: true
+      revocation_reason: cessation_of_operation
+
+  # === CRL Management ===
+
+  - name: "Force CRL Regeneration"
+    description: "Force immediate CRL regeneration on all CAs"
+    job_type: run
+    inventory: Lab Hosts
+    project: cert-revocation-lab
+    playbook: playbooks/dogtag-rsa-revoke-certificate.yml
+    credential: PKI Admin
+    extra_vars:
+      force_crl_only: true
+
+  # === FreeIPA ===
+
+  - name: "Revoke FreeIPA Certificate"
+    description: "Revoke a certificate via FreeIPA identity management"
+    job_type: run
+    inventory: Lab Hosts
+    project: cert-revocation-lab
+    playbook: playbooks/freeipa-revoke-certificate.yml
+    credential: PKI Admin
+    ask_variables_on_launch: true
+
+  # === Cross-Certification ===
+
+  - name: "Cross-Certify RSA-ECC"
+    description: "Create cross-signed certificates between RSA and ECC hierarchies"
+    job_type: run
+    inventory: Lab Hosts
+    project: cert-revocation-lab
+    playbook: playbooks/dogtag-rsa-issue-certificate.yml
+    credential: PKI Admin
+    extra_vars:
+      cross_certify: true
+      cross_mode: "rsa-ecc"
+
+# Workflow Templates
+workflow_templates:
+  - name: "Full Security Response"
+    description: "Issue cert → Simulate compromise → Revoke → Verify CRL"
+    nodes:
+      - job_template: "Issue RSA Certificate"
+        success:
+          - job_template: "Revoke RSA Certificate"
+            success:
+              - job_template: "Force CRL Regeneration"
+
+  - name: "Multi-PKI Issuance"
+    description: "Issue certificates across all three PKI hierarchies in parallel"
+    nodes:
+      - job_template: "Issue RSA Certificate"
+      - job_template: "Issue ECC Certificate"
+      - job_template: "Issue PQ Certificate"

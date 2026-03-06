@@ -576,6 +576,65 @@ services:
       start_period: 60s
 
   # ===========================================================================
+  # Certificate Policy Engine
+  # ===========================================================================
+
+  policy-engine:
+    build:
+      context: ./containers/policy-engine
+      dockerfile: Containerfile
+    container_name: policy-engine
+    hostname: policy.${LAB_DOMAIN:-cert-lab.local}
+    networks:
+      lab-network:
+        ipv4_address: ${IP_POLICY_ENGINE:-172.20.0.56}
+    ports:
+      - "8089:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ===========================================================================
+  # CRL Distribution Point Server (RFC 5280 CDP)
+  # ===========================================================================
+
+  crl-server:
+    build:
+      context: ./containers/crl-server
+      dockerfile: Containerfile
+    container_name: crl-server
+    hostname: crl.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      CRL_REFRESH_INTERVAL: "300"
+    extra_hosts:
+      # RSA PKI CAs
+      - "root-ca.cert-lab.local:host-gateway"
+      - "intermediate-ca.cert-lab.local:host-gateway"
+      - "iot-ca.cert-lab.local:host-gateway"
+      # ECC PKI CAs
+      - "ecc-root-ca.cert-lab.local:host-gateway"
+      - "ecc-intermediate-ca.cert-lab.local:host-gateway"
+      - "ecc-iot-ca.cert-lab.local:host-gateway"
+      # PQ PKI CAs
+      - "pq-root-ca.cert-lab.local:host-gateway"
+      - "pq-intermediate-ca.cert-lab.local:host-gateway"
+      - "pq-iot-ca.cert-lab.local:host-gateway"
+    networks:
+      lab-network:
+        ipv4_address: ${IP_CRL_SERVER:-172.20.0.55}
+    ports:
+      - "8088:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ===========================================================================
   # mTLS Reverse Proxy (Certificate-based access control demo)
   # ===========================================================================
 
@@ -605,6 +664,48 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  # ===========================================================================
+  # Certificate Chain Visualizer (Web UI)
+  # ===========================================================================
+
+  chain-visualizer:
+    build:
+      context: ./containers/chain-visualizer
+      dockerfile: Containerfile
+    container_name: chain-visualizer
+    hostname: chain-viz.${LAB_DOMAIN:-cert-lab.local}
+    extra_hosts:
+      - "root-ca.cert-lab.local:host-gateway"
+      - "intermediate-ca.cert-lab.local:host-gateway"
+      - "iot-ca.cert-lab.local:host-gateway"
+      - "acme-ca.cert-lab.local:host-gateway"
+      - "est-ca.cert-lab.local:host-gateway"
+      - "ocsp.cert-lab.local:host-gateway"
+      - "kra.cert-lab.local:host-gateway"
+      - "ecc-root-ca.cert-lab.local:host-gateway"
+      - "ecc-intermediate-ca.cert-lab.local:host-gateway"
+      - "ecc-iot-ca.cert-lab.local:host-gateway"
+      - "ecc-est-ca.cert-lab.local:host-gateway"
+      - "ecc-ocsp.cert-lab.local:host-gateway"
+      - "ecc-kra.cert-lab.local:host-gateway"
+      - "pq-root-ca.cert-lab.local:host-gateway"
+      - "pq-intermediate-ca.cert-lab.local:host-gateway"
+      - "pq-iot-ca.cert-lab.local:host-gateway"
+      - "pq-est-ca.cert-lab.local:host-gateway"
+      - "pq-ocsp.cert-lab.local:host-gateway"
+      - "pq-kra.cert-lab.local:host-gateway"
+    networks:
+      lab-network:
+        ipv4_address: ${IP_CHAIN_VIZ:-172.20.0.57}
+    ports:
+      - "8090:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   # ===========================================================================
   # IoT Client Simulator (EST Enrollment)
@@ -697,6 +798,48 @@ services:
       retries: 3
       start_period: 30s
 
+  loki:
+    image: docker.io/grafana/loki:${LOKI_VERSION:-latest}
+    container_name: loki
+    hostname: loki.${LAB_DOMAIN:-cert-lab.local}
+    volumes:
+      - ./configs/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    networks:
+      lab-network:
+        ipv4_address: ${IP_LOKI:-172.20.0.73}
+    ports:
+      - "3100:3100"
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  promtail:
+    image: docker.io/grafana/promtail:${PROMTAIL_VERSION:-latest}
+    container_name: promtail
+    hostname: promtail.${LAB_DOMAIN:-cert-lab.local}
+    depends_on:
+      - loki
+    volumes:
+      - ./configs/promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - ./data/logs:/var/log/eda:ro
+      - ./data/audit-logs:/var/log/pki:ro
+      - ./data/security-events:/var/log/security-events:ro
+    networks:
+      lab-network:
+        ipv4_address: ${IP_PROMTAIL:-172.20.0.74}
+    command: ["-config.file=/etc/promtail/config.yml"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9080/ready || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
   pki-exporter:
     build:
       context: ./containers/pki-exporter
@@ -706,6 +849,7 @@ services:
     environment:
       PERF_METRICS_DIR: /data/perf-metrics
       CT_LOG_URL: http://ct-log.${LAB_DOMAIN:-cert-lab.local}:8000
+      CDP_URL: http://crl.${LAB_DOMAIN:-cert-lab.local}:8080
     extra_hosts:
       # PKI CA hostnames - use host-gateway to reach rootful PKI via host ports
       - "root-ca.cert-lab.local:host-gateway"
@@ -815,3 +959,4 @@ volumes:
   # Monitoring volumes
   prometheus-data:
   grafana-data:
+  loki-data:
