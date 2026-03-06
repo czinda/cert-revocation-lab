@@ -1,0 +1,68 @@
+---
+# Incident Response - Phase 2: Quarantine
+# Adds the compromised device to a quarantine list and emits a quarantine event.
+#
+# Expected variables from parent playbook:
+#   device_fqdn, incident_id, incident_type, severity, pki_type,
+#   incident_log, lab_root_dir, edr_url
+
+- name: "Quarantine - Begin"
+  ansible.builtin.debug:
+    msg: |
+      ----------------------------------------------------------------
+      PHASE 2: QUARANTINE - {{ device_fqdn }}
+      ----------------------------------------------------------------
+
+- name: Create quarantine data directory
+  ansible.builtin.file:
+    path: "{{ lab_root_dir }}/data/incidents"
+    state: directory
+    mode: '0755'
+  delegate_to: lab-host
+
+- name: Add device to quarantine list
+  ansible.builtin.lineinfile:
+    path: "{{ lab_root_dir }}/data/incidents/quarantine.list"
+    line: "{{ lookup('pipe', 'date -Iseconds') }} | {{ device_fqdn }} | {{ incident_id }} | {{ incident_type }} | {{ severity }}"
+    create: true
+    mode: '0644'
+  delegate_to: lab-host
+  register: quarantine_add
+
+- name: Display quarantine status
+  ansible.builtin.debug:
+    msg: "Device {{ device_fqdn }} added to quarantine list"
+
+- name: Emit quarantine event via mock EDR
+  ansible.builtin.uri:
+    url: "{{ edr_url }}/trigger"
+    method: POST
+    body_format: json
+    body:
+      event_type: "device_quarantine"
+      device_fqdn: "{{ device_fqdn }}"
+      severity: "{{ severity }}"
+      description: "Device quarantined as part of incident {{ incident_id }} ({{ incident_type }})"
+      pki_type: "{{ pki_type }}"
+      incident_id: "{{ incident_id }}"
+    status_code: [200, 201, 202]
+    timeout: 10
+  register: quarantine_event
+  ignore_errors: true
+
+- name: Log quarantine event result
+  ansible.builtin.debug:
+    msg: >-
+      Quarantine event {{ 'sent successfully' if quarantine_event is succeeded else 'failed to send (mock-edr may be unavailable)' }}
+
+- name: Log quarantine to incident log
+  ansible.builtin.lineinfile:
+    path: "{{ incident_log }}"
+    line: "{{ lookup('pipe', 'date -Iseconds') }} | PHASE=QUARANTINE | INCIDENT={{ incident_id }} | DEVICE={{ device_fqdn }} | STATUS={{ 'QUARANTINED' if quarantine_add is succeeded else 'FAILED' }}"
+    create: true
+    mode: '0644'
+
+- name: Set quarantine fact
+  ansible.builtin.set_fact:
+    ir_quarantine_status: "{{ 'QUARANTINED' if quarantine_add is succeeded else 'FAILED' }}"
+    ir_quarantine_time: "{{ lookup('pipe', 'date -Iseconds') }}"

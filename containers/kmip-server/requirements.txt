@@ -1,0 +1,8 @@
+# KMIP Server Dependencies
+# pykmip: KMIP protocol implementation (server + client)
+# fastapi/uvicorn: REST management API
+# cryptography: TLS and key operations
+pykmip>=0.10.0
+fastapi>=0.104.0
+uvicorn>=0.24.0
+cryptography>=41.0

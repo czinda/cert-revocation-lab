@@ -884,6 +884,83 @@ services:
       start_period: 30s
 
   # ===========================================================================
+  # Certificate Pinning Validator
+  # ===========================================================================
+
+  pin-validator:
+    build:
+      context: ./containers/pin-validator
+      dockerfile: Containerfile
+    container_name: pin-validator
+    hostname: pin-validator.${LAB_DOMAIN:-cert-lab.local}
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka.${LAB_DOMAIN:-cert-lab.local}:9092
+    networks:
+      lab-network:
+        ipv4_address: ${IP_PIN_VALIDATOR:-172.20.0.58}
+    ports:
+      - "8091:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ===========================================================================
+  # KMIP Key Management Server
+  # ===========================================================================
+
+  kmip-server:
+    build:
+      context: ./containers/kmip-server
+      dockerfile: Containerfile
+    container_name: kmip-server
+    hostname: kmip.${LAB_DOMAIN:-cert-lab.local}
+    volumes:
+      - kmip-data:/data/kmip
+    networks:
+      lab-network:
+        ipv4_address: ${IP_KMIP:-172.20.0.59}
+    ports:
+      - "8092:8000"
+      - "5696:5696"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ===========================================================================
+  # Kryoptic HSM (PKCS#11 Software Token)
+  # ===========================================================================
+
+  kryoptic-hsm:
+    build:
+      context: ./containers/kryoptic-hsm
+      dockerfile: Containerfile
+    container_name: kryoptic-hsm
+    hostname: hsm.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      HSM_SO_PIN: ${HSM_SO_PIN:-12345678}
+      HSM_USER_PIN: ${HSM_USER_PIN:-1234}
+    volumes:
+      - kryoptic-data:/var/lib/kryoptic
+    networks:
+      lab-network:
+        ipv4_address: ${IP_HSM:-172.20.0.61}
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /var/lib/kryoptic/status.json"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+
+  # ===========================================================================
   # Jupyter Lab (Documentation, Demos, and Dashboard)
   # ===========================================================================
 
@@ -960,3 +1037,7 @@ volumes:
   prometheus-data:
   grafana-data:
   loki-data:
+
+  # Security tool volumes
+  kmip-data:
+  kryoptic-data:

@@ -1,0 +1,169 @@
+---
+# Incident Response - Phase 3: Investigate
+# Looks up certificates, checks status, OCSP, and CRL for the compromised device.
+#
+# Expected variables from parent playbook:
+#   device_fqdn, incident_id, pki_type, ca_level, container_prefix,
+#   incident_log, lab_root_dir
+
+- name: "Investigate - Begin"
+  ansible.builtin.debug:
+    msg: |
+      ----------------------------------------------------------------
+      PHASE 3: INVESTIGATE - {{ device_fqdn }}
+      ----------------------------------------------------------------
+      PKI Type:   {{ pki_type }} ({{ pki_name }})
+      CA Level:   {{ ca_level }}
+      Container:  {{ container_prefix }}-{{ ca_level }}-ca
+      ----------------------------------------------------------------
+
+- name: Initialize investigation findings
+  ansible.builtin.set_fact:
+    ir_findings: {}
+    ir_cert_serials: []
+    ir_cert_statuses: []
+
+# --- Certificate Lookup ---
+- name: Search for all certificates by subject via SSH
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ lab_root_dir }}
+      sudo podman exec {{ container_prefix }}-{{ ca_level }}-ca pki -d /root/.dogtag/nssdb -c '' \
+        ca-cert-find --name "{{ device_fqdn }}" 2>/dev/null \
+        | grep "Serial Number:" | awk '{print $3}' | sed 's/^0x//'
+  delegate_to: lab-host
+  register: cert_search
+  ignore_errors: true
+
+- name: Parse found certificate serials
+  ansible.builtin.set_fact:
+    ir_cert_serials: "{{ cert_search.stdout_lines | default([]) | select('match', '^[0-9a-fA-F]+$') | list }}"
+  when: cert_search is succeeded
+
+- name: Report certificates found
+  ansible.builtin.debug:
+    msg: "Found {{ ir_cert_serials | length }} certificate(s) for {{ device_fqdn }}: {{ ir_cert_serials | map('regex_replace', '^', '0x') | list }}"
+
+# --- Certificate Status Check ---
+- name: Check status of each certificate via SSH
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ lab_root_dir }}
+      sudo podman exec {{ container_prefix }}-{{ ca_level }}-ca pki -d /root/.dogtag/nssdb -c '' \
+        ca-cert-show 0x{{ item }} 2>/dev/null | grep -E "Serial Number:|Status:|Subject DN:|Not Valid After:" | tr '\n' ' '
+  delegate_to: lab-host
+  register: cert_status_results
+  loop: "{{ ir_cert_serials }}"
+  ignore_errors: true
+
+- name: Parse certificate statuses
+  ansible.builtin.set_fact:
+    ir_cert_statuses: >-
+      {{ ir_cert_statuses | default([]) + [{
+        'serial': item.item,
+        'details': item.stdout | default('unknown'),
+        'status': (item.stdout | default('') | regex_search('Status:\s+(\w+)', '\1') | default(['UNKNOWN'], true))[0]
+      }] }}
+  loop: "{{ cert_status_results.results | default([]) }}"
+  loop_control:
+    label: "0x{{ item.item }}"
+
+- name: Display certificate statuses
+  ansible.builtin.debug:
+    msg: "Certificate 0x{{ item.serial }} - Status: {{ item.status }} | {{ item.details }}"
+  loop: "{{ ir_cert_statuses }}"
+  loop_control:
+    label: "0x{{ item.serial }}"
+
+# --- OCSP Check ---
+- name: Check OCSP status for each certificate
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ lab_root_dir }}
+      sudo podman exec {{ container_prefix }}-{{ ca_level }}-ca pki -d /root/.dogtag/nssdb -c '' \
+        ca-cert-show 0x{{ item.serial }} 2>/dev/null | grep "Status:" | awk '{print $2}'
+  delegate_to: lab-host
+  register: ocsp_results
+  loop: "{{ ir_cert_statuses }}"
+  loop_control:
+    label: "OCSP check 0x{{ item.serial }}"
+  ignore_errors: true
+
+- name: Record OCSP findings
+  ansible.builtin.set_fact:
+    ir_ocsp_statuses: >-
+      {{ ir_ocsp_statuses | default([]) + [{
+        'serial': item.item.serial,
+        'ocsp_status': item.stdout | default('UNKNOWN') | trim
+      }] }}
+  loop: "{{ ocsp_results.results | default([]) }}"
+  loop_control:
+    label: "0x{{ item.item.serial }}"
+
+# --- CRL Check ---
+- name: Check CRL for certificate serials
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ lab_root_dir }}
+      sudo podman exec {{ container_prefix }}-{{ ca_level }}-ca pki -d /root/.dogtag/nssdb -c '' \
+        ca-crl-show 2>/dev/null | head -20
+  delegate_to: lab-host
+  register: crl_info
+  ignore_errors: true
+
+- name: Display CRL information
+  ansible.builtin.debug:
+    msg: "{{ crl_info.stdout_lines | default(['CRL information unavailable']) }}"
+
+# --- CT Log Check (if available) ---
+- name: Check Certificate Transparency log entries
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ lab_root_dir }}
+      sudo podman exec {{ container_prefix }}-{{ ca_level }}-ca pki -d /root/.dogtag/nssdb -c '' \
+        ca-cert-find --name "{{ device_fqdn }}" --status VALID 2>/dev/null \
+        | grep -c "Serial Number:" || echo "0"
+  delegate_to: lab-host
+  register: ct_log_check
+  ignore_errors: true
+
+- name: Record CT log findings
+  ansible.builtin.set_fact:
+    ir_ct_valid_count: "{{ ct_log_check.stdout | default('0') | trim }}"
+
+# --- Compile Investigation Summary ---
+- name: Compile investigation findings
+  ansible.builtin.set_fact:
+    ir_findings:
+      device_fqdn: "{{ device_fqdn }}"
+      total_certs_found: "{{ ir_cert_serials | length }}"
+      cert_statuses: "{{ ir_cert_statuses }}"
+      ocsp_statuses: "{{ ir_ocsp_statuses | default([]) }}"
+      valid_certs_in_ct: "{{ ir_ct_valid_count | default('0') }}"
+      crl_available: "{{ crl_info is succeeded }}"
+      valid_certs: "{{ ir_cert_statuses | selectattr('status', 'equalto', 'VALID') | list }}"
+      revoked_certs: "{{ ir_cert_statuses | selectattr('status', 'equalto', 'REVOKED') | list }}"
+
+- name: Display investigation summary
+  ansible.builtin.debug:
+    msg: |
+      ----------------------------------------------------------------
+      INVESTIGATION SUMMARY - {{ device_fqdn }}
+      ----------------------------------------------------------------
+      Total certificates found:  {{ ir_findings.total_certs_found }}
+      Valid certificates:        {{ ir_findings.valid_certs | length }}
+      Already revoked:           {{ ir_findings.revoked_certs | length }}
+      CRL available:             {{ ir_findings.crl_available }}
+      Valid certs in CT log:     {{ ir_findings.valid_certs_in_ct }}
+      ----------------------------------------------------------------
+
+- name: Log investigation to incident log
+  ansible.builtin.lineinfile:
+    path: "{{ incident_log }}"
+    line: "{{ lookup('pipe', 'date -Iseconds') }} | PHASE=INVESTIGATE | INCIDENT={{ incident_id }} | DEVICE={{ device_fqdn }} | TOTAL_CERTS={{ ir_findings.total_certs_found }} | VALID={{ ir_findings.valid_certs | length }} | REVOKED={{ ir_findings.revoked_certs | length }}"
+    create: true
+    mode: '0644'
+
+- name: Set investigation timestamp
+  ansible.builtin.set_fact:
+    ir_investigate_time: "{{ lookup('pipe', 'date -Iseconds') }}"

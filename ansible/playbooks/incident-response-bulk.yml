@@ -1,0 +1,169 @@
+---
+# Bulk Incident Response Playbook
+# Runs the full incident response workflow for multiple devices.
+#
+# Usage:
+#   # Comma-separated list of devices
+#   ansible-playbook playbooks/incident-response-bulk.yml \
+#     -e "device_list=dev1.cert-lab.local,dev2.cert-lab.local" \
+#     -e "incident_type=key_compromise" \
+#     -e "pki_type=rsa" \
+#     -e "severity=critical"
+#
+#   # From a file (one FQDN per line)
+#   ansible-playbook playbooks/incident-response-bulk.yml \
+#     -e "device_file=/path/to/devices.txt" \
+#     -e "incident_type=key_compromise" \
+#     -e "pki_type=rsa"
+
+- name: "Incident Response - Bulk Workflow"
+  hosts: localhost
+  gather_facts: false
+  vars:
+    pki_type: "{{ pki_type | default('rsa') }}"
+    incident_type: "{{ incident_type | default('key_compromise') }}"
+    severity: "{{ severity | default('critical') }}"
+    ca_level: "{{ ca_level | default('intermediate') }}"
+    auto_reissue: "{{ auto_reissue | default(true) | bool }}"
+    notify_channels: "{{ notify_channels | default(['log', 'kafka']) }}"
+    log_dir: "{{ lookup('env', 'LAB_LOG_DIR') | default('/opt/cert-lab/logs', true) }}"
+    lab_root_dir: "{{ hostvars['lab-host'].lab_root_dir | default('/home/cert-revoke/git/cert-revocation-lab', true) }}"
+
+    # Device list - either from comma-separated string or file
+    device_list: ""
+    device_file: ""
+
+    # Bulk tracking
+    bulk_id: "BULK-{{ lookup('pipe', 'date +%Y%m%d%H%M%S') }}-{{ 999999 | random }}"
+    bulk_log: "{{ log_dir }}/incidents/{{ bulk_id }}.log"
+
+  tasks:
+    - name: Record bulk start time
+      ansible.builtin.set_fact:
+        bulk_start_time: "{{ lookup('pipe', 'date -Iseconds') }}"
+        bulk_start_epoch: "{{ lookup('pipe', 'date +%s') }}"
+
+    # --- Resolve device list ---
+    - name: Read device list from file
+      ansible.builtin.slurp:
+        src: "{{ device_file }}"
+      register: device_file_content
+      when: device_file != ''
+      delegate_to: lab-host
+      ignore_errors: true
+
+    - name: Parse devices from file
+      ansible.builtin.set_fact:
+        resolved_devices: "{{ (device_file_content.content | b64decode).split('\n') | select('match', '^[a-zA-Z0-9]') | list }}"
+      when: device_file != '' and device_file_content is succeeded
+
+    - name: Parse devices from comma-separated list
+      ansible.builtin.set_fact:
+        resolved_devices: "{{ device_list.split(',') | map('trim') | select('match', '^[a-zA-Z0-9]') | list }}"
+      when: device_file == '' and device_list != ''
+
+    - name: Fail if no devices provided
+      ansible.builtin.fail:
+        msg: "No devices specified. Provide either -e 'device_list=dev1,dev2' or -e 'device_file=/path/to/file'"
+      when: resolved_devices is not defined or resolved_devices | length == 0
+
+    # --- Create log directory ---
+    - name: Create bulk incident log directory
+      ansible.builtin.file:
+        path: "{{ log_dir }}/incidents"
+        state: directory
+        mode: '0755'
+
+    # --- Display bulk banner ---
+    - name: Display bulk incident banner
+      ansible.builtin.debug:
+        msg: |
+          ================================================================
+          BULK INCIDENT RESPONSE INITIATED
+          ================================================================
+          Bulk ID:       {{ bulk_id }}
+          Device count:  {{ resolved_devices | length }}
+          Devices:       {{ resolved_devices | join(', ') }}
+          Type:          {{ incident_type }}
+          Severity:      {{ severity }}
+          PKI Type:      {{ pki_type }}
+          CA Level:      {{ ca_level }}
+          Auto Re-issue: {{ auto_reissue }}
+          ================================================================
+
+    - name: Log bulk start
+      ansible.builtin.lineinfile:
+        path: "{{ bulk_log }}"
+        line: "{{ bulk_start_time }} | BULK_START | {{ bulk_id }} | DEVICES={{ resolved_devices | length }} | TYPE={{ incident_type }} | SEVERITY={{ severity }} | PKI={{ pki_type }}"
+        create: true
+        mode: '0644'
+
+    # --- Initialize results tracking ---
+    - name: Initialize bulk results
+      ansible.builtin.set_fact:
+        bulk_results: []
+
+    # --- Process each device ---
+    - name: "Run incident response for each device"
+      ansible.builtin.include_tasks: incident-tasks/bulk-device.yml
+      loop: "{{ resolved_devices }}"
+      loop_control:
+        loop_var: current_device_fqdn
+        index_var: device_index
+        label: "[{{ device_index + 1 }}/{{ resolved_devices | length }}] {{ current_device_fqdn }}"
+
+    # --- Generate bulk summary ---
+    - name: Calculate bulk elapsed time
+      ansible.builtin.set_fact:
+        bulk_end_time: "{{ lookup('pipe', 'date -Iseconds') }}"
+        bulk_end_epoch: "{{ lookup('pipe', 'date +%s') }}"
+
+    - name: Compute bulk duration
+      ansible.builtin.set_fact:
+        bulk_duration_seconds: "{{ (bulk_end_epoch | int) - (bulk_start_epoch | int) }}"
+        bulk_duration_formatted: "{{ ((bulk_end_epoch | int - bulk_start_epoch | int) // 60) }}m {{ ((bulk_end_epoch | int - bulk_start_epoch | int) % 60) }}s"
+
+    - name: Count bulk outcomes
+      ansible.builtin.set_fact:
+        bulk_success_count: "{{ bulk_results | selectattr('status', 'equalto', 'SUCCESS') | list | length }}"
+        bulk_fail_count: "{{ bulk_results | rejectattr('status', 'equalto', 'SUCCESS') | list | length }}"
+
+    - name: Write bulk summary to log
+      ansible.builtin.blockinfile:
+        path: "{{ bulk_log }}"
+        marker: "# --- {mark} BULK SUMMARY ---"
+        block: |
+          ================================================================
+          BULK INCIDENT RESPONSE SUMMARY
+          ================================================================
+          Bulk ID:        {{ bulk_id }}
+          Total devices:  {{ resolved_devices | length }}
+          Succeeded:      {{ bulk_success_count }}
+          Failed:         {{ bulk_fail_count }}
+          Duration:       {{ bulk_duration_formatted }}
+          ----------------------------------------------------------------
+          {% for r in bulk_results %}
+          {{ r.status | ljust(8) }} | {{ r.device | ljust(40) }} | {{ r.incident_id | default('N/A') }} | {{ r.detail | default('') }}
+          {% endfor %}
+          ================================================================
+        create: true
+        mode: '0644'
+
+    - name: Display bulk summary report
+      ansible.builtin.debug:
+        msg: |
+          ================================================================
+          BULK INCIDENT RESPONSE COMPLETE
+          ================================================================
+          Bulk ID:        {{ bulk_id }}
+          Total devices:  {{ resolved_devices | length }}
+          Succeeded:      {{ bulk_success_count }}
+          Failed:         {{ bulk_fail_count }}
+          Duration:       {{ bulk_duration_formatted }}
+          ----------------------------------------------------------------
+          {% for r in bulk_results %}
+          {{ r.status | ljust(8) }} | {{ r.device | ljust(40) }} | {{ r.incident_id | default('N/A') }}
+          {% endfor %}
+          ================================================================
+          Bulk log: {{ bulk_log }}
+          ================================================================

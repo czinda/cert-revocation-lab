@@ -1,0 +1,139 @@
+---
+# Incident Response - Bulk Device Handler
+# Runs the full incident response workflow for a single device within a bulk operation.
+# Called by incident-response-bulk.yml for each device in the list.
+#
+# Expected variables:
+#   current_device_fqdn - FQDN of the current device being processed
+#   device_index - Index of current device in the list
+#   pki_type, incident_type, severity, ca_level, auto_reissue, notify_channels
+#   bulk_id, bulk_results, lab_root_dir, log_dir
+
+- name: "Process device [{{ device_index + 1 }}] {{ current_device_fqdn }}"
+  ansible.builtin.debug:
+    msg: |
+      ================================================================
+      BULK DEVICE [{{ device_index + 1 }}/{{ resolved_devices | length }}]: {{ current_device_fqdn }}
+      ================================================================
+
+- name: Record device start time
+  ansible.builtin.set_fact:
+    device_start_epoch: "{{ lookup('pipe', 'date +%s') }}"
+
+# --- Run the full incident response as included tasks ---
+- name: Run full incident response for device
+  block:
+    # Override device_fqdn for the included tasks
+    - name: Set device context
+      ansible.builtin.set_fact:
+        device_fqdn: "{{ current_device_fqdn }}"
+        incident_id: "{{ bulk_id }}-{{ device_index }}"
+        incident_log: "{{ log_dir }}/incidents/{{ bulk_id }}-{{ device_index }}.log"
+        ir_start_time: "{{ lookup('pipe', 'date -Iseconds') }}"
+        ir_start_epoch: "{{ lookup('pipe', 'date +%s') }}"
+
+    # PKI-type-specific settings
+    - name: Set PKI context for device
+      ansible.builtin.set_fact:
+        pki_name_map:
+          rsa: "RSA-4096"
+          ecc: "ECC P-384"
+          pqc: "ML-DSA-87"
+        container_prefix_map:
+          rsa: "dogtag"
+          ecc: "dogtag-ecc"
+          pqc: "dogtag-pq"
+        cert_profile_map:
+          rsa: "caServerCert"
+          ecc: "caECServerCert"
+          pqc: "caMLDSAServerCert"
+        incident_reason_map:
+          key_compromise: "key_compromise"
+          ca_compromise: "ca_compromise"
+          affiliation_changed: "affiliation_changed"
+          decommission: "cessation"
+          cessation_of_operation: "cessation"
+          privilege_withdrawn: "privilege_withdrawn"
+          malware_detection: "key_compromise"
+          credential_theft: "key_compromise"
+          ransomware: "key_compromise"
+          c2_communication: "key_compromise"
+          device_cloning: "key_compromise"
+          mitm_detected: "key_compromise"
+        reason_code_map:
+          key_compromise: 1
+          ca_compromise: 2
+          affiliation_changed: 3
+          superseded: 4
+          cessation: 5
+          privilege_withdrawn: 9
+
+    - name: Resolve device-level variables
+      ansible.builtin.set_fact:
+        pki_name: "{{ pki_name_map[pki_type] | default('RSA-4096') }}"
+        container_prefix: "{{ container_prefix_map[pki_type] | default('dogtag') }}"
+        cert_profile: "{{ cert_profile_map[pki_type] | default('caServerCert') }}"
+        revocation_reason: "{{ incident_reason_map[incident_type] | default('key_compromise') }}"
+        revocation_reason_code: "{{ reason_code_map[incident_reason_map[incident_type] | default('key_compromise')] | default(1) }}"
+        edr_url: "http://mock-edr:8000"
+        siem_url: "http://mock-siem:8000"
+
+    - name: Create incident log directory
+      ansible.builtin.file:
+        path: "{{ log_dir }}/incidents"
+        state: directory
+        mode: '0755'
+
+    - name: Log device incident start
+      ansible.builtin.lineinfile:
+        path: "{{ incident_log }}"
+        line: "{{ ir_start_time }} | PHASE=INIT | INCIDENT={{ incident_id }} | DEVICE={{ device_fqdn }} | TYPE={{ incident_type }} | SEVERITY={{ severity }} | PKI={{ pki_type }} | BULK={{ bulk_id }}"
+        create: true
+        mode: '0644'
+
+    # Run each phase
+    - name: "Phase 2 - Quarantine {{ current_device_fqdn }}"
+      ansible.builtin.include_tasks: incident-tasks/quarantine.yml
+
+    - name: "Phase 3 - Investigate {{ current_device_fqdn }}"
+      ansible.builtin.include_tasks: incident-tasks/investigate.yml
+
+    - name: "Phase 4 - Revoke {{ current_device_fqdn }}"
+      ansible.builtin.include_tasks: incident-tasks/revoke.yml
+
+    - name: "Phase 5 - Re-issue {{ current_device_fqdn }}"
+      ansible.builtin.include_tasks: incident-tasks/reissue.yml
+      when: auto_reissue | bool
+
+    - name: "Phase 6 - Verify {{ current_device_fqdn }}"
+      ansible.builtin.include_tasks: incident-tasks/verify.yml
+
+    # Record success
+    - name: Record device success
+      ansible.builtin.set_fact:
+        bulk_results: >-
+          {{ bulk_results + [{
+            'device': current_device_fqdn,
+            'incident_id': incident_id,
+            'status': 'SUCCESS',
+            'detail': 'Revoked ' + (ir_revoke_success_count | default('0') | string) + ' cert(s), verified=' + (ir_verified | default(false) | string)
+          }] }}
+
+  rescue:
+    - name: Record device failure
+      ansible.builtin.set_fact:
+        bulk_results: >-
+          {{ bulk_results + [{
+            'device': current_device_fqdn,
+            'incident_id': incident_id | default(bulk_id + '-' + (device_index | string)),
+            'status': 'FAILED',
+            'detail': ansible_failed_result.msg | default('Unknown error') | regex_replace('[\n\r]', ' ')
+          }] }}
+
+    - name: Log device failure
+      ansible.builtin.debug:
+        msg: "FAILED: Incident response for {{ current_device_fqdn }} - {{ ansible_failed_result.msg | default('Unknown error') }}"
+
+- name: Display device result
+  ansible.builtin.debug:
+    msg: "[{{ device_index + 1 }}/{{ resolved_devices | length }}] {{ current_device_fqdn }} - {{ (bulk_results | last).status }}"

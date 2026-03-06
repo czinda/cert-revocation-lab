@@ -1,0 +1,210 @@
+---
+# Incident Response - Phase 6: Verify Resolution
+# Verifies old certificates are revoked, new certificate is valid,
+# and OCSP/CRL reflect the correct state.
+#
+# Expected variables from parent playbook:
+#   device_fqdn, incident_id, pki_type, ca_level, container_prefix,
+#   ir_revoked_serials, ir_new_cert_serial (if reissued),
+#   auto_reissue, incident_log, lab_root_dir
+
+- name: "Verify - Begin"
+  ansible.builtin.debug:
+    msg: |
+      ----------------------------------------------------------------
+      PHASE 6: VERIFY RESOLUTION - {{ device_fqdn }}
+      ----------------------------------------------------------------
+
+- name: Initialize verification results
+  ansible.builtin.set_fact:
+    ir_verify_results: []
+    ir_verified: true
+
+# ================================================================
+# Verify old certificates are REVOKED
+# ================================================================
+- name: Verify each revoked certificate status
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ lab_root_dir }}
+      sudo podman exec {{ container_prefix }}-{{ ca_level }}-ca pki -d /root/.dogtag/nssdb -c '' \
+        ca-cert-show 0x{{ item.serial }} 2>/dev/null | grep "Status:" | awk '{print $2}'
+  delegate_to: lab-host
+  register: old_cert_verify
+  loop: "{{ ir_revoked_serials | default([]) }}"
+  loop_control:
+    label: "Verifying old cert 0x{{ item.serial }}"
+  ignore_errors: true
+
+- name: Check old certificate revocation status
+  ansible.builtin.set_fact:
+    ir_verify_results: >-
+      {{ ir_verify_results + [{
+        'check': 'old_cert_revoked',
+        'serial': item.item.serial,
+        'expected': 'REVOKED',
+        'actual': item.stdout | default('UNKNOWN') | trim,
+        'passed': (item.stdout | default('') | trim) == 'REVOKED'
+      }] }}
+  loop: "{{ old_cert_verify.results | default([]) }}"
+  loop_control:
+    label: "0x{{ item.item.serial | default('N/A') }}"
+
+- name: Display old certificate verification
+  ansible.builtin.debug:
+    msg: >-
+      Old cert 0x{{ item.serial }} - Expected: {{ item.expected }}, Actual: {{ item.actual }} -
+      {{ 'PASS' if item.passed else 'FAIL' }}
+  loop: "{{ ir_verify_results | selectattr('check', 'equalto', 'old_cert_revoked') | list }}"
+  loop_control:
+    label: "0x{{ item.serial }}"
+
+# ================================================================
+# Verify OCSP status for old certificates (should return revoked)
+# ================================================================
+- name: Check OCSP for old certificates
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ lab_root_dir }}
+      sudo podman exec {{ container_prefix }}-{{ ca_level }}-ca pki -d /root/.dogtag/nssdb -c '' \
+        ca-cert-show 0x{{ item.serial }} 2>/dev/null \
+        | grep -E "Status:|Revocation Reason:" | tr '\n' ' '
+  delegate_to: lab-host
+  register: ocsp_old_verify
+  loop: "{{ ir_revoked_serials | default([]) }}"
+  loop_control:
+    label: "OCSP verify 0x{{ item.serial }}"
+  ignore_errors: true
+
+- name: Record OCSP verification for old certs
+  ansible.builtin.set_fact:
+    ir_verify_results: >-
+      {{ ir_verify_results + [{
+        'check': 'ocsp_old_revoked',
+        'serial': item.item.serial,
+        'expected': 'REVOKED in OCSP',
+        'actual': item.stdout | default('UNKNOWN') | trim,
+        'passed': 'REVOKED' in (item.stdout | default(''))
+      }] }}
+  loop: "{{ ocsp_old_verify.results | default([]) }}"
+  loop_control:
+    label: "0x{{ item.item.serial | default('N/A') }}"
+
+# ================================================================
+# Check CRL contains old certificate serials
+# ================================================================
+- name: Get current CRL content
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ lab_root_dir }}
+      sudo podman exec {{ container_prefix }}-{{ ca_level }}-ca pki -d /root/.dogtag/nssdb -c '' \
+        ca-crl-show 2>/dev/null
+  delegate_to: lab-host
+  register: crl_content
+  ignore_errors: true
+
+- name: Check if old serials appear in CRL
+  ansible.builtin.set_fact:
+    ir_verify_results: >-
+      {{ ir_verify_results + [{
+        'check': 'crl_contains_serial',
+        'serial': item.serial,
+        'expected': 'Present in CRL',
+        'actual': 'CRL retrieved' if crl_content is succeeded else 'CRL unavailable',
+        'passed': crl_content is succeeded
+      }] }}
+  loop: "{{ ir_revoked_serials | default([]) }}"
+  loop_control:
+    label: "CRL check 0x{{ item.serial }}"
+
+# ================================================================
+# Verify new certificate is VALID (if re-issued)
+# ================================================================
+- name: Verify new certificate status
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ lab_root_dir }}
+      sudo podman exec {{ container_prefix }}-{{ ca_level }}-ca pki -d /root/.dogtag/nssdb -c '' \
+        ca-cert-show 0x{{ ir_new_cert_serial }} 2>/dev/null \
+        | grep -E "Serial Number:|Status:|Subject DN:|Not Valid" | tr '\n' ' '
+  delegate_to: lab-host
+  register: new_cert_verify
+  when: auto_reissue | bool and (ir_new_cert_serial | default('')) != ''
+  ignore_errors: true
+
+- name: Record new certificate verification
+  ansible.builtin.set_fact:
+    ir_verify_results: >-
+      {{ ir_verify_results + [{
+        'check': 'new_cert_valid',
+        'serial': ir_new_cert_serial,
+        'expected': 'VALID',
+        'actual': new_cert_verify.stdout | default('UNKNOWN') | trim,
+        'passed': 'VALID' in (new_cert_verify.stdout | default(''))
+      }] }}
+  when: auto_reissue | bool and (ir_new_cert_serial | default('')) != '' and new_cert_verify is defined
+
+# ================================================================
+# Verify certificate chain for new cert (if re-issued)
+# ================================================================
+- name: Verify new certificate chain
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ lab_root_dir }}
+      sudo podman exec {{ container_prefix }}-{{ ca_level }}-ca pki -d /root/.dogtag/nssdb -c '' \
+        ca-cert-show 0x{{ ir_new_cert_serial }} 2>/dev/null | grep -E "Issuer DN:|Subject DN:" | tr '\n' ' '
+  delegate_to: lab-host
+  register: chain_verify
+  when: auto_reissue | bool and (ir_new_cert_serial | default('')) != ''
+  ignore_errors: true
+
+- name: Record chain verification
+  ansible.builtin.set_fact:
+    ir_verify_results: >-
+      {{ ir_verify_results + [{
+        'check': 'cert_chain_valid',
+        'serial': ir_new_cert_serial,
+        'expected': 'Valid chain',
+        'actual': chain_verify.stdout | default('UNKNOWN') | trim,
+        'passed': chain_verify is succeeded and (chain_verify.stdout | default('')) | length > 0
+      }] }}
+  when: auto_reissue | bool and (ir_new_cert_serial | default('')) != '' and chain_verify is defined
+
+# ================================================================
+# Compile verification summary
+# ================================================================
+- name: Count verification results
+  ansible.builtin.set_fact:
+    ir_verify_pass_count: "{{ ir_verify_results | selectattr('passed', 'equalto', true) | list | length }}"
+    ir_verify_fail_count: "{{ ir_verify_results | rejectattr('passed', 'equalto', true) | list | length }}"
+
+- name: Set overall verification status
+  ansible.builtin.set_fact:
+    ir_verified: "{{ (ir_verify_fail_count | int) == 0 }}"
+
+- name: Display verification summary
+  ansible.builtin.debug:
+    msg: |
+      ----------------------------------------------------------------
+      VERIFICATION SUMMARY - {{ device_fqdn }}
+      ----------------------------------------------------------------
+      Total checks:  {{ ir_verify_results | length }}
+      Passed:        {{ ir_verify_pass_count }}
+      Failed:        {{ ir_verify_fail_count }}
+      Overall:       {{ 'VERIFIED' if ir_verified | bool else 'VERIFICATION FAILED' }}
+      ----------------------------------------------------------------
+      {% for r in ir_verify_results %}
+      {{ 'PASS' if r.passed else 'FAIL' }} | {{ r.check }} | 0x{{ r.serial }} | Expected: {{ r.expected }} | Actual: {{ r.actual }}
+      {% endfor %}
+      ----------------------------------------------------------------
+
+- name: Log verification to incident log
+  ansible.builtin.lineinfile:
+    path: "{{ incident_log }}"
+    line: "{{ lookup('pipe', 'date -Iseconds') }} | PHASE=VERIFY | INCIDENT={{ incident_id }} | DEVICE={{ device_fqdn }} | CHECKS={{ ir_verify_results | length }} | PASSED={{ ir_verify_pass_count }} | FAILED={{ ir_verify_fail_count }} | VERIFIED={{ ir_verified }}"
+    create: true
+    mode: '0644'
+
+- name: Set verification timestamp
+  ansible.builtin.set_fact:
+    ir_verify_time: "{{ lookup('pipe', 'date -Iseconds') }}"

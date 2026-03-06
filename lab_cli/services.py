@@ -166,6 +166,8 @@ def check_all_services(
     results["crl_server"] = check_http_service("crl_server", config.crl_cdp_url)
     results["policy_engine"] = check_http_service("policy_engine", config.policy_engine_url)
     results["chain_visualizer"] = check_http_service("chain_visualizer", config.chain_visualizer_url)
+    results["pin_validator"] = check_http_service("pin_validator", config.pin_validator_url)
+    results["kmip_server"] = check_http_service("kmip_server", config.kmip_server_url)
 
     # Kafka (via EDR health check)
     results["kafka"] = check_kafka(config)

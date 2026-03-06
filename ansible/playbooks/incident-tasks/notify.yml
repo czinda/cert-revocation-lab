@@ -1,0 +1,194 @@
+---
+# Incident Response - Phase 7: Notify and Close
+# Generates incident summary, sends notifications, and closes the incident.
+#
+# Expected variables from parent playbook:
+#   device_fqdn, incident_id, incident_type, severity, pki_type, pki_name,
+#   ca_level, revocation_reason, auto_reissue,
+#   ir_start_time, ir_start_epoch, ir_quarantine_status, ir_quarantine_time,
+#   ir_findings, ir_revoked_serials, ir_revoke_success_count, ir_revoke_fail_count,
+#   ir_new_cert_serial (if reissued), ir_verified,
+#   incident_log, notify_channels, edr_url, siem_url, lab_root_dir
+
+- name: "Notify - Begin"
+  ansible.builtin.debug:
+    msg: |
+      ----------------------------------------------------------------
+      PHASE 7: NOTIFY AND CLOSE - {{ incident_id }}
+      ----------------------------------------------------------------
+
+# --- Calculate elapsed time ---
+- name: Calculate total elapsed time
+  ansible.builtin.set_fact:
+    ir_end_time: "{{ lookup('pipe', 'date -Iseconds') }}"
+    ir_end_epoch: "{{ lookup('pipe', 'date +%s') }}"
+
+- name: Compute duration
+  ansible.builtin.set_fact:
+    ir_duration_seconds: "{{ (ir_end_epoch | int) - (ir_start_epoch | int) }}"
+
+- name: Format duration
+  ansible.builtin.set_fact:
+    ir_duration_formatted: "{{ (ir_duration_seconds | int // 60) }}m {{ (ir_duration_seconds | int % 60) }}s"
+
+# --- Build incident summary ---
+- name: Build incident summary
+  ansible.builtin.set_fact:
+    ir_summary:
+      incident_id: "{{ incident_id }}"
+      device_fqdn: "{{ device_fqdn }}"
+      incident_type: "{{ incident_type }}"
+      severity: "{{ severity }}"
+      pki_type: "{{ pki_type }}"
+      pki_name: "{{ pki_name }}"
+      ca_level: "{{ ca_level }}"
+      revocation_reason: "{{ revocation_reason }}"
+      phases:
+        init:
+          timestamp: "{{ ir_start_time }}"
+          status: "COMPLETED"
+        quarantine:
+          timestamp: "{{ ir_quarantine_time | default(ir_start_time) }}"
+          status: "{{ ir_quarantine_status | default('UNKNOWN') }}"
+        investigate:
+          timestamp: "{{ ir_investigate_time | default(ir_start_time) }}"
+          total_certs: "{{ ir_findings.total_certs_found | default(0) }}"
+          valid_certs: "{{ ir_findings.valid_certs | default([]) | length }}"
+          revoked_certs: "{{ ir_findings.revoked_certs | default([]) | length }}"
+        revoke:
+          timestamp: "{{ ir_revoke_time | default(ir_start_time) }}"
+          attempted: "{{ ir_revoked_serials | default([]) | length }}"
+          succeeded: "{{ ir_revoke_success_count | default(0) }}"
+          failed: "{{ ir_revoke_fail_count | default(0) }}"
+          serials: "{{ ir_revoked_serials | default([]) | map(attribute='serial') | map('regex_replace', '^', '0x') | list }}"
+        reissue:
+          timestamp: "{{ ir_reissue_time | default('N/A') }}"
+          performed: "{{ auto_reissue | bool }}"
+          new_serial: "{{ '0x' + ir_new_cert_serial if (ir_new_cert_serial | default('')) != '' else 'N/A' }}"
+          status: "{{ ir_new_cert_status | default('N/A') }}"
+        verify:
+          timestamp: "{{ ir_verify_time | default(ir_start_time) }}"
+          verified: "{{ ir_verified | default(false) }}"
+          checks_passed: "{{ ir_verify_pass_count | default(0) }}"
+          checks_failed: "{{ ir_verify_fail_count | default(0) }}"
+      started: "{{ ir_start_time }}"
+      ended: "{{ ir_end_time }}"
+      duration: "{{ ir_duration_formatted }}"
+      resolution: "{{ 'RESOLVED' if (ir_verified | default(false) | bool) else 'PARTIAL' }}"
+
+# --- Write final incident report ---
+- name: Write final incident report to log
+  ansible.builtin.blockinfile:
+    path: "{{ incident_log }}"
+    marker: "# --- {mark} INCIDENT REPORT ---"
+    block: |
+      ================================================================
+      INCIDENT RESPONSE REPORT
+      ================================================================
+      Incident ID:     {{ incident_id }}
+      Device:          {{ device_fqdn }}
+      Type:            {{ incident_type }}
+      Severity:        {{ severity }}
+      PKI:             {{ pki_type }} ({{ pki_name }})
+      CA Level:        {{ ca_level }}
+      Revocation:      {{ revocation_reason }}
+      Started:         {{ ir_start_time }}
+      Ended:           {{ ir_end_time }}
+      Duration:        {{ ir_duration_formatted }}
+      Resolution:      {{ ir_summary.resolution }}
+      ----------------------------------------------------------------
+      PHASE SUMMARY:
+        1. Init:        COMPLETED @ {{ ir_start_time }}
+        2. Quarantine:  {{ ir_quarantine_status | default('UNKNOWN') }} @ {{ ir_quarantine_time | default('N/A') }}
+        3. Investigate: Found {{ ir_findings.total_certs_found | default(0) }} cert(s) ({{ ir_findings.valid_certs | default([]) | length }} valid, {{ ir_findings.revoked_certs | default([]) | length }} already revoked) @ {{ ir_investigate_time | default('N/A') }}
+        4. Revoke:      {{ ir_revoke_success_count | default(0) }}/{{ ir_revoked_serials | default([]) | length }} revoked @ {{ ir_revoke_time | default('N/A') }}
+        5. Re-issue:    {{ ('Serial 0x' + ir_new_cert_serial + ' (' + (ir_new_cert_status | default('UNKNOWN')) + ')') if auto_reissue | bool and (ir_new_cert_serial | default('')) != '' else 'Skipped' }} @ {{ ir_reissue_time | default('N/A') }}
+        6. Verify:      {{ ir_verify_pass_count | default(0) }}/{{ (ir_verify_pass_count | default(0) | int + ir_verify_fail_count | default(0) | int) }} checks passed @ {{ ir_verify_time | default('N/A') }}
+        7. Notify:      COMPLETED @ {{ ir_end_time }}
+      ================================================================
+    create: true
+    mode: '0644'
+
+# --- Send Kafka notification via mock EDR ---
+- name: Send incident notification via mock EDR
+  ansible.builtin.uri:
+    url: "{{ edr_url }}/trigger"
+    method: POST
+    body_format: json
+    body:
+      event_type: "incident_response_complete"
+      device_fqdn: "{{ device_fqdn }}"
+      severity: "{{ severity }}"
+      description: "Incident {{ incident_id }} {{ ir_summary.resolution }}: {{ incident_type }} on {{ device_fqdn }} ({{ ir_revoke_success_count | default(0) }} certs revoked, duration {{ ir_duration_formatted }})"
+      pki_type: "{{ pki_type }}"
+      incident_id: "{{ incident_id }}"
+      resolution: "{{ ir_summary.resolution }}"
+    status_code: [200, 201, 202]
+    timeout: 10
+  register: edr_notify
+  ignore_errors: true
+  when: "'kafka' in notify_channels"
+
+- name: Log EDR notification result
+  ansible.builtin.debug:
+    msg: >-
+      EDR notification {{ 'sent successfully' if edr_notify is succeeded else 'failed (mock-edr may be unavailable)' }}
+  when: "'kafka' in notify_channels"
+
+# --- Send SIEM notification ---
+- name: Send incident notification via mock SIEM
+  ansible.builtin.uri:
+    url: "{{ siem_url }}/trigger"
+    method: POST
+    body_format: json
+    body:
+      event_type: "incident_response_complete"
+      device_fqdn: "{{ device_fqdn }}"
+      severity: "{{ severity }}"
+      description: "Incident {{ incident_id }} {{ ir_summary.resolution }}: {{ incident_type }} on {{ device_fqdn }}"
+      pki_type: "{{ pki_type }}"
+      incident_id: "{{ incident_id }}"
+    status_code: [200, 201, 202]
+    timeout: 10
+  register: siem_notify
+  ignore_errors: true
+  when: "'kafka' in notify_channels"
+
+# --- Move incident to resolved ---
+- name: Create resolved incidents directory
+  ansible.builtin.file:
+    path: "{{ log_dir }}/incidents/resolved"
+    state: directory
+    mode: '0755'
+
+- name: Mark incident as resolved
+  ansible.builtin.lineinfile:
+    path: "{{ log_dir }}/incidents/resolved/index.log"
+    line: "{{ ir_end_time }} | {{ incident_id }} | {{ device_fqdn }} | {{ incident_type }} | {{ ir_summary.resolution }} | {{ ir_duration_formatted }}"
+    create: true
+    mode: '0644'
+
+# --- Display final report to console ---
+- name: Display final incident report
+  ansible.builtin.debug:
+    msg: |
+      ================================================================
+      INCIDENT RESPONSE COMPLETE
+      ================================================================
+      Incident ID:     {{ incident_id }}
+      Device:          {{ device_fqdn }}
+      Type:            {{ incident_type }}
+      Severity:        {{ severity }}
+      PKI:             {{ pki_type }} ({{ pki_name }})
+      Resolution:      {{ ir_summary.resolution }}
+      Duration:        {{ ir_duration_formatted }}
+      ----------------------------------------------------------------
+      Certificates revoked:    {{ ir_revoke_success_count | default(0) }}
+      {% if auto_reissue | bool and (ir_new_cert_serial | default('')) != '' %}
+      New certificate serial:  0x{{ ir_new_cert_serial }}
+      New certificate status:  {{ ir_new_cert_status | default('UNKNOWN') }}
+      {% endif %}
+      Verification:            {{ 'PASSED' if ir_verified | default(false) | bool else 'FAILED' }}
+      ================================================================
+      Incident log: {{ incident_log }}
+      ================================================================
