@@ -172,6 +172,31 @@ ct_log_entries = Gauge(
     registry=registry,
 )
 
+cdp_server_up = Gauge(
+    "pki_cdp_server_up",
+    "Whether the CRL Distribution Point server is reachable (1=up, 0=down)",
+    registry=registry,
+)
+
+cdp_crls_available = Gauge(
+    "pki_cdp_crls_available",
+    "Number of CRL files available on the CDP server",
+    registry=registry,
+)
+
+cdp_last_refresh = Gauge(
+    "pki_cdp_last_refresh_timestamp",
+    "CDP server last CRL refresh as Unix timestamp",
+    registry=registry,
+)
+
+revocation_event_latency = Gauge(
+    "pki_revocation_event_latency_seconds",
+    "End-to-end revocation event processing latency",
+    ["pki_type", "stage"],
+    registry=registry,
+)
+
 # --- CA Configuration ---
 # Uses host-gateway ports (same pattern as iot-client and eda-server)
 
@@ -202,6 +227,9 @@ OCSP_TARGETS = {
 
 # CT Log target
 CT_LOG_URL = os.getenv("CT_LOG_URL", "http://ct-log.cert-lab.local:8086")
+
+# CDP Server target
+CDP_URL = os.getenv("CDP_URL", "http://crl.cert-lab.local:8080")
 
 # Path where perf-test.py writes its metrics JSON
 PERF_METRICS_DIR = Path(os.getenv("PERF_METRICS_DIR", "/data/perf-metrics"))
@@ -374,8 +402,30 @@ async def scrape_ct_log():
     ct_log_up.set(0)
 
 
+async def scrape_cdp_server():
+    """Scrape the CRL Distribution Point server for metrics."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{CDP_URL}/crl/status.json")
+            if resp.status_code == 200:
+                data = resp.json()
+                cdp_server_up.set(1)
+                cdp_crls_available.set(data.get("cas_success", 0))
+                last_ref = data.get("last_refresh", "")
+                if last_ref:
+                    try:
+                        ts = datetime.fromisoformat(last_ref.replace("Z", "+00:00")).timestamp()
+                        cdp_last_refresh.set(ts)
+                    except Exception:
+                        pass
+                return
+    except Exception as e:
+        logger.debug(f"CDP server scrape failed: {e}")
+    cdp_server_up.set(0)
+
+
 async def scrape_all():
-    """Scrape all CAs, OCSP responders, and CT log. Update Prometheus metrics."""
+    """Scrape all CAs, OCSP responders, CT log, and CDP. Update Prometheus metrics."""
     tasks = []
     for pki_type, levels in CA_TARGETS.items():
         for ca_level, target in levels.items():
@@ -383,6 +433,7 @@ async def scrape_all():
     for pki_type, target in OCSP_TARGETS.items():
         tasks.append(scrape_ocsp_responder(pki_type, target["host"], target["port"]))
     tasks.append(scrape_ct_log())
+    tasks.append(scrape_cdp_server())
     await asyncio.gather(*tasks, return_exceptions=True)
 
     # Load perf test metrics from shared volume

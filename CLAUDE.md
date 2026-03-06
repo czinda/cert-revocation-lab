@@ -122,6 +122,9 @@ pip install -e .
 - `lab est-reenroll` - Renew certificate via EST simplereenroll (RFC 7030)
 - `lab est-cacerts` - Get CA certificates from EST endpoint
 - `lab perf-test` - Run bulk PKI performance test (issuance + revocation)
+- `lab policy-check CN` - Validate certificate request against policy engine
+- `lab crl-list` - List available CRLs from CDP server
+- `lab crl-check SERIAL` - Check if serial appears in a CRL
 - `lab ct-submit` - Submit certificates from a Dogtag CA to the CT log
 - `lab ct-verify` - Verify a certificate against the CT log
 - `lab ct-stats` - Show CT log statistics
@@ -144,6 +147,10 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → Ansible Playbook 
 - **AWX**: Ansible automation platform
 - **FastAPI**: Mock EDR/SIEM/CT-log implementations and PKI metrics exporter
 - **Mock CT Log**: RFC 6962 Certificate Transparency log simulation (http://localhost:8086)
+- **CRL CDP Server**: HTTP CRL Distribution Point serving DER/PEM CRLs (http://localhost:8088)
+- **Policy Engine**: Certificate request validation against CA/B Forum BR (http://localhost:8089)
+- **Chain Visualizer**: Interactive PKI trust chain web UI (http://localhost:8090)
+- **Loki + Promtail**: Log aggregation for Dogtag audit logs (http://localhost:3100)
 - **Prometheus + Grafana**: PKI performance monitoring (http://localhost:3000, http://localhost:9090)
 
 ## Certificate Profiles
@@ -267,9 +274,48 @@ ACME (RFC 8555) and EST (RFC 7030) are deployed as **standalone Registration Aut
 
 The IoT Client uses EST-first enrollment (falls back to Dogtag REST API if EST unavailable).
 
+## Additional Tools
+
+### CMC Protocol (RFC 5272)
+```bash
+scripts/pki/cmc-submit.sh enroll --cn device.cert-lab.local --pki-type rsa --ca intermediate
+scripts/pki/cmc-submit.sh revoke --serial 0x1234 --reason key_compromise
+```
+
+### Cross-Certification
+```bash
+sudo bash scripts/pki/cross-certify.sh rsa-ecc   # Cross-sign RSA ↔ ECC
+sudo bash scripts/pki/cross-certify.sh rsa-pq    # Cross-sign RSA ↔ PQ
+```
+
+### GitOps Certificate Management
+```bash
+python scripts/gitops-reconcile.py --state configs/gitops/desired-state.yaml --dry-run
+python scripts/gitops-reconcile.py --state configs/gitops/desired-state.yaml --apply
+```
+
+### Chaos Engineering
+```bash
+bash scripts/chaos-test.sh ca-kill --pki-type rsa
+bash scripts/chaos-test.sh ds-failure --pki-type rsa
+bash scripts/chaos-test.sh all
+```
+
+### Load Testing
+```bash
+python scripts/load-test.py --target rsa --concurrency 10 --count 100
+python scripts/load-test.py --target all --concurrency 5 --count 50
+```
+
+### Compliance Scanning
+```bash
+python scripts/compliance-scan.py --pki-type rsa --ca-level intermediate
+python scripts/compliance-scan.py --all
+```
+
 ## Monitoring Stack
 
-Prometheus (`:9090`) → Grafana (`:3000`) pipeline with PKI Exporter (`:9091/metrics`) scraping all 9 Dogtag CAs, 3 dedicated OCSP responders, and the CT log. Auto-provisioned dashboard (uid: `pki-metrics`) with CA health, certificate inventory, issuance/revocation throughput, OCSP response times (built-in and dedicated), CRL status, and CT log metrics.
+Prometheus (`:9090`) → Grafana (`:3000`) pipeline with PKI Exporter (`:9091/metrics`) scraping all 9 Dogtag CAs, 3 dedicated OCSP responders, CT log, and CDP server. Loki (`:3100`) + Promtail for Dogtag audit log aggregation. Auto-provisioned dashboard (uid: `pki-metrics`) with CA health, certificate inventory, issuance/revocation throughput, OCSP response times, CRL status, CT log metrics, CDP status, and revocation timeline.
 
 ## AgnosticD / RHPDS Deployment
 

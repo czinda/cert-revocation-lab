@@ -1,0 +1,99 @@
+server:
+  http_listen_port: 9080
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki.cert-lab.local:3100/loki/api/v1/push
+
+scrape_configs:
+  # Dogtag PKI audit logs (all hierarchies)
+  - job_name: dogtag_audit
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: dogtag_audit
+          pki_type: rsa
+          ca_level: root
+          __path__: /var/log/pki/rsa/root-ca/*.log
+      - targets: [localhost]
+        labels:
+          job: dogtag_audit
+          pki_type: rsa
+          ca_level: intermediate
+          __path__: /var/log/pki/rsa/intermediate-ca/*.log
+      - targets: [localhost]
+        labels:
+          job: dogtag_audit
+          pki_type: rsa
+          ca_level: iot
+          __path__: /var/log/pki/rsa/iot-ca/*.log
+      - targets: [localhost]
+        labels:
+          job: dogtag_audit
+          pki_type: ecc
+          ca_level: root
+          __path__: /var/log/pki/ecc/root-ca/*.log
+      - targets: [localhost]
+        labels:
+          job: dogtag_audit
+          pki_type: ecc
+          ca_level: intermediate
+          __path__: /var/log/pki/ecc/intermediate-ca/*.log
+      - targets: [localhost]
+        labels:
+          job: dogtag_audit
+          pki_type: ecc
+          ca_level: iot
+          __path__: /var/log/pki/ecc/iot-ca/*.log
+      - targets: [localhost]
+        labels:
+          job: dogtag_audit
+          pki_type: pqc
+          ca_level: root
+          __path__: /var/log/pki/pq/root-ca/*.log
+      - targets: [localhost]
+        labels:
+          job: dogtag_audit
+          pki_type: pqc
+          ca_level: intermediate
+          __path__: /var/log/pki/pq/intermediate-ca/*.log
+      - targets: [localhost]
+        labels:
+          job: dogtag_audit
+          pki_type: pqc
+          ca_level: iot
+          __path__: /var/log/pki/pq/iot-ca/*.log
+    pipeline_stages:
+      # Parse Dogtag audit log lines
+      - regex:
+          expression: '^\[(?P<timestamp>[^\]]+)\]\[(?P<source>[^\]]+)\]\[(?P<level>[^\]]+)\]\[(?P<event>[^\]]+)\](?P<message>.*)'
+      - labels:
+          source:
+          level:
+          event:
+      - timestamp:
+          source: timestamp
+          format: "2006-01-02T15:04:05.000-0700"
+
+  # EDA event logs
+  - job_name: eda_logs
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: eda_events
+          __path__: /var/log/eda/*.log
+    pipeline_stages:
+      - regex:
+          expression: '(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^\s]*)\s+(?P<level>\w+)\s+(?P<message>.*)'
+      - labels:
+          level:
+
+  # Kafka security events
+  - job_name: security_events
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: security_events
+          __path__: /var/log/security-events/*.log

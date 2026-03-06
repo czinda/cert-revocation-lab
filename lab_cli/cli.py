@@ -1581,6 +1581,151 @@ def mtls_test(
     console.print(f"  Serial {cert_result.serial} can be revoked to test CRL-based rejection.")
 
 
+@app.command("policy-check")
+def policy_check(
+    cn: str = typer.Argument(..., help="Common Name to validate"),
+    cert_type: str = typer.Option("server", "--type", "-t", help="Certificate type (server, client, iot, ca)"),
+    key_type: str = typer.Option("rsa", "--key-type", help="Key type (rsa, ecc, mldsa)"),
+    key_size: int = typer.Option(4096, "--key-size", help="Key size"),
+    validity: int = typer.Option(365, "--validity", help="Validity in days"),
+    org: str = typer.Option("Cert-Lab", "--org", "-o", help="Organization"),
+    country: str = typer.Option("US", "--country", help="Country code"),
+    policy_url: str = typer.Option("http://localhost:8089", "--policy-url", help="Policy engine URL"),
+):
+    """Validate a certificate request against the policy engine."""
+    import httpx
+
+    req = {
+        "common_name": cn,
+        "organization": org,
+        "country": country,
+        "key_type": key_type,
+        "key_size": key_size,
+        "validity_days": validity,
+        "cert_type": cert_type,
+    }
+
+    try:
+        resp = httpx.post(f"{policy_url}/validate", json=req, timeout=10.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data["approved"]:
+                console.print(f"[green]APPROVED[/green] — {cn}")
+            else:
+                console.print(f"[red]DENIED[/red] — {cn}")
+
+            if data["violations"]:
+                table = Table(title="Policy Violations")
+                table.add_column("Rule", style="red")
+                table.add_column("Message")
+                for v in data["violations"]:
+                    table.add_row(v["rule"], v["message"])
+                console.print(table)
+
+            if data["warnings"]:
+                table = Table(title="Warnings")
+                table.add_column("Rule", style="yellow")
+                table.add_column("Message")
+                for w in data["warnings"]:
+                    table.add_row(w["rule"], w["message"])
+                console.print(table)
+        else:
+            console.print(f"[red]Error:[/red] {resp.status_code}")
+            raise typer.Exit(1)
+    except httpx.ConnectError:
+        console.print("[red]Cannot connect to policy engine. Is policy-engine running?[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("crl-list")
+def crl_list(
+    cdp_url: str = typer.Option("http://localhost:8088", "--cdp-url", help="CDP server URL"),
+):
+    """List available CRLs from the CDP server."""
+    import httpx
+
+    try:
+        resp = httpx.get(f"{cdp_url}/crl/status.json", timeout=10.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            console.print(f"\n[bold]CRL Distribution Point Server[/bold]")
+            console.print(f"  Last refresh:      {data.get('last_refresh', 'N/A')}")
+            console.print(f"  CAs reachable:     {data.get('cas_success', 0)}/{data.get('cas_total', 0)}")
+            console.print(f"  Refresh interval:  {data.get('refresh_interval', 300)}s")
+
+            # List CRL files
+            crl_resp = httpx.get(f"{cdp_url}/", timeout=10.0)
+            if crl_resp.status_code == 200:
+                files = crl_resp.json()
+                table = Table(title="Available CRLs")
+                table.add_column("File", style="cyan")
+                table.add_column("Type")
+                table.add_column("URL")
+                for f in files:
+                    name = f.get("name", "")
+                    if name.endswith(".crl"):
+                        table.add_row(name, "DER", f"{cdp_url}/crl/{name}")
+                    elif name.endswith(".crl.pem"):
+                        table.add_row(name, "PEM", f"{cdp_url}/pem/{name}")
+                console.print(table)
+        else:
+            console.print(f"[red]CDP server returned {resp.status_code}[/red]")
+            raise typer.Exit(1)
+    except httpx.ConnectError:
+        console.print("[red]Cannot connect to CDP server. Is crl-server running?[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("crl-check")
+def crl_check(
+    serial: str = typer.Argument(..., help="Certificate serial number to check"),
+    ca_label: str = typer.Option("rsa-intermediate", "--ca", help="CA label (e.g., rsa-root, ecc-intermediate)"),
+    cdp_url: str = typer.Option("http://localhost:8088", "--cdp-url", help="CDP server URL"),
+):
+    """Check if a serial number appears in a CRL from the CDP server."""
+    import subprocess
+    import tempfile
+
+    try:
+        import httpx
+        resp = httpx.get(f"{cdp_url}/pem/{ca_label}.crl.pem", timeout=10.0)
+        if resp.status_code != 200:
+            console.print(f"[red]CRL not found for {ca_label}[/red]")
+            raise typer.Exit(1)
+
+        with tempfile.NamedTemporaryFile(suffix=".pem", mode="w", delete=False) as f:
+            f.write(resp.text)
+            crl_path = f.name
+
+        result = subprocess.run(
+            ["openssl", "crl", "-in", crl_path, "-noout", "-text"],
+            capture_output=True, text=True, timeout=30,
+        )
+
+        import os
+        os.unlink(crl_path)
+
+        # Normalize serial for comparison
+        serial_clean = serial.replace("0x", "").replace("0X", "").upper().lstrip("0")
+
+        revoked_serials = []
+        for line in result.stdout.split("\n"):
+            if "Serial Number:" in line:
+                s = line.split("Serial Number:")[-1].strip().upper().replace(":", "")
+                revoked_serials.append(s.lstrip("0"))
+
+        if serial_clean in revoked_serials:
+            console.print(f"[red]REVOKED[/red] — Serial {serial} found in {ca_label} CRL")
+            console.print(f"  CRL contains {len(revoked_serials)} revoked certificates")
+        else:
+            console.print(f"[green]NOT REVOKED[/green] — Serial {serial} not in {ca_label} CRL")
+            console.print(f"  CRL contains {len(revoked_serials)} revoked certificates")
+
+    except httpx.ConnectError:
+        console.print("[red]Cannot connect to CDP server. Is crl-server running?[/red]")
+        raise typer.Exit(1)
+
+
 def cli():
     """Entry point for the CLI."""
     app()

@@ -1,0 +1,60 @@
+# GitOps Certificate Desired State
+#
+# Defines the desired certificate inventory for each PKI hierarchy.
+# The reconciler (scripts/gitops-reconcile.py) compares this against
+# the live Dogtag PKI state and creates/revokes certificates as needed.
+#
+# Usage:
+#   python scripts/gitops-reconcile.py --state configs/gitops/desired-state.yaml
+#   python scripts/gitops-reconcile.py --state configs/gitops/desired-state.yaml --dry-run
+#   python scripts/gitops-reconcile.py --state configs/gitops/desired-state.yaml --apply
+
+certificates:
+  # Web servers
+  - cn: web-server-01.cert-lab.local
+    pki_type: rsa
+    ca_level: intermediate
+    profile: caServerCert
+    state: present
+    san:
+      - web-server-01.cert-lab.local
+      - www.cert-lab.local
+
+  - cn: web-server-02.cert-lab.local
+    pki_type: ecc
+    ca_level: intermediate
+    profile: caECServerCert
+    state: present
+
+  # IoT devices
+  - cn: sensor-001.iot.cert-lab.local
+    pki_type: rsa
+    ca_level: iot
+    profile: caServerCert
+    state: present
+
+  - cn: sensor-002.iot.cert-lab.local
+    pki_type: rsa
+    ca_level: iot
+    profile: caServerCert
+    state: present
+
+  - cn: gateway-001.iot.cert-lab.local
+    pki_type: ecc
+    ca_level: iot
+    profile: caECServerCert
+    state: present
+
+  # Decommissioned device — should be revoked
+  - cn: old-device.cert-lab.local
+    pki_type: rsa
+    ca_level: iot
+    state: absent
+    revocation_reason: cessation_of_operation
+
+  # Compromised certificate — should be revoked
+  - cn: compromised-server.cert-lab.local
+    pki_type: rsa
+    ca_level: intermediate
+    state: absent
+    revocation_reason: key_compromise
