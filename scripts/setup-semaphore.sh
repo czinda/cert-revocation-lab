@@ -318,6 +318,7 @@ create_template() {
 
     if [[ -n "$tmpl_id" && "$tmpl_id" != "null" ]]; then
         warn "Template '${name}' already exists (id=${tmpl_id})"
+        echo "$tmpl_id"
         return 0
     fi
 
@@ -340,7 +341,78 @@ create_template() {
             allow_override_args_in_task: true
         }')
 
-    api_post_check "/api/project/${project_id}/templates" "$payload" "Template: ${name}" > /dev/null || return 1
+    local result
+    result=$(api_post_check "/api/project/${project_id}/templates" "$payload" "Template: ${name}") || return 1
+    echo "$result" | jq -r '.id'
+}
+
+create_schedule() {
+    local project_id="$1"
+    local template_id="$2"
+    local name="$3"
+    local cron="$4"
+
+    # Check if schedule already exists
+    local existing
+    existing=$(api_get "/api/project/${project_id}/schedules")
+    local sched_id
+    sched_id=$(echo "$existing" | jq -r ".[] | select(.name == \"${name}\") | .id" 2>/dev/null)
+
+    if [[ -n "$sched_id" && "$sched_id" != "null" ]]; then
+        warn "Schedule '${name}' already exists (id=${sched_id})"
+        return 0
+    fi
+
+    local payload
+    payload=$(jq -n \
+        --argjson pid "$project_id" \
+        --argjson tid "$template_id" \
+        --arg name "$name" \
+        --arg cron "$cron" \
+        '{
+            project_id: $pid,
+            template_id: $tid,
+            name: $name,
+            cron_format: $cron
+        }')
+
+    local result
+    result=$(api_post_check "/api/project/${project_id}/schedules" "$payload" "Schedule: ${name}") || return 1
+    sched_id=$(echo "$result" | jq -r '.id')
+
+    # Activate the schedule (created inactive by default)
+    local activate_payload
+    activate_payload=$(jq -n \
+        --argjson id "$sched_id" \
+        --argjson pid "$project_id" \
+        --argjson tid "$template_id" \
+        --arg name "$name" \
+        --arg cron "$cron" \
+        '{
+            id: $id,
+            project_id: $pid,
+            template_id: $tid,
+            name: $name,
+            cron_format: $cron,
+            active: true
+        }')
+
+    local body_file
+    body_file=$(mktemp)
+    local http_code
+    http_code=$(curl -s -o "$body_file" -w "%{http_code}" \
+        -b "$COOKIE_JAR" \
+        -H "Content-Type: application/json" \
+        -X PUT \
+        -d "$activate_payload" \
+        "${SEMAPHORE_URL}/api/project/${project_id}/schedules/${sched_id}")
+    rm -f "$body_file"
+
+    if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
+        success "Activated: Schedule '${name}'"
+    else
+        error "Failed to activate schedule '${name}' (HTTP ${http_code})"
+    fi
 }
 
 ###############################################################################
@@ -471,9 +543,12 @@ main() {
         "Cleanup|ansible/playbooks/ops/cleanup.yml|${env_default_id}|${inv_localhost_id}"
     )
 
+    # Declare associative array to capture template IDs for scheduling
+    declare -A tmpl_ids
+
     for entry in "${ops_templates[@]}"; do
         IFS='|' read -r t_name t_playbook t_env t_inv <<< "$entry"
-        create_template "$project_id" "$t_name" "$t_playbook" "$t_env" "$t_inv" "$repo_id"
+        tmpl_ids["$t_name"]=$(create_template "$project_id" "$t_name" "$t_playbook" "$t_env" "$t_inv" "$repo_id")
     done
 
     section "Task Templates - Certificate Management"
@@ -514,6 +589,28 @@ main() {
         "$inv_pki_id" \
         "$repo_id"
 
+    # 7. Create schedules
+    section "Scheduled Tasks"
+
+    local -a schedules=(
+        "Lab Status|Lab Status - Every 5 min|*/5 * * * *"
+        "PKI Health Check|PKI Health Check - Every 15 min|*/15 * * * *"
+        "Container Status|Container Status - Every 10 min|*/10 * * * *"
+        "DNS Check|DNS Check - Every 30 min|*/30 * * * *"
+        "Backup PKI|Backup PKI - Daily 2 AM|0 2 * * *"
+        "Cleanup|Cleanup - Weekly Sunday 3 AM|0 3 * * 0"
+    )
+
+    for entry in "${schedules[@]}"; do
+        IFS='|' read -r s_template s_name s_cron <<< "$entry"
+        local tid="${tmpl_ids[$s_template]}"
+        if [[ -n "$tid" && "$tid" != "null" ]]; then
+            create_schedule "$project_id" "$tid" "$s_name" "$s_cron"
+        else
+            error "Cannot schedule '${s_name}': template '${s_template}' not found"
+        fi
+    done
+
     # Summary
     echo "" >&2
     echo -e "${CYAN}============================================${NC}" >&2
@@ -526,6 +623,7 @@ main() {
     echo -e "  Inventories:   2 created" >&2
     echo -e "  Environments:  6 created" >&2
     echo -e "  Templates:     20 created" >&2
+    echo -e "  Schedules:     6 created" >&2
     echo "" >&2
     echo -e "  ${BLUE}Semaphore UI:${NC} ${SEMAPHORE_URL}" >&2
     echo "" >&2
