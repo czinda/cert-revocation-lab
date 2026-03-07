@@ -1,12 +1,13 @@
 ---
 # Semaphore Inventory for Certificate Revocation Lab
-# Used when playbooks run directly on the lab host via Semaphore
-# (no SSH bridge needed - Semaphore executes on the lab host itself)
+# Semaphore runs inside a container, so playbooks SSH to the lab host
+# as the certlab user to execute commands on the host filesystem.
 
 all:
   hosts:
     localhost:
-      ansible_connection: local
+      ansible_connection: ssh
+      ansible_user: certlab
       ansible_python_interpreter: /usr/bin/python3
 
   vars:
