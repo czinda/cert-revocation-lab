@@ -335,6 +335,7 @@ init_intermediate_ca() {
     if $PODMAN exec "$INTERMEDIATE_CONTAINER" test -f /certs/intermediate-ca.crt 2>/dev/null; then
         if $PODMAN exec "$INTERMEDIATE_CONTAINER" curl -sk "${INTERMEDIATE_URL}/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
             log_success "${CA_PREFIX}Intermediate CA already initialized and running"
+            fix_security_domain "$INTERMEDIATE_CONTAINER" "${INST_PREFIX}intermediate-ca" "$INTERMEDIATE_HOSTNAME"
             return 0
         fi
     fi
@@ -362,6 +363,10 @@ init_intermediate_ca() {
 
     # Verify
     wait_for_ca "${CA_PREFIX}Intermediate CA" "$INTERMEDIATE_URL" 120 "$INTERMEDIATE_CONTAINER"
+
+    # Fix security domain so OCSP/KRA subsystem pkispawn can validate install tokens
+    fix_security_domain "$INTERMEDIATE_CONTAINER" "${INST_PREFIX}intermediate-ca" "$INTERMEDIATE_HOSTNAME"
+
     log_success "${CA_PREFIX}Intermediate CA initialization complete"
 }
 
@@ -373,6 +378,7 @@ init_iot_ca() {
     if $PODMAN exec "$IOT_CONTAINER" test -f /certs/iot-ca.crt 2>/dev/null; then
         if $PODMAN exec "$IOT_CONTAINER" curl -sk "${IOT_URL}/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
             log_success "${CA_PREFIX}IoT CA already initialized and running"
+            fix_security_domain "$IOT_CONTAINER" "${INST_PREFIX}iot-ca" "$IOT_HOSTNAME"
             return 0
         fi
     fi
@@ -400,7 +406,85 @@ init_iot_ca() {
 
     # Verify
     wait_for_ca "${CA_PREFIX}IoT CA" "$IOT_URL" 120 "$IOT_CONTAINER"
+
+    # Fix security domain so OCSP/KRA subsystem pkispawn can validate install tokens
+    fix_security_domain "$IOT_CONTAINER" "${INST_PREFIX}iot-ca" "$IOT_HOSTNAME"
+
     log_success "${CA_PREFIX}IoT CA initialization complete"
+}
+
+# Fix subordinate CA security domain to join Root CA's domain
+# pkispawn two-step (pki_external=True) creates CAs with their own security domain.
+# OCSP/KRA pkispawn needs subordinate CAs to reference the Root CA's domain so
+# install token validation succeeds.
+# Usage: fix_security_domain <container> <instance_name> <ca_hostname>
+fix_security_domain() {
+    local container="$1"
+    local instance="$2"
+    local ca_hostname="$3"
+
+    log_info "Fixing security domain for $container → Root CA..."
+
+    # Fix CS.cfg to join Root CA's security domain (not its own)
+    $PODMAN exec "$container" bash -c "
+        CS_CFG=/var/lib/pki/${instance}/conf/ca/CS.cfg
+        if [ -f \"\$CS_CFG\" ]; then
+            sed -i 's|securitydomain.host=${ca_hostname}|securitydomain.host=${ROOT_HOSTNAME}|' \"\$CS_CFG\"
+            sed -i 's|securitydomain.select=new|securitydomain.select=existing|' \"\$CS_CFG\"
+        fi
+    "
+
+    # Register this CA in the Root CA's security domain via LDAP
+    $PODMAN exec "$ROOT_CONTAINER" bash -c "
+        # Check if already registered
+        if ldapsearch -x -H ldap://ds-${CA_PREFIX}root.cert-lab.local:3389 \
+            -D 'cn=Directory Manager' -w '${DS_PASSWORD:-RedHat123}' \
+            -b 'cn=${ca_hostname}:8443,cn=CAList,ou=Security Domain,o=pki-${CA_PREFIX}root-ca-CA' \
+            '(objectClass=pkiSubsystem)' dn 2>/dev/null | grep -q 'dn:'; then
+            echo 'Already registered in security domain'
+        else
+            ldapadd -x -H ldap://ds-${CA_PREFIX}root.cert-lab.local:3389 \
+                -D 'cn=Directory Manager' -w '${DS_PASSWORD:-RedHat123}' << LDIF
+dn: cn=${ca_hostname}:8443,cn=CAList,ou=Security Domain,o=pki-${CA_PREFIX}root-ca-CA
+objectClass: top
+objectClass: pkiSubsystem
+cn: ${ca_hostname}:8443
+Host: ${ca_hostname}
+SecurePort: 8443
+SecureAgentPort: 8443
+SecureAdminPort: 8443
+SecureEEClientAuthPort: 8443
+UnSecurePort: 8080
+Clone: FALSE
+SubsystemName: CA ${ca_hostname} 8443
+DomainManager: FALSE
+LDIF
+        fi
+    " || log_warn "Could not register ${ca_hostname} in security domain (non-fatal)"
+
+    # Restart the CA instance to pick up the new CS.cfg
+    $PODMAN exec "$container" bash -c "
+        # Find and kill running Tomcat
+        PID=\$(cat /var/lib/pki/${instance}/conf/tomcat.pid 2>/dev/null || true)
+        if [ -n \"\$PID\" ] && kill -0 \"\$PID\" 2>/dev/null; then
+            kill \"\$PID\"
+            sleep 3
+        fi
+        # Restart
+        mkdir -p /var/log/pki/${instance}
+        nohup pki-server run ${instance} > /var/log/pki/${instance}/catalina.out 2>&1 &
+    "
+
+    # Wait for CA to come back
+    sleep 10
+    for i in {1..12}; do
+        if $PODMAN exec "$container" curl -sk "https://localhost:8443/ca/admin/ca/getStatus" 2>/dev/null | grep -q "running"; then
+            log_success "$container security domain fixed and running"
+            return 0
+        fi
+        sleep 5
+    done
+    log_warn "$container may need more time to restart"
 }
 
 # Initialize ACME RA (RSA only) — standalone Registration Authority
