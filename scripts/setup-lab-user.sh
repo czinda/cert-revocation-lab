@@ -129,20 +129,16 @@ LAB_USER="certlab"
 LAB_USER_UID=$(id -u "${LAB_USER}")
 PODMAN_SOCKET="/run/user/${LAB_USER_UID}/podman/podman.sock"
 
+cd /home/${LAB_USER}
+
 if [[ "$1" == "compose" ]]; then
     shift
     sudo -u "${LAB_USER}" podman-compose "$@"
 elif [[ "$1" == "exec" || "$1" == "shell" ]]; then
-    # For interactive commands, use sudo -u
     shift
     sudo -u "${LAB_USER}" podman "$@"
 else
-    # Use the socket for remote commands
-    if [[ -S "${PODMAN_SOCKET}" ]]; then
-        podman --remote --url "unix://${PODMAN_SOCKET}" "$@"
-    else
-        sudo -u "${LAB_USER}" podman "$@"
-    fi
+    sudo -u "${LAB_USER}" podman "$@"
 fi
 HELPER
 chmod 755 "${HELPER_SCRIPT}"
