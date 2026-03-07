@@ -110,7 +110,7 @@
           {% set resolved = result.stdout | default('UNRESOLVED') | trim %}
           {% set expected = result.item.expected %}
           {% set match = 'OK' if resolved == expected else 'MISMATCH' if resolved != 'UNRESOLVED' else 'FAIL' %}
-          {{ match | ljust(8) }} | {{ result.item.name | ljust(45) }} | Got: {{ resolved | ljust(15) }} | Expected: {{ expected }}
+          {{ "%-8s" | format(match) }} | {{ "%-45s" | format(result.item.name) }} | Got: {{ "%-15s" | format(resolved) }} | Expected: {{ expected }}
           {% endfor %}
           {% else %}
           No DNS resolution tool (dig/host) available. Install bind-utils or dnsutils.

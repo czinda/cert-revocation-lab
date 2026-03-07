@@ -77,7 +77,7 @@
             msg: |
               --- PKI Certificate Authorities ---
               {% for result in pki_results.results %}
-              {{ '  UP  ' if result is not failed else ' DOWN ' }} | {{ result.item.name | ljust(25) }} | :{{ result.item.port }} | {{ result.item.hierarchy | upper }}
+              {{ '  UP  ' if result is not failed else ' DOWN ' }} | {{ "%-25s" | format(result.item.name) }} | :{{ result.item.port }} | {{ result.item.hierarchy | upper }}
               {% endfor %}
           tags: [summary]
 
@@ -122,7 +122,7 @@
             msg: |
               --- Mock / Support Services ---
               {% for result in http_results.results %}
-              {{ '  UP  ' if result is not failed else ' DOWN ' }} | {{ result.item.name | ljust(25) }} | {{ result.item.url }}
+              {{ '  UP  ' if result is not failed else ' DOWN ' }} | {{ "%-25s" | format(result.item.name) }} | {{ result.item.url }}
               {% endfor %}
           tags: [summary]
 
@@ -147,7 +147,7 @@
             msg: |
               --- Monitoring ---
               {% for result in monitoring_results.results %}
-              {{ '  UP  ' if result is not failed else ' DOWN ' }} | {{ result.item.name | ljust(25) }} | {{ result.item.url }}
+              {{ '  UP  ' if result is not failed else ' DOWN ' }} | {{ "%-25s" | format(result.item.name) }} | {{ result.item.url }}
               {% endfor %}
           tags: [summary]
 

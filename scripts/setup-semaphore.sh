@@ -398,7 +398,7 @@ main() {
     local repo_id
     repo_id=$(create_repository "$project_id" \
         "cert-revocation-lab" \
-        "ssh://git@gitlab.heebh.st:2222/heebus/cert-revocation-lab.git" \
+        "ssh://git@localhost:2222/heebus/cert-revocation-lab.git" \
         "main" \
         "$key_gitlab_id")
     info "Repository ID: ${repo_id}"
