@@ -386,7 +386,7 @@ services:
     volumes:
       - ./configs/pki:/etc/pki-configs:ro
       - ./scripts/pki:/scripts:ro
-      - ./data/certs:/certs
+      - ./data/certs/ecc:/certs
       - pki-ecc-kra-data:/var/lib/pki
       - pki-ecc-kra-logs:/var/log/pki
     extra_hosts:

@@ -84,7 +84,7 @@ deploy_ocsp() {
     prepare_config "${CONFIG_DIR}/${CONFIG_PREFIX}ocsp.cfg" /tmp/ocsp.cfg
 
     # pkispawn for OCSP is single-step: it connects to the security domain
-    # (Root CA) and issuing CA (Intermediate CA) to get the OCSP signing cert
+    # (Intermediate CA) and issuing CA (Intermediate CA) to get the OCSP signing cert
     pkispawn -s OCSP -f /tmp/ocsp.cfg -v
     rm -f /tmp/ocsp.cfg
 

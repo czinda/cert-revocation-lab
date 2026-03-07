@@ -83,7 +83,7 @@ deploy_kra() {
     prepare_config "${CONFIG_DIR}/${CONFIG_PREFIX}kra.cfg" /tmp/kra.cfg
 
     # pkispawn for KRA is single-step: it connects to the security domain
-    # (Root CA) and issuing CA (Intermediate CA) to get KRA certificates
+    # (Intermediate CA) and issuing CA (Intermediate CA) to get KRA certificates
     pkispawn -s KRA -f /tmp/kra.cfg -v
     rm -f /tmp/kra.cfg
 
