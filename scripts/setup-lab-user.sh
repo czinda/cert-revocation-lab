@@ -171,6 +171,20 @@ else
     success "Generated SSH key: ${LAB_SSH_KEY}"
 fi
 
+# Add certlab's own public key to authorized_keys (for Semaphore SSH)
+AUTHORIZED_KEYS="${LAB_SSH_DIR}/authorized_keys"
+CERTLAB_PUBKEY="${LAB_SSH_KEY}.pub"
+if [[ -f "${CERTLAB_PUBKEY}" ]]; then
+    if [[ -f "${AUTHORIZED_KEYS}" ]] && grep -qf "${CERTLAB_PUBKEY}" "${AUTHORIZED_KEYS}" 2>/dev/null; then
+        warn "certlab's own SSH key already in authorized_keys"
+    else
+        cat "${CERTLAB_PUBKEY}" >> "${AUTHORIZED_KEYS}"
+        chmod 600 "${AUTHORIZED_KEYS}"
+        chown "${LAB_USER}:${LAB_USER}" "${AUTHORIZED_KEYS}"
+        success "Added certlab's own SSH key to authorized_keys"
+    fi
+fi
+
 # Copy admin user's SSH key to certlab authorized_keys for SSH access
 ADMIN_SSH_KEY="/home/${ADMIN_USER}/.ssh/id_ed25519.pub"
 if [[ -f "${ADMIN_SSH_KEY}" ]]; then
