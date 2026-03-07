@@ -378,6 +378,10 @@ ansible-playbook ansible/playbooks/incident-response-bulk.yml \
 
 Prometheus (`:9090`) → Grafana (`:3000`) pipeline with PKI Exporter (`:9091/metrics`) scraping all 9 Dogtag CAs, 3 dedicated OCSP responders, CT log, and CDP server. Loki (`:3100`) + Promtail for Dogtag audit log aggregation. Auto-provisioned dashboard (uid: `pki-metrics`) with CA health, certificate inventory, issuance/revocation throughput, OCSP response times, CRL status, CT log metrics, CDP status, and revocation timeline.
 
+## Ansible Semaphore
+
+Web-based Ansible task management at `http://<lab-host>:3010`. Setup: `./scripts/setup-semaphore.sh` (idempotent, creates project with 20 templates, 6 environments). Operational playbooks live in `ansible/playbooks/ops/` (lab-start, lab-stop, lab-status, pki-health, container-status, backup-pki, kafka-topics, dns-check, cleanup, site). Uses `ansible/inventory/semaphore.yml` for local execution. Repository URL: `ssh://git@localhost:2222/heebus/cert-revocation-lab.git`.
+
 ## AgnosticD / RHPDS Deployment
 
 The `agnosticd/configs/cert-revocation-lab/` directory deploys the lab onto a single AWS EC2 instance (`m5.4xlarge`) via RHPDS. Wraps `start-lab.sh --all` with deploy-time password generation. Key variable: `cert_lab_pki_mode` (default: `all`).

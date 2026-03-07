@@ -90,6 +90,7 @@ FreeIPA (172.25.0.10:4443) - Identity Management with internal CA
 | **Mock EDR** | Endpoint detection simulation | Python FastAPI |
 | **Mock SIEM** | Security event correlation | Python FastAPI |
 | **IoT Client** | IoT device enrollment simulator | Python FastAPI |
+| **Ansible Semaphore** | Web-based Ansible task management | Semaphore v2.17.16 |
 | **Jupyter Lab** | Interactive notebooks | JupyterLab |
 
 ## Prerequisites
@@ -259,7 +260,18 @@ Use the `lab` CLI for certificate management:
 - **Tier 8**: Security tools (Mock EDR, SIEM, IoT Client, Jupyter)
 - **Tier 9**: End-to-end integration test
 
-### 8. Stop / Reset the Lab
+### 8. Semaphore UI (Optional)
+
+For web-based management via Ansible Semaphore:
+
+```bash
+# Configure Semaphore with 20 task templates
+./scripts/setup-semaphore.sh
+```
+
+Access at http://localhost:3010 — 20 pre-configured templates for lab operations, certificate management, and incident response.
+
+### 9. Stop / Reset the Lab
 
 ```bash
 # Stop all containers
@@ -305,6 +317,7 @@ Use the `lab` CLI for certificate management:
 | IoT Client API | http://localhost:8085 | - |
 | EDA Webhook | http://localhost:5000 | - |
 | Jupyter Lab | http://localhost:8888 | Token: (see .env) |
+| Semaphore UI | http://localhost:3010 | admin / (see /srv/semaphore/env) |
 
 > **Note:** Credentials are configured in `.env`. Copy `.env.example` to `.env` and set your passwords before starting.
 
@@ -403,6 +416,7 @@ cert-revocation-lab/
 │   ├── lib-common.sh          # Shared shell functions
 │   ├── setup-sops.sh          # SOPS encrypted secrets setup
 │   ├── setup-eda-ssh.sh       # EDA SSH key setup
+│   ├── setup-semaphore.sh          # Semaphore project configuration
 │   ├── setup-eda-auth.sh      # EDA admin credential export
 │   └── pki/                   # PKI initialization scripts
 │       ├── init-pki-hierarchy.sh      # RSA full hierarchy (+ ACME + EST)
@@ -427,7 +441,18 @@ cert-revocation-lab/
 │   │   ├── dogtag-ecc-issue-certificate.yml    # ECC issuance
 │   │   ├── dogtag-pqc-issue-certificate.yml    # PQ issuance
 │   │   ├── init-pki-hierarchy.yml              # Ansible-based PKI init
-│   │   └── sign-csr.yml                        # Sign CSRs via Ansible
+│   │   ├── sign-csr.yml                        # Sign CSRs via Ansible
+│   │   └── ops/                                    # Semaphore operational playbooks
+│   │       ├── lab-start.yml                       # Start lab containers
+│   │       ├── lab-stop.yml                        # Stop lab containers
+│   │       ├── lab-status.yml                      # Service health check
+│   │       ├── pki-health.yml                      # Deep PKI health check
+│   │       ├── container-status.yml                # Container listing
+│   │       ├── backup-pki.yml                      # PKI data backup
+│   │       ├── kafka-topics.yml                    # Kafka topic management
+│   │       ├── dns-check.yml                       # DNS resolution check
+│   │       ├── cleanup.yml                         # Old data cleanup
+│   │       └── site.yml                            # Full deployment
 │   ├── rulebooks/
 │   │   └── security-events.yml  # EDA event handler (31 rules)
 │   ├── roles/                   # Ansible roles for PKI
@@ -460,6 +485,7 @@ The `lab` CLI (`./lab`) provides a unified interface for all lab operations:
 | `./lab acme-issue` | Issue certificate via ACME protocol (RFC 8555) |
 | `./lab est-enroll` | Enroll for certificate via EST protocol (RFC 7030) |
 | `./lab est-cacerts` | Get CA certificates from EST endpoint |
+| `./scripts/setup-semaphore.sh` | Configure Semaphore with all task templates |
 
 ```bash
 # Install dependencies
@@ -666,6 +692,7 @@ sudo podman logs dogtag-root-ca
 - **[Apache Kafka](https://kafka.apache.org/)** - Event Streaming
 - **[Podman](https://podman.io/)** - Container Runtime
 - **[FastAPI](https://fastapi.tiangolo.com/)** - Python Web Framework
+- **[Ansible Semaphore](https://semaphoreui.com/)** - Web-based Ansible Task Management
 
 ## Related Standards
 
