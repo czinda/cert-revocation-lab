@@ -423,10 +423,43 @@ print_sign_action() {
     echo "========================================================================"
 }
 
+# Trust CA certificates in system store (required for pkispawn SSL connections)
+# pkispawn uses Python requests/urllib which validates SSL against system CA bundle.
+# Without this, connections to Root CA security domain fail with CERTIFICATE_VERIFY_FAILED.
+trust_ca_certs() {
+    local anchors_dir="/etc/pki/ca-trust/source/anchors"
+    local need_update=false
+
+    if [ ! -d "$anchors_dir" ]; then
+        log_warn "CA trust anchors directory not found, skipping"
+        return 0
+    fi
+
+    for cert in "${CERTS_DIR}"/root-ca.crt "${CERTS_DIR}"/intermediate-ca.crt "${CERTS_DIR}"/ca-chain.crt; do
+        if [ -f "$cert" ]; then
+            local basename=$(basename "$cert")
+            local dest="${anchors_dir}/lab-${basename}"
+            if [ ! -f "$dest" ] || ! cmp -s "$cert" "$dest"; then
+                cp "$cert" "$dest"
+                need_update=true
+                log_info "Added ${basename} to system trust store"
+            fi
+        fi
+    done
+
+    if [ "$need_update" = true ] && command -v update-ca-trust &>/dev/null; then
+        update-ca-trust
+        log_info "System CA trust store updated"
+    fi
+}
+
 # Export common environment variables for pkispawn
 export_pki_env() {
     # Setup mock systemctl for container environments (before pkispawn runs)
     setup_mock_systemctl
+
+    # Trust CA certs so pkispawn can verify SSL connections to security domain
+    trust_ca_certs
 
     # Export all password variables for envsubst
     export DS_PASSWORD="${DS_PASSWORD:-${PKI_DS_PASSWORD}}"
