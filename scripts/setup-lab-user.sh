@@ -148,8 +148,9 @@ cat > "${SUDOERS_FILE}" << SUDOERS
 # Allow ${ADMIN_USER} to run commands as certlab without password
 ${ADMIN_USER} ALL=(${LAB_USER}) NOPASSWD: ALL
 
-# Allow certlab to run podman commands as root (for rootful PKI containers)
-${LAB_USER} ALL=(root) NOPASSWD: /usr/bin/podman, /usr/bin/podman-compose, /usr/local/bin/podman-compose
+# Allow certlab to run commands as root without password
+# Required for rootful PKI containers (podman, network, volume, pkispawn, etc.)
+${LAB_USER} ALL=(root) NOPASSWD: ALL
 SUDOERS
 chmod 440 "${SUDOERS_FILE}"
 visudo -cf "${SUDOERS_FILE}" &>/dev/null && \
