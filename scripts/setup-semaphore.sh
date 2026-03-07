@@ -505,7 +505,7 @@ main() {
 
     local env_default_id env_rsa_id env_ecc_id env_pqc_id env_all_id env_ir_id
 
-    env_default_id=$(create_environment "$project_id" "Default" "{}" "$env_vars")
+    env_default_id=$(create_environment "$project_id" "Default" '{"backup_dir": "/tmp/cert-lab-backups"}' "$env_vars")
     info "Environment 'Default' ID: ${env_default_id}"
 
     env_rsa_id=$(create_environment "$project_id" "RSA PKI" \
