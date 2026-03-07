@@ -5,14 +5,14 @@
 # All checks use ignore_errors so the full status is always displayed.
 #
 # Variables:
-#   lab_root_dir: path to lab root (default: /home/czinda/git/cert-revocation-lab)
+#   lab_root_dir: path to lab root (default: /home/certlab/cert-revocation-lab)
 
 - name: Certificate Revocation Lab - Service Health Check
   hosts: localhost
   connection: local
   gather_facts: false
   vars:
-    lab_root_dir: "/home/czinda/git/cert-revocation-lab"
+    lab_root_dir: "/home/certlab/cert-revocation-lab"
 
     # PKI CA endpoints (name, port, hierarchy)
     pki_endpoints:

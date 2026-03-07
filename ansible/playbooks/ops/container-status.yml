@@ -5,14 +5,14 @@
 # with formatted output for easy reading.
 #
 # Variables:
-#   lab_root_dir: path to lab root (default: /home/czinda/git/cert-revocation-lab)
+#   lab_root_dir: path to lab root (default: /home/certlab/cert-revocation-lab)
 
 - name: Container Status Report
   hosts: localhost
   connection: local
   gather_facts: false
   vars:
-    lab_root_dir: "/home/czinda/git/cert-revocation-lab"
+    lab_root_dir: "/home/certlab/cert-revocation-lab"
 
   tasks:
     - name: Display container status banner

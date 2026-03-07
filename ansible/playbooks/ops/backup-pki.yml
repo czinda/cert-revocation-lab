@@ -5,14 +5,14 @@
 #
 # Variables:
 #   backup_dir: destination for backups (default: {{ lab_root_dir }}/backups)
-#   lab_root_dir: path to lab root (default: /home/czinda/git/cert-revocation-lab)
+#   lab_root_dir: path to lab root (default: /home/certlab/cert-revocation-lab)
 
 - name: Backup PKI Data
   hosts: localhost
   connection: local
   gather_facts: true
   vars:
-    lab_root_dir: "/home/czinda/git/cert-revocation-lab"
+    lab_root_dir: "/home/certlab/cert-revocation-lab"
     backup_dir: "{{ lab_root_dir }}/backups"
     timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
 

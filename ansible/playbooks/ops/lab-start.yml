@@ -4,7 +4,7 @@
 # Variables:
 #   pki_mode: rsa | ecc | pqc | dual | all (default: rsa)
 #   clean: true | false - wipe all data before starting (default: false)
-#   lab_root_dir: path to lab root (default: /home/czinda/git/cert-revocation-lab)
+#   lab_root_dir: path to lab root (default: /home/certlab/cert-revocation-lab)
 
 - name: Start Certificate Revocation Lab
   hosts: localhost
@@ -13,7 +13,7 @@
   vars:
     pki_mode: "rsa"
     clean: false
-    lab_root_dir: "/home/czinda/git/cert-revocation-lab"
+    lab_root_dir: "/home/certlab/cert-revocation-lab"
 
   tasks:
     - name: Display startup parameters

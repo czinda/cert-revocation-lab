@@ -7,7 +7,7 @@
 # Variables:
 #   create_topic: true | false - create security-events if missing (default: false)
 #   kafka_container: name of kafka container (default: kafka)
-#   lab_root_dir: path to lab root (default: /home/czinda/git/cert-revocation-lab)
+#   lab_root_dir: path to lab root (default: /home/certlab/cert-revocation-lab)
 
 - name: Kafka Topic Management
   hosts: localhost
@@ -16,7 +16,7 @@
   vars:
     create_topic: false
     kafka_container: "kafka"
-    lab_root_dir: "/home/czinda/git/cert-revocation-lab"
+    lab_root_dir: "/home/certlab/cert-revocation-lab"
     bootstrap_server: "localhost:9092"
 
   tasks:

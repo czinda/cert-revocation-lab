@@ -6,7 +6,7 @@
 #
 # Variables:
 #   pki_type: rsa | ecc | pqc | all (default: all)
-#   lab_root_dir: path to lab root (default: /home/czinda/git/cert-revocation-lab)
+#   lab_root_dir: path to lab root (default: /home/certlab/cert-revocation-lab)
 
 - name: Deep PKI Health Check
   hosts: localhost
@@ -14,7 +14,7 @@
   gather_facts: false
   vars:
     pki_type: "all"
-    lab_root_dir: "/home/czinda/git/cert-revocation-lab"
+    lab_root_dir: "/home/certlab/cert-revocation-lab"
 
     # PKI hierarchy definitions
     pki_hierarchies:

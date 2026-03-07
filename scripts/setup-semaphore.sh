@@ -499,8 +499,8 @@ main() {
         PKI_TOKEN_PASSWORD: "RedHat123",
         DS_PASSWORD: "RedHat123",
         LAB_HOST_IP: "localhost",
-        LAB_HOST_USER: "czinda",
-        LAB_ROOT_DIR: "/home/czinda/git/cert-revocation-lab"
+        LAB_HOST_USER: "certlab",
+        LAB_ROOT_DIR: "/home/certlab/cert-revocation-lab"
     }' | jq -c .)
 
     local env_default_id env_rsa_id env_ecc_id env_pqc_id env_all_id env_ir_id

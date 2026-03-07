@@ -153,7 +153,7 @@
         - name: Search for certificate by subject via SSH (if serial not provided)
           ansible.builtin.shell:
             cmd: |
-              cd {{ hostvars['lab-host'].lab_root_dir | default('/home/czinda/cert-revocation-lab') }}
+              cd {{ hostvars['lab-host'].lab_root_dir | default('/home/certlab/cert-revocation-lab') }}
               sudo podman exec dogtag-{{ target_ca }}-ca pki -d /root/.dogtag/nssdb -c '' \
                 ca-cert-find --name "{{ certificate_cn }}" --status VALID 2>/dev/null \
                 | grep "Serial Number:" | head -1 | awk '{print $3}' | sed 's/^0x//'
@@ -182,7 +182,7 @@
         - name: Revoke certificate via SSH to lab host
           ansible.builtin.shell:
             cmd: |
-              cd {{ hostvars['lab-host'].lab_root_dir | default('/home/czinda/cert-revocation-lab') }}
+              cd {{ hostvars['lab-host'].lab_root_dir | default('/home/certlab/cert-revocation-lab') }}
               ./scripts/pki-cli.py revoke 0x{{ cert_serial }} --ca {{ target_ca }} --reason key_compromise
           delegate_to: lab-host
           register: revoke_result
@@ -201,7 +201,7 @@
         - name: Verify revocation status via SSH
           ansible.builtin.shell:
             cmd: |
-              cd {{ hostvars['lab-host'].lab_root_dir | default('/home/czinda/cert-revocation-lab') }}
+              cd {{ hostvars['lab-host'].lab_root_dir | default('/home/certlab/cert-revocation-lab') }}
               sudo podman exec dogtag-{{ target_ca }}-ca pki -d /root/.dogtag/nssdb -c '' \
                 ca-cert-show 0x{{ cert_serial }} 2>/dev/null | grep "Status:" | awk '{print $2}'
           delegate_to: lab-host

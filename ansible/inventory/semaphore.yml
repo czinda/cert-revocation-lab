@@ -13,11 +13,11 @@ all:
     ansible_python_interpreter: /usr/bin/python3
     lab_domain: cert-lab.local
     ipa_realm: CERT-LAB.LOCAL
-    lab_root_dir: "{{ lookup('env', 'LAB_ROOT_DIR') | default('/home/czinda/git/cert-revocation-lab', true) }}"
+    lab_root_dir: "{{ lookup('env', 'LAB_ROOT_DIR') | default('/home/certlab/cert-revocation-lab', true) }}"
 
     # Semaphore runs on the lab host, so lab-host == localhost
     lab_host_ip: localhost
-    lab_host_user: "{{ lookup('env', 'LAB_HOST_USER') | default('czinda', true) }}"
+    lab_host_user: "{{ lookup('env', 'LAB_HOST_USER') | default('certlab', true) }}"
 
     # PKI service ports (host-mapped)
     rsa_pki_ports:

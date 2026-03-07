@@ -6,7 +6,7 @@
 # Variables:
 #   dns_port: dnsmasq port (default: 5353)
 #   dns_server: DNS server address (default: 127.0.0.1)
-#   lab_root_dir: path to lab root (default: /home/czinda/git/cert-revocation-lab)
+#   lab_root_dir: path to lab root (default: /home/certlab/cert-revocation-lab)
 
 - name: DNS Resolution Check
   hosts: localhost
@@ -15,7 +15,7 @@
   vars:
     dns_port: 5353
     dns_server: "127.0.0.1"
-    lab_root_dir: "/home/czinda/git/cert-revocation-lab"
+    lab_root_dir: "/home/certlab/cert-revocation-lab"
 
     # Lab hostnames to verify
     lab_hostnames:
