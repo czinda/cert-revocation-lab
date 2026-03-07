@@ -53,9 +53,6 @@ all:
     # Infrastructure service ports
     infra_ports:
       kafka: 9092
-      grafana: 3000
-      prometheus: 9090
-      loki: 3100
       awx: 8084
       eda: 5000
       jupyter: 8888
