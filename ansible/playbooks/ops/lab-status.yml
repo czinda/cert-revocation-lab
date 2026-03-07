@@ -1,7 +1,7 @@
 ---
 # Check health of all Certificate Revocation Lab services
 #
-# Checks PKI CAs, infrastructure, mock services, monitoring, and support services.
+# Checks PKI CAs, infrastructure, and mock/support services.
 # All checks use ignore_errors so the full status is always displayed.
 #
 # Variables:
@@ -40,11 +40,6 @@
       - { name: "Policy Engine",     url: "http://localhost:8089/health" }
       - { name: "Chain Visualizer",  url: "http://localhost:8090/health" }
       - { name: "Pin Validator",     url: "http://localhost:8091/health" }
-
-    monitoring_services:
-      - { name: "Prometheus",   url: "http://localhost:9090/-/ready" }
-      - { name: "Grafana",      url: "http://localhost:3000/api/health" }
-      - { name: "Loki",         url: "http://localhost:3100/ready" }
 
   tasks:
     - name: Display status check banner
@@ -126,31 +121,6 @@
               {% endfor %}
           tags: [summary]
 
-    # --- Monitoring Health Checks ---
-    - name: "Monitoring Health Checks"
-      tags: [monitoring]
-      block:
-        - name: Check monitoring service endpoints
-          ansible.builtin.uri:
-            url: "{{ item.url }}"
-            method: GET
-            timeout: 5
-            return_content: true
-          loop: "{{ monitoring_services }}"
-          loop_control:
-            label: "{{ item.name }}"
-          register: monitoring_results
-          ignore_errors: true
-
-        - name: Monitoring Status Summary
-          ansible.builtin.debug:
-            msg: |
-              --- Monitoring ---
-              {% for result in monitoring_results.results %}
-              {{ '  UP  ' if result is not failed else ' DOWN ' }} | {{ "%-25s" | format(result.item.name) }} | {{ result.item.url }}
-              {% endfor %}
-          tags: [summary]
-
     # --- Final Summary ---
     - name: Overall Status
       ansible.builtin.debug:
@@ -160,6 +130,5 @@
           ============================================================
           PKI CAs checked:     {{ pki_results.results | length }}
           Services checked:    {{ http_results.results | length }}
-          Monitoring checked:  {{ monitoring_results.results | length }}
           ============================================================
       tags: [always, summary]
