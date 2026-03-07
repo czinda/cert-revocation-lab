@@ -13,7 +13,7 @@ ADMIN_USER="admin"
 ADMIN_PASS="54HKVi5QiBlo5J2b2LdAnbTimKzCNzWJ"
 COOKIE_JAR=$(mktemp)
 PKI_ADMIN_PASSWORD="${PKI_ADMIN_PASSWORD:-RedHat123}"
-SSH_KEY_FILE="${HOME}/.ssh/id_ed25519"
+SSH_KEY_FILE="${SSH_KEY_FILE:-/home/certlab/.ssh/id_ed25519}"
 
 PROJECT_NAME="Certificate Revocation Lab"
 
