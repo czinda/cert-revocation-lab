@@ -60,7 +60,7 @@
         cmd: "{{ start_cmd }}"
         chdir: "{{ lab_root_dir }}"
       register: start_result
-      timeout: 600
+      timeout: 3600
       tags: [start]
 
     - name: Display startup output
