@@ -412,47 +412,44 @@ clean_start() {
     log_phase "Cleaning Previous Installation"
 
     log_warn "This will remove all containers and volumes!"
-    if [ "$do_yes" = true ] || ! [ -t 0 ]; then
-        # --yes flag or non-interactive (e.g., Ansible, CI/CD) — skip confirmation
-        REPLY=y
-    else
+    if [ "$do_yes" != true ] && [ -t 0 ] && [ -z "$NONINTERACTIVE" ]; then
         read -p "Are you sure? [y/N]: " -n 1 -r
         echo
-    fi
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        # Clean rootless containers
-        run_as_user podman-compose down -v 2>/dev/null || true
-        run_as_user podman volume prune -f 2>/dev/null || true
-
-        # Clean rootful PKI containers
-        if [ -f pki-compose.yml ]; then
-            log_info "Cleaning PKI containers (requires sudo)..."
-            if is_running_as_root; then
-                podman-compose -f pki-compose.yml down -v 2>/dev/null || true
-                podman volume prune -f 2>/dev/null || true
-            else
-                sudo podman-compose -f pki-compose.yml down -v 2>/dev/null || true
-                sudo podman volume prune -f 2>/dev/null || true
-            fi
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            log_info "Cleanup cancelled"
+            exit 0
         fi
-
-        # Clean FreeIPA containers
-        if [ -f freeipa-compose.yml ]; then
-            log_info "Cleaning FreeIPA containers (requires sudo)..."
-            if is_running_as_root; then
-                podman-compose -f freeipa-compose.yml down -v 2>/dev/null || true
-            else
-                sudo podman-compose -f freeipa-compose.yml down -v 2>/dev/null || true
-            fi
-        fi
-
-        rm -rf data/certs/*
-        rm -rf data/pki/*
-        log_success "Cleanup complete"
-    else
-        log_info "Cleanup cancelled"
-        exit 0
     fi
+
+    # Clean rootless containers
+    run_as_user podman-compose down -v 2>/dev/null || true
+    run_as_user podman volume prune -f 2>/dev/null || true
+
+    # Clean rootful PKI containers
+    if [ -f pki-compose.yml ]; then
+        log_info "Cleaning PKI containers (requires sudo)..."
+        if is_running_as_root; then
+            podman-compose -f pki-compose.yml down -v 2>/dev/null || true
+            podman volume prune -f 2>/dev/null || true
+        else
+            sudo podman-compose -f pki-compose.yml down -v 2>/dev/null || true
+            sudo podman volume prune -f 2>/dev/null || true
+        fi
+    fi
+
+    # Clean FreeIPA containers
+    if [ -f freeipa-compose.yml ]; then
+        log_info "Cleaning FreeIPA containers (requires sudo)..."
+        if is_running_as_root; then
+            podman-compose -f freeipa-compose.yml down -v 2>/dev/null || true
+        else
+            sudo podman-compose -f freeipa-compose.yml down -v 2>/dev/null || true
+        fi
+    fi
+
+    rm -rf data/certs/*
+    rm -rf data/pki/*
+    log_success "Cleanup complete"
 }
 
 # Phase 1: Start base infrastructure
