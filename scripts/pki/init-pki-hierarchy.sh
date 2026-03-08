@@ -642,8 +642,12 @@ init_kra() {
     setup_mock_systemctl "$KRA_CONTAINER"
 
     # Run KRA initialization (single-step pkispawn)
+    # KRA init is non-fatal — key archival is optional for the core PKI workflow
     log_info "Running KRA initialization..."
-    $PODMAN exec "$KRA_CONTAINER" /scripts/init-kra.sh "$PKI_TYPE"
+    if ! $PODMAN exec "$KRA_CONTAINER" /scripts/init-kra.sh "$PKI_TYPE"; then
+        log_warn "KRA initialization failed (non-fatal, key archival will be unavailable)"
+        return 0
+    fi
 
     # Verify
     log_info "Verifying KRA..."
