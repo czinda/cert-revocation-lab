@@ -658,9 +658,15 @@ build_pq_image() {
 
     # Build the image (needs rootful podman for privileged containers later)
     if is_running_as_root; then
-        bash containers/dogtag-pq/build.sh "$image_name"
+        if ! bash containers/dogtag-pq/build.sh "$image_name"; then
+            log_error "PQ PKI image build failed"
+            return 1
+        fi
     else
-        sudo bash containers/dogtag-pq/build.sh "$image_name"
+        if ! sudo bash containers/dogtag-pq/build.sh "$image_name"; then
+            log_error "PQ PKI image build failed"
+            return 1
+        fi
     fi
 
     log_success "PQ PKI image built successfully"
