@@ -447,8 +447,13 @@ clean_start() {
         fi
     fi
 
-    rm -rf data/certs/*
-    rm -rf data/pki/*
+    if is_running_as_root; then
+        rm -rf data/certs/*
+        rm -rf data/pki/*
+    else
+        sudo rm -rf data/certs/*
+        sudo rm -rf data/pki/*
+    fi
     log_success "Cleanup complete"
 }
 
