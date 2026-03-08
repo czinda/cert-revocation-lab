@@ -298,7 +298,7 @@ WEBXML
     log_info "Waiting for EST RA to start..."
     sleep 5
     for i in {1..30}; do
-        if curl -sk "https://localhost:8443/.well-known/est/cacerts" 2>/dev/null | head -1 | grep -qE "BEGIN|MIIB|MIIC|MIID"; then
+        if curl -sk "https://localhost:8443/.well-known/est/cacerts" 2>/dev/null | head -1 | grep -qE "BEGIN|MII"; then
             break
         fi
         sleep 2
@@ -332,7 +332,7 @@ init_ra() {
     # Check if already initialized
     if [ -f "$TLS_CERT" ] && [ -d "${INSTANCE_DIR}/conf/est" ]; then
         # Check if server is running
-        if curl -sk "https://localhost:8443/.well-known/est/cacerts" 2>/dev/null | head -1 | grep -qE "BEGIN|MIIB|MIIC|MIID"; then
+        if curl -sk "https://localhost:8443/.well-known/est/cacerts" 2>/dev/null | head -1 | grep -qE "BEGIN|MII"; then
             log_info "${CA_NAME} already initialized and responding"
             return 0
         fi

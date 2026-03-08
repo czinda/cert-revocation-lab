@@ -268,7 +268,7 @@ services:
       - "8496:8080"
     command: ["/bin/bash", "-c", "sleep infinity"]
     healthcheck:
-      test: ["CMD-SHELL", "curl -sk https://localhost:8443/.well-known/est/cacerts 2>/dev/null | head -1 | grep -qE 'BEGIN|MIIB|MIIC|MIID' || exit 1"]
+      test: ["CMD-SHELL", "curl -sk https://localhost:8443/.well-known/est/cacerts 2>/dev/null | head -1 | grep -qE 'BEGIN|MII' || exit 1"]
       interval: 10s
       timeout: 10s
       retries: 5

@@ -551,7 +551,7 @@ init_est_ca() {
     fi
 
     # Check if already initialized
-    if $PODMAN exec "$EST_CONTAINER" curl -sk https://localhost:8443/.well-known/est/cacerts 2>/dev/null | head -1 | grep -qE "BEGIN|MIIB|MIIC|MIID"; then
+    if $PODMAN exec "$EST_CONTAINER" curl -sk https://localhost:8443/.well-known/est/cacerts 2>/dev/null | head -1 | grep -qE "BEGIN|MII"; then
         log_success "${CA_PREFIX}EST RA already initialized and responding"
         return 0
     fi
@@ -580,7 +580,7 @@ init_est_ca() {
     # Verify EST endpoint
     log_info "Verifying EST RA..."
     for i in {1..12}; do
-        if $PODMAN exec "$EST_CONTAINER" curl -sk https://localhost:8443/.well-known/est/cacerts 2>/dev/null | head -1 | grep -qE "BEGIN|MIIB|MIIC|MIID"; then
+        if $PODMAN exec "$EST_CONTAINER" curl -sk https://localhost:8443/.well-known/est/cacerts 2>/dev/null | head -1 | grep -qE "BEGIN|MII"; then
             log_success "${CA_PREFIX}EST RA initialization complete"
             return 0
         fi
