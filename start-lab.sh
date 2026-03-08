@@ -681,11 +681,9 @@ start_pq_pki_hierarchy() {
         return
     fi
 
-    # Build PQ image if needed
-    if ! build_pq_image; then
-        log_warn "Skipping PQ PKI startup due to missing image"
-        return
-    fi
+    # PQ uses the same upstream image (quay.io/dogtagpki/pki-ca:latest)
+    # which already includes ML-DSA-87 support in 11.10.0+
+    log_info "PQ PKI uses upstream Dogtag image (ML-DSA-87 supported in 11.10.0+)"
 
     # Check if all PQ PKI containers are already running
     local all_running=true

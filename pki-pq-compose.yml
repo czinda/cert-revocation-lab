@@ -81,7 +81,7 @@ services:
   # Dogtag PQ Root CA - ML-DSA-87 Self-Signed
   # NOTE: Replace with custom image built from containers/dogtag-pq/
   dogtag-pq-root-ca:
-    image: ${PQ_PKI_IMAGE:-localhost/dogtag-pki-pq:latest}
+    image: ${PQ_PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
     container_name: dogtag-pq-root-ca
     hostname: pq-root-ca.${LAB_DOMAIN:-cert-lab.local}
     privileged: true
@@ -133,7 +133,7 @@ services:
 
   # Dogtag PQ Intermediate CA - ML-DSA-87
   dogtag-pq-intermediate-ca:
-    image: ${PQ_PKI_IMAGE:-localhost/dogtag-pki-pq:latest}
+    image: ${PQ_PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
     container_name: dogtag-pq-intermediate-ca
     hostname: pq-intermediate-ca.${LAB_DOMAIN:-cert-lab.local}
     privileged: true
@@ -187,7 +187,7 @@ services:
 
   # Dogtag PQ IoT Sub-CA - ML-DSA-87
   dogtag-pq-iot-ca:
-    image: ${PQ_PKI_IMAGE:-localhost/dogtag-pki-pq:latest}
+    image: ${PQ_PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
     container_name: dogtag-pq-iot-ca
     hostname: pq-iot-ca.${LAB_DOMAIN:-cert-lab.local}
     privileged: true
@@ -242,7 +242,7 @@ services:
   # PQ EST Registration Authority - Standalone RA proxying to PQ Intermediate CA
   # No local CA subsystem, no LDAP — lightweight EST (RFC 7030) gateway
   dogtag-pq-est-ca:
-    image: ${PQ_PKI_IMAGE:-localhost/dogtag-pki-pq:latest}
+    image: ${PQ_PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
     container_name: dogtag-pq-est-ca
     hostname: pq-est-ca.${LAB_DOMAIN:-cert-lab.local}
     privileged: true
@@ -300,7 +300,7 @@ services:
 
   # Dogtag PQ OCSP Responder - Dedicated OCSP subsystem (ML-DSA-87)
   dogtag-pq-ocsp:
-    image: ${PQ_PKI_IMAGE:-localhost/dogtag-pki-pq:latest}
+    image: ${PQ_PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
     container_name: dogtag-pq-ocsp
     hostname: pq-ocsp.${LAB_DOMAIN:-cert-lab.local}
     privileged: true
@@ -369,7 +369,7 @@ services:
       retries: 10
 
   dogtag-pq-kra:
-    image: ${PQ_PKI_IMAGE:-localhost/dogtag-pki-pq:latest}
+    image: ${PQ_PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
     container_name: dogtag-pq-kra
     hostname: pq-kra.${LAB_DOMAIN:-cert-lab.local}
     privileged: true
