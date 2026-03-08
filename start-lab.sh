@@ -412,8 +412,13 @@ clean_start() {
     log_phase "Cleaning Previous Installation"
 
     log_warn "This will remove all containers and volumes!"
-    read -p "Are you sure? [y/N]: " -n 1 -r
-    echo
+    if [ "$do_yes" = true ] || ! [ -t 0 ]; then
+        # --yes flag or non-interactive (e.g., Ansible, CI/CD) — skip confirmation
+        REPLY=y
+    else
+        read -p "Are you sure? [y/N]: " -n 1 -r
+        echo
+    fi
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         # Clean rootless containers
         run_as_user podman-compose down -v 2>/dev/null || true
@@ -1305,10 +1310,15 @@ main() {
     # Parse arguments
     local do_clean=false
     local do_quick=false
+    local do_yes=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --clean)
                 do_clean=true
+                shift
+                ;;
+            --yes|-y)
+                do_yes=true
                 shift
                 ;;
             --quick|--restart|-q)
@@ -1351,6 +1361,7 @@ main() {
                 echo "General Options:"
                 echo "  --quick    Start existing containers without initialization"
                 echo "  --clean    Remove all containers and volumes before starting"
+                echo "  --yes, -y  Skip confirmation prompts (for CI/CD)"
                 echo "  --help     Show this help message"
                 echo ""
                 echo "Examples:"
