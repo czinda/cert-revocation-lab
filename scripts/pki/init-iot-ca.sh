@@ -126,7 +126,10 @@ phase2_install_cert() {
     echo "${PKI_LABEL:+$PKI_LABEL }PKI Hierarchy Complete!"
     local prefix="${PKI_LABEL:+$PKI_LABEL }"
     echo "  ${prefix}Root CA -> ${prefix}Intermediate CA -> ${prefix}IoT Sub-CA"
-    [ -z "$PKI_LABEL" ] && echo "" && echo "Optional: podman exec -it freeipa /scripts/init-freeipa.sh"
+    if [ -z "$PKI_LABEL" ]; then
+        echo ""
+        echo "Optional: podman exec -it freeipa /scripts/init-freeipa.sh"
+    fi
 }
 
 init_ca() {
