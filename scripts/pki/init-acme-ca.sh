@@ -50,22 +50,25 @@ phase1_create_instance() {
         certutil -N -d "$NSS_DB" --empty-password
     fi
 
-    # Generate TLS keypair and CSR
+    # Generate TLS keypair and CSR using openssl (certutil key generation
+    # is extremely slow on some systems due to NSS entropy handling)
     log_info "Generating TLS certificate CSR..."
-    # Pipe /dev/urandom to stdin — certutil reads random data from stdin
-    # when the -z noise file doesn't provide enough entropy (common in containers)
-    certutil -R -d "$NSS_DB" \
-        -s "CN=acme-ca.cert-lab.local,OU=ACME RA,O=Cert-Lab,C=US" \
-        -o "$CSR_FILE" \
-        -k rsa -g 2048 \
-        -z /dev/urandom \
-        --keyUsage digitalSignature,keyEncipherment \
-        -a < /dev/urandom 2>/dev/null
+    local KEY_FILE="${CSR_FILE%.csr}.key"
+    openssl req -new -newkey rsa:2048 -nodes \
+        -keyout "$KEY_FILE" \
+        -out "$CSR_FILE" \
+        -subj "/C=US/O=Cert-Lab/OU=ACME RA/CN=acme-ca.cert-lab.local" 2>/dev/null
 
-    # Strip certutil header text — keep only PEM block (pki CLI can't parse the header)
-    if [ -f "$CSR_FILE" ]; then
-        sed -i -n '/-----BEGIN/,/-----END/p' "$CSR_FILE"
-    fi
+    # Create a self-signed cert for PKCS#12 import (will be replaced in phase 2)
+    openssl x509 -req -in "$CSR_FILE" -signkey "$KEY_FILE" \
+        -out /tmp/acme-selfsigned.crt -days 1 2>/dev/null
+
+    # Import the private key into NSS database via PKCS#12
+    openssl pkcs12 -export -out /tmp/acme-tls.p12 \
+        -inkey "$KEY_FILE" -in /tmp/acme-selfsigned.crt \
+        -name "sslserver" -passout pass: 2>/dev/null
+    pk12util -i /tmp/acme-tls.p12 -d "$NSS_DB" -W "" -K "" 2>/dev/null || true
+    rm -f /tmp/acme-tls.p12 /tmp/acme-selfsigned.crt
 
     log_info "TLS CSR generated: $CSR_FILE"
 }
