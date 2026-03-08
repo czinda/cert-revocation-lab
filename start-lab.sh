@@ -553,63 +553,62 @@ start_pki_hierarchy() {
     done
 
     if [ "$all_running" = true ]; then
-        log_success "All PKI containers already running, skipping initialization"
-        return
-    fi
-
-    # PKI requires privileged containers with systemd support
-    log_info "Starting PKI containers (requires sudo for privileged mode)..."
-
-    # Start PKI containers with rootful podman
-    if is_running_as_root; then
-        podman-compose -f pki-compose.yml up -d
+        log_success "All PKI containers already running"
     else
-        sudo podman-compose -f pki-compose.yml up -d
-    fi
+        # PKI requires privileged containers with systemd support
+        log_info "Starting PKI containers (requires sudo for privileged mode)..."
 
-    # Wait for all containers to be running
-    log_info "Waiting for PKI containers to start..."
-    for ctr in ds-root ds-intermediate ds-iot ds-ocsp ds-kra dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-kra dogtag-acme-ca dogtag-est-ca; do
-        local elapsed=0
-        while [ $elapsed -lt 60 ]; do
-            local status=""
-            if is_running_as_root; then
-                status=$(podman inspect --format '{{.State.Status}}' "$ctr" 2>/dev/null || echo "missing")
-            else
-                status=$(sudo podman inspect --format '{{.State.Status}}' "$ctr" 2>/dev/null || echo "missing")
-            fi
-            if [ "$status" = "running" ]; then
-                log_success "$ctr is running"
-                break
-            fi
-            sleep 3
-            ((elapsed += 3)) || true
-        done
-        if [ $elapsed -ge 60 ]; then
-            log_warn "$ctr did not start within 60s"
+        # Start PKI containers with rootful podman
+        if is_running_as_root; then
+            podman-compose -f pki-compose.yml up -d
+        else
+            sudo podman-compose -f pki-compose.yml up -d
         fi
-    done
 
-    # Wait for 389DS to be healthy (able to respond to LDAP queries)
-    log_info "Waiting for Directory Servers to be ready..."
-    for ds in ds-root ds-intermediate ds-iot ds-ocsp; do
-        local elapsed=0
-        while [ $elapsed -lt 120 ]; do
-            if is_running_as_root; then
-                if podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
-                    log_success "$ds is ready"
+        # Wait for all containers to be running
+        log_info "Waiting for PKI containers to start..."
+        for ctr in ds-root ds-intermediate ds-iot ds-ocsp ds-kra dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-kra dogtag-acme-ca dogtag-est-ca; do
+            local elapsed=0
+            while [ $elapsed -lt 60 ]; do
+                local status=""
+                if is_running_as_root; then
+                    status=$(podman inspect --format '{{.State.Status}}' "$ctr" 2>/dev/null || echo "missing")
+                else
+                    status=$(sudo podman inspect --format '{{.State.Status}}' "$ctr" 2>/dev/null || echo "missing")
+                fi
+                if [ "$status" = "running" ]; then
+                    log_success "$ctr is running"
                     break
                 fi
-            else
-                if sudo podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
-                    log_success "$ds is ready"
-                    break
-                fi
+                sleep 3
+                ((elapsed += 3)) || true
+            done
+            if [ $elapsed -ge 60 ]; then
+                log_warn "$ctr did not start within 60s"
             fi
-            sleep 5
-            ((elapsed += 5)) || true
         done
-    done
+
+        # Wait for 389DS to be healthy (able to respond to LDAP queries)
+        log_info "Waiting for Directory Servers to be ready..."
+        for ds in ds-root ds-intermediate ds-iot ds-ocsp; do
+            local elapsed=0
+            while [ $elapsed -lt 120 ]; do
+                if is_running_as_root; then
+                    if podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
+                        log_success "$ds is ready"
+                        break
+                    fi
+                else
+                    if sudo podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
+                        log_success "$ds is ready"
+                        break
+                    fi
+                fi
+                sleep 5
+                ((elapsed += 5)) || true
+            done
+        done
+    fi
 
     # Initialize PKI hierarchy automatically
     # The init script needs to run with rootful podman access
@@ -693,61 +692,60 @@ start_pq_pki_hierarchy() {
     done
 
     if [ "$all_running" = true ]; then
-        log_success "All PQ PKI containers already running, skipping initialization"
-        return
-    fi
-
-    log_info "Starting PQ PKI containers (requires sudo for privileged mode)..."
-
-    if is_running_as_root; then
-        podman-compose -f pki-pq-compose.yml up -d
+        log_success "All PQ PKI containers already running"
     else
-        sudo podman-compose -f pki-pq-compose.yml up -d
-    fi
+        log_info "Starting PQ PKI containers (requires sudo for privileged mode)..."
 
-    # Wait for all PQ containers to be running
-    log_info "Waiting for PQ PKI containers to start..."
-    for ctr in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-ocsp ds-pq-kra dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-ocsp dogtag-pq-kra dogtag-pq-est-ca; do
-        local elapsed=0
-        while [ $elapsed -lt 60 ]; do
-            local status=""
-            if is_running_as_root; then
-                status=$(podman inspect --format '{{.State.Status}}' "$ctr" 2>/dev/null || echo "missing")
-            else
-                status=$(sudo podman inspect --format '{{.State.Status}}' "$ctr" 2>/dev/null || echo "missing")
-            fi
-            if [ "$status" = "running" ]; then
-                log_success "$ctr is running"
-                break
-            fi
-            sleep 3
-            ((elapsed += 3)) || true
-        done
-        if [ $elapsed -ge 60 ]; then
-            log_warn "$ctr did not start within 60s"
+        if is_running_as_root; then
+            podman-compose -f pki-pq-compose.yml up -d
+        else
+            sudo podman-compose -f pki-pq-compose.yml up -d
         fi
-    done
 
-    # Wait for PQ 389DS to be healthy
-    log_info "Waiting for PQ Directory Servers to be ready..."
-    for ds in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-ocsp; do
-        local elapsed=0
-        while [ $elapsed -lt 120 ]; do
-            if is_running_as_root; then
-                if podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
-                    log_success "$ds is ready"
+        # Wait for all PQ containers to be running
+        log_info "Waiting for PQ PKI containers to start..."
+        for ctr in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-ocsp ds-pq-kra dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-ocsp dogtag-pq-kra dogtag-pq-est-ca; do
+            local elapsed=0
+            while [ $elapsed -lt 60 ]; do
+                local status=""
+                if is_running_as_root; then
+                    status=$(podman inspect --format '{{.State.Status}}' "$ctr" 2>/dev/null || echo "missing")
+                else
+                    status=$(sudo podman inspect --format '{{.State.Status}}' "$ctr" 2>/dev/null || echo "missing")
+                fi
+                if [ "$status" = "running" ]; then
+                    log_success "$ctr is running"
                     break
                 fi
-            else
-                if sudo podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
-                    log_success "$ds is ready"
-                    break
-                fi
+                sleep 3
+                ((elapsed += 3)) || true
+            done
+            if [ $elapsed -ge 60 ]; then
+                log_warn "$ctr did not start within 60s"
             fi
-            sleep 5
-            ((elapsed += 5)) || true
         done
-    done
+
+        # Wait for PQ 389DS to be healthy
+        log_info "Waiting for PQ Directory Servers to be ready..."
+        for ds in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-ocsp; do
+            local elapsed=0
+            while [ $elapsed -lt 120 ]; do
+                if is_running_as_root; then
+                    if podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
+                        log_success "$ds is ready"
+                        break
+                    fi
+                else
+                    if sudo podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
+                        log_success "$ds is ready"
+                        break
+                    fi
+                fi
+                sleep 5
+                ((elapsed += 5)) || true
+            done
+        done
+    fi
 
     # Initialize PQ PKI hierarchy automatically
     # The init script needs to run with rootful podman access
@@ -781,61 +779,62 @@ start_ecc_pki_hierarchy() {
     done
 
     if [ "$all_running" = true ]; then
-        log_success "All ECC PKI containers already running, skipping initialization"
-        return
-    fi
-
-    log_info "Starting ECC PKI containers (requires sudo for privileged mode)..."
-
-    if is_running_as_root; then
-        podman-compose -f pki-ecc-compose.yml up -d
+        log_success "All ECC PKI containers already running"
+        # Don't return — still need to run init for any uninitialized subsystems
+        # (OCSP/KRA/EST may be running but not yet initialized)
     else
-        sudo podman-compose -f pki-ecc-compose.yml up -d
-    fi
+        log_info "Starting ECC PKI containers (requires sudo for privileged mode)..."
 
-    # Wait for all ECC containers to be running
-    log_info "Waiting for ECC PKI containers to start..."
-    for ctr in ds-ecc-root ds-ecc-intermediate ds-ecc-iot ds-ecc-ocsp ds-ecc-kra dogtag-ecc-root-ca dogtag-ecc-intermediate-ca dogtag-ecc-iot-ca dogtag-ecc-ocsp dogtag-ecc-kra dogtag-ecc-est-ca; do
-        local elapsed=0
-        while [ $elapsed -lt 60 ]; do
-            local status=""
-            if is_running_as_root; then
-                status=$(podman inspect --format '{{.State.Status}}' "$ctr" 2>/dev/null || echo "missing")
-            else
-                status=$(sudo podman inspect --format '{{.State.Status}}' "$ctr" 2>/dev/null || echo "missing")
-            fi
-            if [ "$status" = "running" ]; then
-                log_success "$ctr is running"
-                break
-            fi
-            sleep 3
-            ((elapsed += 3)) || true
-        done
-        if [ $elapsed -ge 60 ]; then
-            log_warn "$ctr did not start within 60s"
+        if is_running_as_root; then
+            podman-compose -f pki-ecc-compose.yml up -d
+        else
+            sudo podman-compose -f pki-ecc-compose.yml up -d
         fi
-    done
 
-    # Wait for ECC 389DS to be healthy
-    log_info "Waiting for ECC Directory Servers to be ready..."
-    for ds in ds-ecc-root ds-ecc-intermediate ds-ecc-iot ds-ecc-ocsp; do
-        local elapsed=0
-        while [ $elapsed -lt 120 ]; do
-            if is_running_as_root; then
-                if podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
-                    log_success "$ds is ready"
+        # Wait for all ECC containers to be running
+        log_info "Waiting for ECC PKI containers to start..."
+        for ctr in ds-ecc-root ds-ecc-intermediate ds-ecc-iot ds-ecc-ocsp ds-ecc-kra dogtag-ecc-root-ca dogtag-ecc-intermediate-ca dogtag-ecc-iot-ca dogtag-ecc-ocsp dogtag-ecc-kra dogtag-ecc-est-ca; do
+            local elapsed=0
+            while [ $elapsed -lt 60 ]; do
+                local status=""
+                if is_running_as_root; then
+                    status=$(podman inspect --format '{{.State.Status}}' "$ctr" 2>/dev/null || echo "missing")
+                else
+                    status=$(sudo podman inspect --format '{{.State.Status}}' "$ctr" 2>/dev/null || echo "missing")
+                fi
+                if [ "$status" = "running" ]; then
+                    log_success "$ctr is running"
                     break
                 fi
-            else
-                if sudo podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
-                    log_success "$ds is ready"
-                    break
-                fi
+                sleep 3
+                ((elapsed += 3)) || true
+            done
+            if [ $elapsed -ge 60 ]; then
+                log_warn "$ctr did not start within 60s"
             fi
-            sleep 5
-            ((elapsed += 5)) || true
         done
-    done
+
+        # Wait for ECC 389DS to be healthy
+        log_info "Waiting for ECC Directory Servers to be ready..."
+        for ds in ds-ecc-root ds-ecc-intermediate ds-ecc-iot ds-ecc-ocsp; do
+            local elapsed=0
+            while [ $elapsed -lt 120 ]; do
+                if is_running_as_root; then
+                    if podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
+                        log_success "$ds is ready"
+                        break
+                    fi
+                else
+                    if sudo podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
+                        log_success "$ds is ready"
+                        break
+                    fi
+                fi
+                sleep 5
+                ((elapsed += 5)) || true
+            done
+        done
+    fi
 
     # Initialize ECC PKI hierarchy automatically
     # The init script needs to run with rootful podman access
