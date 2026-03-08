@@ -406,7 +406,7 @@ services:
         ipv4_address: 172.27.0.23
     ports:
       - "8458:8443"
-      - "8492:8080"
+      - "8493:8080"
     command: ["/bin/bash", "-c", "sleep infinity"]
     healthcheck:
       test: ["CMD-SHELL", "curl -sk https://localhost:8443/kra/admin/kra/getStatus 2>/dev/null | grep -q running || exit 1"]
