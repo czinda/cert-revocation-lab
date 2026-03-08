@@ -59,6 +59,8 @@
       ansible.builtin.shell:
         cmd: "{{ start_cmd }}"
         chdir: "{{ lab_root_dir }}"
+      environment:
+        NONINTERACTIVE: "1"
       register: start_result
       timeout: 3600
       tags: [start]
