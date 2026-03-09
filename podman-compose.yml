@@ -507,7 +507,7 @@ services:
     ports:
       - "${PORT_EDR:-8082}:8000"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import json, urllib.request; d=json.load(urllib.request.urlopen('http://localhost:8000/health')); exit(0 if d.get('kafka_connected') else 1)\""]
+      test: ["CMD-SHELL", "python3 -c \"import json, urllib.request; d=json.load(urllib.request.urlopen('http://localhost:8000/health')); exit(0 if d.get('kafka_connected') else 1)\""]
       interval: 10s
       timeout: 10s
       retries: 5
@@ -532,7 +532,7 @@ services:
     ports:
       - "${PORT_SIEM:-8083}:8000"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import json, urllib.request; d=json.load(urllib.request.urlopen('http://localhost:8000/health')); exit(0 if d.get('kafka_connected') else 1)\""]
+      test: ["CMD-SHELL", "python3 -c \"import json, urllib.request; d=json.load(urllib.request.urlopen('http://localhost:8000/health')); exit(0 if d.get('kafka_connected') else 1)\""]
       interval: 10s
       timeout: 10s
       retries: 5
@@ -569,7 +569,7 @@ services:
     ports:
       - "${PORT_CT_LOG:-8086}:8000"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import json, urllib.request; d=json.load(urllib.request.urlopen('http://localhost:8000/health')); exit(0 if d.get('kafka_connected') else 1)\""]
+      test: ["CMD-SHELL", "python3 -c \"import json, urllib.request; d=json.load(urllib.request.urlopen('http://localhost:8000/health')); exit(0 if d.get('kafka_connected') else 1)\""]
       interval: 10s
       timeout: 10s
       retries: 5
@@ -591,7 +591,7 @@ services:
     ports:
       - "${PORT_POLICY:-8089}:8000"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -701,7 +701,7 @@ services:
     ports:
       - "${PORT_CHAIN_VIZ:-8090}:8000"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -739,7 +739,7 @@ services:
     ports:
       - "${PORT_IOT_CLIENT:-8085}:8000"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
       interval: 10s
       timeout: 10s
       retries: 5
@@ -877,7 +877,7 @@ services:
     ports:
       - "${PORT_PKI_EXPORTER:-9091}:9091"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import httpx; httpx.get('http://localhost:9091/health', timeout=5)\" || exit 1"]
+      test: ["CMD-SHELL", "python3 -c \"import httpx; httpx.get('http://localhost:9091/health', timeout=5)\" || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -904,7 +904,7 @@ services:
     ports:
       - "${PORT_PIN_VALIDATOR:-8091}:8000"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -929,7 +929,7 @@ services:
       - "${PORT_KMIP_API:-8092}:8000"
       - "${PORT_KMIP:-5696}:5696"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
