@@ -753,14 +753,18 @@ start_pq_pki_hierarchy() {
 
     # Initialize PQ PKI hierarchy automatically
     # The init script needs to run with rootful podman access
+    # NOTE: PQ hierarchy is experimental — NSS 3.119 can create ML-DSA-87 keys/certs
+    # but cannot verify ML-DSA-87 signatures in cert chain validation (error -8016).
+    # The Root CA may initialize but subordinate CAs will fail TLS handshake.
     log_info "Initializing PQ PKI hierarchy (ML-DSA-87)..."
+    log_warn "PQ PKI is experimental: NSS cert chain verification for ML-DSA-87 is incomplete"
     if is_running_as_root; then
-        bash scripts/pki/init-pq-pki-hierarchy.sh
+        bash scripts/pki/init-pq-pki-hierarchy.sh || log_warn "PQ PKI init incomplete (expected — NSS ML-DSA-87 limitation)"
     else
-        sudo bash scripts/pki/init-pq-pki-hierarchy.sh
+        sudo bash scripts/pki/init-pq-pki-hierarchy.sh || log_warn "PQ PKI init incomplete (expected — NSS ML-DSA-87 limitation)"
     fi
 
-    log_success "PQ PKI hierarchy initialized"
+    log_success "PQ PKI containers started (hierarchy init may be partial)"
 }
 
 # Phase 4c: Start and Initialize ECC PKI Hierarchy
