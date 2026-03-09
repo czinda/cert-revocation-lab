@@ -21,7 +21,7 @@ RUN dnf install -y gcc python3-devel && dnf clean all
 
 # Install dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Copy application
 COPY app.py .
