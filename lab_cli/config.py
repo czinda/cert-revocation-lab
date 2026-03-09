@@ -232,15 +232,15 @@ SIEM_ALERT_TYPES: dict[str, str] = {
 class LabConfig:
     """Main configuration for the lab CLI."""
 
-    # URLs
-    edr_url: str = "http://localhost:8082"
-    siem_url: str = "http://localhost:8083"
-    ct_log_url: str = "http://localhost:8086"
-    crl_cdp_url: str = "http://localhost:8088"
-    policy_engine_url: str = "http://localhost:8089"
-    chain_visualizer_url: str = "http://localhost:8090"
-    pin_validator_url: str = "http://localhost:8091"
-    kmip_server_url: str = "http://localhost:8092"
+    # URLs (configurable via PORT_* env vars for shared hosts)
+    edr_url: str = field(default_factory=lambda: f"http://localhost:{os.getenv('PORT_EDR', '8082')}")
+    siem_url: str = field(default_factory=lambda: f"http://localhost:{os.getenv('PORT_SIEM', '8083')}")
+    ct_log_url: str = field(default_factory=lambda: f"http://localhost:{os.getenv('PORT_CT_LOG', '8086')}")
+    crl_cdp_url: str = field(default_factory=lambda: f"http://localhost:{os.getenv('PORT_CRL', '8088')}")
+    policy_engine_url: str = field(default_factory=lambda: f"http://localhost:{os.getenv('PORT_POLICY', '8089')}")
+    chain_visualizer_url: str = field(default_factory=lambda: f"http://localhost:{os.getenv('PORT_CHAIN_VIZ', '8090')}")
+    pin_validator_url: str = field(default_factory=lambda: f"http://localhost:{os.getenv('PORT_PIN_VALIDATOR', '8091')}")
+    kmip_server_url: str = field(default_factory=lambda: f"http://localhost:{os.getenv('PORT_KMIP_API', '8092')}")
 
     # Domain
     lab_domain: str = "cert-lab.local"

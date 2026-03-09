@@ -23,7 +23,7 @@ source "$SCRIPT_DIR/lib-common.sh" 2>/dev/null || {
 }
 
 DOMAIN="cert-lab.local"
-DNS_PORT=5353
+DNS_PORT=${PORT_DNS:-5353}
 
 # Detect OS
 detect_os() {
