@@ -425,16 +425,28 @@ clean_start() {
     run_as_user podman-compose down -v 2>/dev/null || true
     run_as_user podman volume prune -f 2>/dev/null || true
 
-    # Clean rootful PKI containers
-    if [ -f pki-compose.yml ]; then
-        log_info "Cleaning PKI containers (requires sudo)..."
-        if is_running_as_root; then
-            podman-compose -f pki-compose.yml down -v 2>/dev/null || true
-            podman volume prune -f 2>/dev/null || true
-        else
-            sudo podman-compose -f pki-compose.yml down -v 2>/dev/null || true
-            sudo podman volume prune -f 2>/dev/null || true
+    # Clean rootful PKI containers (all three hierarchies)
+    for compose_file in pki-compose.yml pki-ecc-compose.yml pki-pq-compose.yml; do
+        if [ -f "$compose_file" ]; then
+            log_info "Cleaning $compose_file containers..."
+            if is_running_as_root; then
+                podman-compose -f "$compose_file" down -v 2>/dev/null || true
+            else
+                sudo podman-compose -f "$compose_file" down -v 2>/dev/null || true
+            fi
         fi
+    done
+    if is_running_as_root; then
+        podman volume prune -f 2>/dev/null || true
+    else
+        sudo podman volume prune -f 2>/dev/null || true
+    fi
+
+    # Kill any stale rootlessport processes from previous PKI containers
+    if is_running_as_root; then
+        pkill -u pkiuser rootlessport 2>/dev/null || true
+    else
+        sudo pkill -u pkiuser rootlessport 2>/dev/null || true
     fi
 
     # Clean FreeIPA containers
