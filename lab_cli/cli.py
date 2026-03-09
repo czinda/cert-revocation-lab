@@ -293,9 +293,9 @@ def issue(
         help="CA level (root, intermediate, iot)"
     ),
     profile: str = typer.Option(
-        "caServerCert",
+        None,
         "--profile",
-        help="Certificate profile"
+        help="Certificate profile (auto-selected by PKI type if not specified)"
     ),
 ):
     """Issue a certificate from Dogtag PKI."""
