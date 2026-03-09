@@ -202,12 +202,19 @@ def est_enroll_certificate(
         key_path = Path(tmpdir) / "key.pem"
         csr_path = Path(tmpdir) / "request.csr"
 
-        # Generate key
-        key_cmd = [
-            "openssl", "genrsa",
-            "-out", str(key_path),
-            "2048"
-        ]
+        # Generate key based on PKI type
+        if pki_type == PKIType.ECC:
+            key_cmd = [
+                "openssl", "ecparam", "-genkey",
+                "-name", "secp384r1",
+                "-out", str(key_path)
+            ]
+        else:
+            key_cmd = [
+                "openssl", "genrsa",
+                "-out", str(key_path),
+                "2048"
+            ]
         result = subprocess.run(key_cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
             return ProtocolResult(
@@ -422,8 +429,11 @@ def est_reenroll_certificate(
         key_path = Path(tmpdir) / "key.pem"
         csr_path = Path(tmpdir) / "request.csr"
 
-        # Generate new key
-        key_cmd = ["openssl", "genrsa", "-out", str(key_path), "2048"]
+        # Generate new key based on PKI type
+        if pki_type == PKIType.ECC:
+            key_cmd = ["openssl", "ecparam", "-genkey", "-name", "secp384r1", "-out", str(key_path)]
+        else:
+            key_cmd = ["openssl", "genrsa", "-out", str(key_path), "2048"]
         result = subprocess.run(key_cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
             return ProtocolResult(success=False, message=f"Failed to generate key: {result.stderr}")
