@@ -11,7 +11,11 @@
 #   - ML-DSA-87: Post-quantum cryptography (dogtag-pqc-*)
 #
 # Every event type has explicit RSA/ECC/PQC rules. RSA is the default when
-# pki_type is not specified.
+# pki_type is null or not specified.
+#
+# NOTE: Do NOT use "is not defined" in conditions — Drools evaluates it
+# incorrectly when other event fields are null, causing cross-PKI routing.
+# Use "== null" instead to match missing/null pki_type values.
 
 - name: Security Event Processor
   hosts: all
@@ -36,7 +40,7 @@
         event.body.event_type == "malware_detection" and
         event.body.severity == "critical" and
         event.body.action_required == "revoke_certificate" and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -81,7 +85,7 @@
         event.body.event_type == "credential_theft" and
         event.body.severity in ["high", "critical"] and
         event.body.action_required == "revoke_certificate" and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -124,7 +128,7 @@
         event.body.event_type == "malware_detection" and
         event.body.severity == "high" and
         event.body.action_required == "revoke_certificate" and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -166,7 +170,7 @@
       condition: >
         event.body.event_type == "ransomware" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -206,7 +210,7 @@
       condition: >
         event.body.event_type == "c2_communication" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -246,7 +250,7 @@
       condition: >
         event.body.event_type == "lateral_movement" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -286,7 +290,7 @@
       condition: >
         event.body.event_type == "privilege_escalation" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -326,7 +330,7 @@
       condition: >
         event.body.event_type == "suspicious_script" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -370,7 +374,7 @@
       condition: >
         event.body.event_type == "key_compromise" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -410,7 +414,7 @@
       condition: >
         event.body.event_type == "geo_anomaly" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -453,7 +457,7 @@
       condition: >
         event.body.event_type == "compliance_violation" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -496,7 +500,7 @@
       condition: >
         event.body.event_type == "mitm_detected" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -539,7 +543,7 @@
       condition: >
         event.body.event_type == "rogue_ca" and
         event.body.severity == "critical" and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -586,7 +590,7 @@
       condition: >
         event.body.event_type == "firmware_integrity" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -629,7 +633,7 @@
       condition: >
         event.body.event_type == "device_cloning" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -672,7 +676,7 @@
       condition: >
         event.body.event_type == "iot_anomaly" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -715,7 +719,7 @@
       condition: >
         event.body.event_type == "protocol_attack" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -762,7 +766,7 @@
       condition: >
         event.body.event_type == "impossible_travel" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -805,7 +809,7 @@
       condition: >
         event.body.event_type == "service_account_abuse" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -848,7 +852,7 @@
       condition: >
         event.body.event_type == "mfa_bypass" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -891,7 +895,7 @@
       condition: >
         event.body.event_type == "kerberoasting" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -983,7 +987,7 @@
       condition: >
         event.body.event_type == "tls_downgrade" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -1026,7 +1030,7 @@
       condition: >
         event.body.event_type == "ct_log_mismatch" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -1069,7 +1073,7 @@
       condition: >
         event.body.event_type == "ocsp_bypass" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -1116,7 +1120,7 @@
       condition: >
         event.body.event_type == "data_exfiltration" and
         event.body.severity in ["high", "critical"] and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -1156,7 +1160,7 @@
       condition: >
         event.body.event_type == "unauthorized_access" and
         event.body.action_required == "revoke_certificate" and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
@@ -1195,7 +1199,7 @@
     - name: Certificate Misuse - RSA
       condition: >
         event.body.event_type == "certificate_misuse" and
-        (event.body.pki_type is not defined or event.body.pki_type == null or event.body.pki_type == "rsa")
+        (event.body.pki_type == null or event.body.pki_type == "rsa")
       action:
         run_playbook:
           name: /playbooks/dogtag-rsa-revoke-certificate.yml
