@@ -1171,13 +1171,13 @@ def tier_8_security_tools(config: LabConfig, auto_fix: bool = False) -> TestCate
     category = TestCategory(name="Security Tools", tier=8, depends_on=[3])
 
     services = [
-        ("mock-edr", "Mock EDR", 8082, "/health"),
-        ("mock-siem", "Mock SIEM", 8083, "/health"),
+        ("mock-edr", "Mock EDR", int(os.getenv("PORT_EDR", "8082")), "/health"),
+        ("mock-siem", "Mock SIEM", int(os.getenv("PORT_SIEM", "8083")), "/health"),
     ]
 
     optional_services = [
-        ("iot-client", "IoT Client", 8085, "/health"),
-        ("jupyter", "Jupyter Lab", 8888, "/api"),
+        ("iot-client", "IoT Client", int(os.getenv("PORT_IOT_CLIENT", "8085")), "/health"),
+        ("jupyter", "Jupyter Lab", int(os.getenv("PORT_JUPYTER", "8888")), "/api"),
     ]
 
     for container, desc, port, health_path in services:
