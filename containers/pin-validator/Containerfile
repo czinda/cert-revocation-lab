@@ -1,6 +1,10 @@
 FROM quay.io/hummingbird/python:3.12-builder
 
+USER 0
+
 WORKDIR /app
+
+RUN dnf install -y gcc python3-devel && dnf clean all
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -8,6 +12,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py .
 COPY pin_store.yaml .
 
+USER 65532
+
 EXPOSE 8000
+
+HEALTHCHECK --interval=10s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
