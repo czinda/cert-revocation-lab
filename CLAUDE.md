@@ -196,13 +196,20 @@ pki_ca_signing_signing_algorithm=SHA384withEC
 
 ### ML-DSA-87 (Post-Quantum - NIST FIPS 204)
 ```ini
+# CA signing and OCSP signing use ML-DSA-87
 pki_ca_signing_key_type=mldsa
 pki_ca_signing_key_algorithm=ML-DSA-87
 pki_ca_signing_key_size=87
 pki_ca_signing_signing_algorithm=ML-DSA-87
+
+# TLS, admin, subsystem, audit certs use RSA-2048 (hybrid approach)
+# OpenSSL/NSS cannot verify ML-DSA-87 cert chains for TLS yet
+pki_sslserver_key_type=rsa
+pki_sslserver_key_algorithm=SHA256withRSA
+pki_sslserver_key_size=2048
 ```
 
-**Note**: ML-DSA-87 requires building Dogtag PKI from the master branch. The `containers/dogtag-pq/` directory contains the Containerfile.
+**Note**: ML-DSA-87 support is included in the upstream `quay.io/dogtagpki/pki-ca:latest` image (11.10.0+). The PQ hierarchy uses a hybrid approach — ML-DSA-87 for CA/OCSP signing, RSA-2048 for transport certs — because NSS cannot verify ML-DSA-87 signatures in TLS cert chain validation yet (error -8016). See Known Limitations.
 
 ## Environment Configuration
 
@@ -401,6 +408,11 @@ The `agnosticd/configs/cert-revocation-lab/` directory deploys the lab onto a si
 - **FreeIPA requires rootful podman**: Separate compose file (`freeipa-compose.yml`)
 - **EDA SSH bridge**: EDA (rootless) connects to PKI (rootful) via SSH (`./scripts/setup-eda-ssh.sh`)
 - **Port remapping**: FreeIPA 4443/8180/3390/6360; AWX 8084
+- **ECC KRA**: Fails with `NullPointerException` — ECDSA keys can't be used for KRA key wrapping (encryption). KRA init is non-fatal; key archival unavailable in ECC hierarchy
+- **ML-DSA-87 (PQ) hierarchy is experimental**: NSS 3.119 can create ML-DSA-87 keys/certs but cannot verify ML-DSA-87 signatures in cert chain validation (error -8016). Only Root CA initializes; subordinate CAs fail TLS handshake. PQ init is non-fatal
+- **PQ hybrid crypto**: PQ configs use ML-DSA-87 for CA/OCSP signing but RSA-2048 for TLS/admin/subsystem certs (OpenSSL/TLS compatibility). Even so, the CA signature on TLS certs is ML-DSA-87, which NSS can't verify yet
+- **PQ image**: Uses same upstream `quay.io/dogtagpki/pki-ca:latest` as RSA/ECC (11.10.0~alpha1 already has ML-DSA-87 support). Custom source build (`containers/dogtag-pq/`) is not used (JSS dependency issues)
+- **certutil key generation**: `certutil -R` is extremely slow on some systems due to NSS entropy. EST/ACME RA init scripts use `openssl req` + PKCS#12 import instead
 
 ## EDA SSH Setup
 
