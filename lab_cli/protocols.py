@@ -154,8 +154,8 @@ def _acme_simple_client(acme_url: str, domain: str, config: LabConfig) -> Protoc
         )
 
     return ProtocolResult(
-        success=True,
-        message="ACME directory fetched successfully (full enrollment requires certbot)",
+        success=False,
+        message="ACME directory reachable but full enrollment requires certbot",
         details={
             "directory": directory,
             "acme_url": acme_url,
@@ -457,10 +457,13 @@ def est_reenroll_certificate(
 
         csr_base64 = base64.b64encode(result.stdout).decode('ascii')
 
-        # Submit to simplereenroll with client cert
+        # Submit to simplereenroll with client cert + Basic auth
+        # Dogtag EST RA requires both TLS client cert and HTTP Basic auth
+        est_password = config.pki_admin_password if config else "RedHat123"
         enroll_cmd = [
             "curl", "-sk",
             "-X", "POST",
+            "-u", f"est-client:{est_password}",
             "-H", "Content-Type: application/pkcs10",
             "-H", "Content-Transfer-Encoding: base64",
             "--cert", client_cert,

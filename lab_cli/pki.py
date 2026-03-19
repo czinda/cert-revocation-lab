@@ -309,7 +309,7 @@ def issue_certificate(
             return CertificateResult(success=False, message="Failed to generate CSR")
 
         # Copy CSR to container
-        copy_cmd = ["sudo", "podman", "cp", str(csr_path), f"{ca_config.container}:/tmp/request.csr"]
+        copy_cmd = ["sudo", "podman", "cp", str(csr_path), f"{ca_config.container}:/tmp/request-{op_id}.csr"]
         result = subprocess.run(copy_cmd, capture_output=True, text=True)
         if result.returncode != 0:
             return CertificateResult(success=False, message=f"Failed to copy CSR: {result.stderr}")
@@ -317,9 +317,13 @@ def issue_certificate(
     # Setup client NSS database with admin cert and submit + approve request
     # We use the admin cert for both submit and approve. Dogtag may auto-approve
     # requests from authenticated agents, so we handle that case gracefully.
+    # Use unique temp paths to avoid race conditions in concurrent operations.
+    import uuid as _uuid
+    op_id = _uuid.uuid4().hex[:8]
+
     setup_submit_approve = f"""
 set -e
-CLIENT_DB=/tmp/pki-issue-nssdb
+CLIENT_DB=/tmp/pki-issue-nssdb-{op_id}
 INSTANCE={ca_config.instance}
 CA_URL=https://{ca_config.hostname}:8443
 
@@ -337,9 +341,9 @@ done
 
 # Import CA signing cert
 PKI_DB=/var/lib/pki/$INSTANCE/alias
-certutil -L -d $PKI_DB -n "caSigningCert cert-$INSTANCE CA" -a > /tmp/ca-signing.crt 2>/dev/null || true
-if [ -f /tmp/ca-signing.crt ]; then
-    certutil -A -d $CLIENT_DB -n 'CA Signing Cert' -t 'CT,C,C' -a -i /tmp/ca-signing.crt 2>/dev/null || true
+certutil -L -d $PKI_DB -n "caSigningCert cert-$INSTANCE CA" -a > /tmp/ca-signing-{op_id}.crt 2>/dev/null || true
+if [ -f /tmp/ca-signing-{op_id}.crt ]; then
+    certutil -A -d $CLIENT_DB -n 'CA Signing Cert' -t 'CT,C,C' -a -i /tmp/ca-signing-{op_id}.crt 2>/dev/null || true
 fi
 
 # Import admin P12
@@ -367,7 +371,7 @@ fi
 # Submit certificate request with admin auth
 pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \
     --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \
-    ca-cert-request-submit --profile {profile} --csr-file /tmp/request.csr
+    ca-cert-request-submit --profile {profile} --csr-file /tmp/request-{op_id}.csr
 """
 
     rc, stdout, stderr = run_podman_exec(ca_config.container, setup_submit_approve)
@@ -383,7 +387,7 @@ pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \
 
     # Check if request was auto-approved (common when submitting as admin/agent)
     check_cmd = f"""
-CLIENT_DB=/tmp/pki-issue-nssdb
+CLIENT_DB=/tmp/pki-issue-nssdb-{op_id}
 CA_URL=https://{ca_config.hostname}:8443
 ADMIN_NICK=$(certutil -L -d $CLIENT_DB 2>/dev/null | grep -iE "admin|caadmin" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
 [ -z "$ADMIN_NICK" ] && ADMIN_NICK="PKI Administrator for {ca_config.instance}"
@@ -401,7 +405,7 @@ pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \
     if request_status == "pending":
         # Need explicit approval
         approve_cmd = f"""
-CLIENT_DB=/tmp/pki-issue-nssdb
+CLIENT_DB=/tmp/pki-issue-nssdb-{op_id}
 CA_URL=https://{ca_config.hostname}:8443
 ADMIN_NICK=$(certutil -L -d $CLIENT_DB 2>/dev/null | grep -iE "admin|caadmin" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
 [ -z "$ADMIN_NICK" ] && ADMIN_NICK="PKI Administrator for {ca_config.instance}"
@@ -444,11 +448,11 @@ pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \
 
     # Retrieve the certificate and clean up
     retrieve_cmd = f"""
-CLIENT_DB=/tmp/pki-issue-nssdb
+CLIENT_DB=/tmp/pki-issue-nssdb-{op_id}
 CA_URL=https://{ca_config.hostname}:8443
-pki -d $CLIENT_DB -U "$CA_URL" ca-cert-show {cert_id} --output /tmp/issued-cert.pem
-cat /tmp/issued-cert.pem
-rm -rf $CLIENT_DB
+pki -d $CLIENT_DB -U "$CA_URL" ca-cert-show {cert_id} --output /tmp/issued-cert-{op_id}.pem
+cat /tmp/issued-cert-{op_id}.pem
+rm -rf $CLIENT_DB /tmp/request-{op_id}.csr /tmp/ca-signing-{op_id}.crt /tmp/issued-cert-{op_id}.pem
 """
 
     rc, stdout, stderr = run_podman_exec(ca_config.container, retrieve_cmd)

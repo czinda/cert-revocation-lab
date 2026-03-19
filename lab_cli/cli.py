@@ -1001,6 +1001,10 @@ def test(
     total = len(scenarios_to_run)
     console.print(f"\n[bold cyan]Running {total} scenarios ({label})[/bold cyan]\n")
 
+    # Warmup: give EDA consumer group time to stabilize before first event
+    console.print("[dim]Warming up EDA consumer...[/dim]")
+    time.sleep(5)
+
     passed = 0
     failed = 0
     results: list[tuple[str, bool]] = []
