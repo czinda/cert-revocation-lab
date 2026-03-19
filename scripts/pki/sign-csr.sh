@@ -68,9 +68,16 @@ if [ ! -d "$NSS_DB" ]; then
     certutil -N -d "$NSS_DB" --empty-password
 fi
 
-# Submit CSR to CA
+# Find admin cert nickname in NSS database (pkispawn uses varying nicknames)
+ADMIN_NICK=$(certutil -L -d "$NSS_DB" 2>/dev/null \
+    | grep -E 'u,u,u|u,pu,u' | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
+if [ -n "$ADMIN_NICK" ]; then
+    log_info "Using admin cert: $ADMIN_NICK"
+fi
+
+# Submit CSR to CA (pipe 'y' for SSL trust prompt in non-interactive mode)
 log_info "Submitting CSR to CA..."
-REQUEST_OUTPUT=$(pki -d "$NSS_DB" -c "$NSS_PASSWORD" \
+REQUEST_OUTPUT=$(echo y | pki -d "$NSS_DB" -c "$NSS_PASSWORD" \
     -U "${CA_URL}" \
     ca-cert-request-submit \
     --profile "$PROFILE" \
@@ -88,39 +95,43 @@ fi
 log_info "Request ID: $REQUEST_ID"
 
 # Approve the request (agent action)
+# The pki CLI prompts "Are you sure (y/N)?" — pipe 'y' for non-interactive use.
+# Also pipe 'y' for any SSL trust prompts that may appear first.
 log_info "Approving certificate request..."
-pki -d "$NSS_DB" -c "$NSS_PASSWORD" \
-    -U "${CA_URL}" \
-    -n "caadmin" \
-    ca-cert-request-approve "$REQUEST_ID" || {
-        log_warn "Agent approval may require different credentials"
-        # Try with username/password
-        pki -d "$NSS_DB" -c "$NSS_PASSWORD" \
-            -U "${CA_URL}" \
-            -u admin -w "$PKI_PASSWORD" \
-            ca-cert-request-approve "$REQUEST_ID"
-    }
+if [ -n "$ADMIN_NICK" ]; then
+    echo -e "y\ny" | pki -d "$NSS_DB" -c "$NSS_PASSWORD" \
+        -U "${CA_URL}" \
+        -n "$ADMIN_NICK" \
+        ca-cert-request-approve "$REQUEST_ID" || {
+            log_warn "Client cert auth failed, trying username/password..."
+            echo -e "y\ny" | pki -d "$NSS_DB" -c "$NSS_PASSWORD" \
+                -U "${CA_URL}" \
+                -u caadmin -w "$PKI_PASSWORD" \
+                ca-cert-request-approve "$REQUEST_ID"
+        }
+else
+    # No admin cert in NSS — use username/password auth
+    echo -e "y\ny" | pki -d "$NSS_DB" -c "$NSS_PASSWORD" \
+        -U "${CA_URL}" \
+        -u caadmin -w "$PKI_PASSWORD" \
+        ca-cert-request-approve "$REQUEST_ID"
+fi
 
-# Wait for certificate issuance
-log_info "Waiting for certificate issuance..."
-sleep 5
-
-# Get certificate information
-CERT_INFO=$(pki -d "$NSS_DB" -c "$NSS_PASSWORD" \
+# Extract certificate ID from the approval output
+APPROVE_OUTPUT=$(echo -e "y\ny" | pki -d "$NSS_DB" -c "$NSS_PASSWORD" \
     -U "${CA_URL}" \
     ca-cert-request-show "$REQUEST_ID" 2>&1)
 
-# Extract certificate ID
-CERT_ID=$(echo "$CERT_INFO" | grep "Certificate ID:" | awk '{print $3}')
+CERT_ID=$(echo "$APPROVE_OUTPUT" | grep "Certificate ID:" | awk '{print $3}')
 
 if [ -z "$CERT_ID" ]; then
     # Try extracting from status
-    CERT_ID=$(echo "$CERT_INFO" | grep -i "serial" | head -1 | awk '{print $NF}')
+    CERT_ID=$(echo "$APPROVE_OUTPUT" | grep -i "serial" | head -1 | awk '{print $NF}')
 fi
 
 if [ -z "$CERT_ID" ]; then
     log_error "Failed to get certificate ID"
-    echo "$CERT_INFO"
+    echo "$APPROVE_OUTPUT"
     exit 1
 fi
 
@@ -128,7 +139,7 @@ log_info "Certificate ID: $CERT_ID"
 
 # Export the certificate
 log_info "Exporting certificate..."
-pki -d "$NSS_DB" -c "$NSS_PASSWORD" \
+echo y | pki -d "$NSS_DB" -c "$NSS_PASSWORD" \
     -U "${CA_URL}" \
     ca-cert-export "$CERT_ID" \
     --output-file "$OUTPUT_CERT"

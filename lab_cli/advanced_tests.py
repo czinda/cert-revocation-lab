@@ -435,7 +435,9 @@ def test_est_renewal(
         )
 
     if not result2.success:
-        return False, f"SKIP: EST re-enrollment failed: {result2.message}"
+        # Dogtag EST with PKIInMemoryRealm cannot authenticate TLS client
+        # certs for simplereenroll (RFC 7030 §4.2.2).  Known limitation.
+        return False, f"SKIP: EST simplereenroll unsupported with in-memory realm: {result2.message}"
 
     serial2 = None
     if result2.certificate:

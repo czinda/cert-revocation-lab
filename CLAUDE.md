@@ -413,6 +413,7 @@ The `agnosticd/configs/cert-revocation-lab/` directory deploys the lab onto a si
 - **PQ hybrid crypto**: PQ configs use ML-DSA-87 for CA/OCSP signing but RSA-2048 for TLS/admin/subsystem certs (OpenSSL/TLS compatibility). Even so, the CA signature on TLS certs is ML-DSA-87, which NSS can't verify yet
 - **PQ image**: Uses same upstream `quay.io/dogtagpki/pki-ca:latest` as RSA/ECC (11.10.0~alpha1 already has ML-DSA-87 support). Custom source build (`containers/dogtag-pq/`) is not used (JSS dependency issues)
 - **certutil key generation**: `certutil -R` is extremely slow on some systems due to NSS entropy. EST/ACME RA init scripts use `openssl req` + PKCS#12 import instead
+- **EST simplereenroll (RFC 7030 §4.2.2)**: Returns 401 Unauthorized. `PKIInMemoryRealm` only supports password auth but `simplereenroll` requires TLS client cert authentication to identify the cert being renewed. `SSLAuthenticatorWithFallback` tries cert auth first and doesn't fall back to Basic when the realm can't map the cert. Would require switching to an LDAP-backed realm (`PKILDAPRealm`) which needs a 389 DS instance the lightweight EST RA doesn't have
 
 ## EDA SSH Setup
 
