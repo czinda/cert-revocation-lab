@@ -302,6 +302,10 @@ def issue_certificate(
     ca_config = config.get_ca_config(pki_type, ca_level)
     profile = profile or _default_profile(pki_type)
 
+    # Use unique temp paths to avoid race conditions in concurrent operations.
+    import uuid as _uuid
+    op_id = _uuid.uuid4().hex[:8]
+
     # Generate CSR
     with tempfile.TemporaryDirectory(prefix="cert-lab-") as tmpdir:
         key_path, csr_path = generate_csr(device_fqdn, pki_type, Path(tmpdir))
@@ -317,9 +321,6 @@ def issue_certificate(
     # Setup client NSS database with admin cert and submit + approve request
     # We use the admin cert for both submit and approve. Dogtag may auto-approve
     # requests from authenticated agents, so we handle that case gracefully.
-    # Use unique temp paths to avoid race conditions in concurrent operations.
-    import uuid as _uuid
-    op_id = _uuid.uuid4().hex[:8]
 
     setup_submit_approve = f"""
 set -e
