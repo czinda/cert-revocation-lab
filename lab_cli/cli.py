@@ -1734,8 +1734,10 @@ def pin_register(
     pki_type: str = typer.Option("rsa", "--pki-type", help="PKI type"),
 ):
     """Register a certificate pin for a hostname."""
-    config = LabConfig.load()
+    import httpx
     import json
+
+    config = LabConfig.load()
 
     body: dict = {"hostname": hostname, "pki_type": pki_type, "backup_pins": []}
 
@@ -1769,6 +1771,8 @@ def pin_validate(
     cert_pem: str = typer.Option("", "--cert", help="Path to PEM certificate file"),
 ):
     """Validate a certificate against stored pins."""
+    import httpx
+
     config = LabConfig.load()
 
     body: dict = {"hostname": hostname}
@@ -1798,6 +1802,8 @@ def pin_validate(
 @app.command("pin-list")
 def pin_list():
     """List all registered certificate pins."""
+    import httpx
+
     config = LabConfig.load()
 
     try:
@@ -1833,6 +1839,8 @@ def pin_list():
 @app.command("kmip-list")
 def kmip_list():
     """List all KMIP-managed keys."""
+    import httpx
+
     config = LabConfig.load()
 
     try:
@@ -1877,6 +1885,8 @@ def kmip_create(
     ca_level: str = typer.Option("intermediate", "--ca-level", help="Associated CA level"),
 ):
     """Create a KMIP-managed key."""
+    import httpx
+
     config = LabConfig.load()
 
     body = {
@@ -1905,6 +1915,8 @@ def kmip_create(
 @app.command("kmip-lifecycle")
 def kmip_lifecycle():
     """Show KMIP key lifecycle summary."""
+    import httpx
+
     config = LabConfig.load()
 
     try:
@@ -1934,6 +1946,7 @@ def kmip_lifecycle():
 def hsm_status():
     """Show Kryoptic HSM status and token slots."""
     import json as json_mod
+    import subprocess
 
     try:
         result = subprocess.run(
@@ -1982,6 +1995,8 @@ def incident_response(
     no_reissue: bool = typer.Option(False, "--no-reissue", help="Skip automatic re-issuance"),
 ):
     """Run full incident response workflow for a device."""
+    import subprocess
+
     console.print(f"[bold]Initiating incident response for {device_fqdn}[/bold]")
     console.print(f"  Type: {incident_type}, Severity: {severity}, PKI: {pki_type}")
 
