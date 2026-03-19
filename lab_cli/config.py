@@ -281,9 +281,19 @@ class LabConfig:
                     value = value.strip().strip('"').strip("'")
                     os.environ.setdefault(key, value)
 
-        # Refresh from environment
+        # Refresh all fields that depend on environment variables.
+        # The dataclass default_factory lambdas ran before .env was loaded,
+        # so the PORT_* values were not yet available.
         self.admin_password = os.getenv("ADMIN_PASSWORD", "RedHat123")
         self.pki_admin_password = os.getenv("PKI_ADMIN_PASSWORD", self.admin_password)
+        self.edr_url = f"http://localhost:{os.getenv('PORT_EDR', '8082')}"
+        self.siem_url = f"http://localhost:{os.getenv('PORT_SIEM', '8083')}"
+        self.ct_log_url = f"http://localhost:{os.getenv('PORT_CT_LOG', '8086')}"
+        self.crl_cdp_url = f"http://localhost:{os.getenv('PORT_CRL', '8088')}"
+        self.policy_engine_url = f"http://localhost:{os.getenv('PORT_POLICY', '8089')}"
+        self.chain_visualizer_url = f"http://localhost:{os.getenv('PORT_CHAIN_VIZ', '8090')}"
+        self.pin_validator_url = f"http://localhost:{os.getenv('PORT_PIN_VALIDATOR', '8091')}"
+        self.kmip_server_url = f"http://localhost:{os.getenv('PORT_KMIP_API', '8092')}"
 
     def get_ca_config(self, pki_type: Optional[PKIType] = None, ca_level: Optional[CALevel] = None) -> CAConfig:
         """Get CA configuration for the specified PKI type and level."""
