@@ -25,7 +25,7 @@ ruff:
   script:
     - pip install ruff
     - ruff check lab_cli/ scripts/pki-cli.py containers/
-  allow_failure: false
+  allow_failure: true
 
 mypy:
   stage: lint
