@@ -597,7 +597,6 @@ main() {
         "PKI Health Check|PKI Health Check - Every 15 min|*/15 * * * *"
         "Container Status|Container Status - Every 10 min|*/10 * * * *"
         "DNS Check|DNS Check - Every 30 min|*/30 * * * *"
-        "Backup PKI|Backup PKI - Daily 2 AM|0 2 * * *"
         "Cleanup|Cleanup - Weekly Sunday 3 AM|0 3 * * 0"
     )
 

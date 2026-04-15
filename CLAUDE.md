@@ -389,7 +389,7 @@ Prometheus (`:9090`) → Grafana (`:3000`) pipeline with PKI Exporter (`:9091/me
 
 Web-based Ansible task management at `http://<lab-host>:3010`. Setup: `./scripts/setup-semaphore.sh` (idempotent, creates project with 20 templates, 6 environments). Operational playbooks live in `ansible/playbooks/ops/` (lab-start, lab-stop, lab-status, pki-health, container-status, backup-pki, kafka-topics, dns-check, cleanup, site). Uses `ansible/inventory/semaphore.yml` for local execution. Repository URL: `ssh://git@localhost:2222/heebus/cert-revocation-lab.git`.
 
-**Scheduled tasks** (created by `setup-semaphore.sh`): Lab Status (every 5 min), PKI Health Check (every 15 min), Container Status (every 10 min), DNS Check (every 30 min), Backup PKI (daily at 2 AM), Cleanup (weekly Sunday at 3 AM).
+**Scheduled tasks** (created by `setup-semaphore.sh`): Lab Status (every 5 min), PKI Health Check (every 15 min), Container Status (every 10 min), DNS Check (every 30 min), Cleanup (weekly Sunday at 3 AM). Backup PKI is available as a template but runs manually only.
 
 ## AgnosticD / RHPDS Deployment
 
