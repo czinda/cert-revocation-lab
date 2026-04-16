@@ -36,7 +36,7 @@ Uses Dogtag PKI and FreeIPA, integrated with Event-Driven Ansible for real-time 
 │ Certs: data/certs/rsa/  │ Certs: data/certs/ecc/  │ Certs: data/certs/pq/   │
 └─────────────────────────┴─────────────────────────┴─────────────────────────┘
 
-FreeIPA (172.25.0.10:4443) - Identity Management with internal CA
+FreeIPA (172.25.0.10:4443) - Identity Management with CA subordinate to Intermediate CA
 ```
 
 ### CA vs RA vs Subsystem Deployment
@@ -406,6 +406,7 @@ The `agnosticd/configs/cert-revocation-lab/` directory deploys the lab onto a si
 - **podman-compose health conditions**: May not honor `service_healthy`; mitigated by `start-lab.sh` DS probing and init script `wait_for_ds()`
 - **CA healthchecks before init**: Show "unhealthy" until `pkispawn` runs (expected, `start_period: 120s`)
 - **FreeIPA requires rootful podman**: Separate compose file (`freeipa-compose.yml`)
+- **FreeIPA CA is subordinate to Intermediate CA**: Uses `--external-ca` two-phase workflow. `start-lab.sh` automates this: phase 1 generates CSR, `sign-csr.sh` signs it via Intermediate CA with `caCACert` profile, phase 2 installs the signed cert. After initial setup, FreeIPA container restarts normally (install opts ignored)
 - **EDA SSH bridge**: EDA (rootless) connects to PKI (rootful) via SSH (`./scripts/setup-eda-ssh.sh`)
 - **Port remapping**: FreeIPA 4443/8180/3390/6360; AWX 8084
 - **ECC KRA**: Fails with `NullPointerException` — ECDSA keys can't be used for KRA key wrapping (encryption). KRA init is non-fatal; key archival unavailable in ECC hierarchy

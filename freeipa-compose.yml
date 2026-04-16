@@ -2,6 +2,15 @@
 #
 # FreeIPA requires systemd and must run as root (rootful podman).
 # This is separate from the main podman-compose.yml which runs rootless.
+#
+# External CA (subordinate to Intermediate CA):
+#   FreeIPA's CA is deployed as a subordinate of the Dogtag Intermediate CA via
+#   the --external-ca two-phase workflow. The start-lab.sh script handles this
+#   automatically: phase 1 generates a CSR, sign-csr.sh signs it with the
+#   Intermediate CA using the caCACert profile, and phase 2 installs the signed
+#   certificate. After initial setup, subsequent restarts just bring up the
+#   already-configured IPA services (IPA_SERVER_INSTALL_OPTS is only used for
+#   the first install).
 
 version: "3.8"
 
@@ -18,7 +27,9 @@ services:
       - "ipa.cert-lab.local:172.25.0.10"
     environment:
       PASSWORD: ${ADMIN_PASSWORD:-RedHat123}
-      IPA_SERVER_INSTALL_OPTS: "-U --realm=CERT-LAB.LOCAL --domain=cert-lab.local --no-ntp --no-host-dns"
+      IPA_SERVER_INSTALL_OPTS: >-
+        -U --realm=CERT-LAB.LOCAL --domain=cert-lab.local --no-ntp --no-host-dns
+        --external-ca --external-ca-type=generic
     volumes:
       - ./data/freeipa:/data:Z
       - ./data/certs:/certs:Z

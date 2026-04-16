@@ -868,7 +868,7 @@ start_ecc_pki_hierarchy() {
     log_success "ECC PKI hierarchy initialized"
 }
 
-# Phase 5: Start FreeIPA
+# Phase 5: Start FreeIPA (subordinate to Intermediate CA via external CA workflow)
 start_freeipa() {
     log_phase "Phase 5: FreeIPA (Requires Rootful Podman)"
 
@@ -882,30 +882,165 @@ start_freeipa() {
         return
     fi
 
-    if is_running_as_root; then
-        log_info "Starting FreeIPA with rootful podman..."
-        podman-compose -f freeipa-compose.yml up -d
-
-        log_info "FreeIPA installation is running in the background."
-        log_info "Monitor progress with: sudo podman logs -f freeipa"
-        log_info "FreeIPA will be available at https://ipa.cert-lab.local:4443/ipa/ui once ready."
-        log_success "FreeIPA container started"
-    elif sudo -n true 2>/dev/null; then
-        log_info "Starting FreeIPA with sudo..."
-        sudo podman-compose -f freeipa-compose.yml up -d
-
-        log_info "FreeIPA installation is running in the background."
-        log_info "Monitor progress with: sudo podman logs -f freeipa"
-        log_info "FreeIPA will be available at https://ipa.cert-lab.local:4443/ipa/ui once ready."
-        log_success "FreeIPA container started"
-    else
+    if ! is_running_as_root && ! sudo -n true 2>/dev/null; then
         log_warn "FreeIPA requires systemd support and must run with rootful podman."
         log_info "Start FreeIPA manually with:"
         echo ""
         echo "  sudo podman-compose -f freeipa-compose.yml up -d"
         echo ""
         log_info "Monitor with: sudo podman logs -f freeipa"
+        return
     fi
+
+    # Helper: run compose with or without sudo
+    local compose_cmd="podman-compose -f freeipa-compose.yml"
+    if ! is_running_as_root; then
+        compose_cmd="sudo $compose_cmd"
+    fi
+
+    local podman_cmd="podman"
+    if ! is_running_as_root; then
+        podman_cmd="sudo podman"
+    fi
+
+    # Check if FreeIPA is already installed (previous successful install)
+    if [ -f "data/freeipa/build-id" ]; then
+        log_info "FreeIPA already installed, starting container..."
+        $compose_cmd up -d
+        log_success "FreeIPA container started"
+        return
+    fi
+
+    # --- Two-phase external CA workflow ---
+    # FreeIPA's CA is deployed as a subordinate of the Intermediate CA.
+    # Phase 1: --external-ca generates a CSR (container exits after)
+    # Phase 2: --external-cert-file installs the signed cert (full install completes)
+
+    # Ensure Intermediate CA is available for CSR signing
+    if ! is_rootful_running "dogtag-intermediate-ca"; then
+        log_error "Intermediate CA must be running before FreeIPA can be initialized."
+        log_info "Start the PKI hierarchy first, then re-run."
+        return
+    fi
+
+    # Phase 1: Generate CSR
+    if [ ! -f "data/freeipa/ipa.csr" ]; then
+        log_info "Starting FreeIPA Phase 1: Generating CSR for external CA..."
+
+        # Ensure compose has --external-ca for phase 1
+        if ! grep -q '\-\-external-ca' freeipa-compose.yml; then
+            log_error "freeipa-compose.yml missing --external-ca flag"
+            return
+        fi
+
+        $compose_cmd up -d
+
+        # Wait for CSR to be generated (timeout: 5 minutes)
+        log_info "Waiting for CSR generation (this takes 2-3 minutes)..."
+        local attempt=0
+        local max_attempts=60
+        while [ ! -f "data/freeipa/ipa.csr" ] && [ $attempt -lt $max_attempts ]; do
+            sleep 5
+            ((attempt++))
+        done
+
+        if [ ! -f "data/freeipa/ipa.csr" ]; then
+            log_error "CSR not generated after 5 minutes. Check: $podman_cmd logs freeipa"
+            return
+        fi
+
+        log_success "CSR generated at data/freeipa/ipa.csr"
+    else
+        log_info "CSR already exists, skipping phase 1"
+    fi
+
+    # Sign CSR with Intermediate CA using caCACert profile
+    if [ ! -f "data/certs/freeipa-ca-signed.crt" ]; then
+        log_info "Signing FreeIPA CSR with Intermediate CA (caCACert profile)..."
+
+        # Copy CSR to shared certs directory
+        cp data/freeipa/ipa.csr data/certs/freeipa-ca.csr
+
+        $podman_cmd exec \
+            -e ADMIN_PASSWORD="${ADMIN_PASSWORD:-RedHat123}" \
+            dogtag-intermediate-ca \
+            /scripts/sign-csr.sh \
+                /certs/freeipa-ca.csr \
+                /certs/freeipa-ca-signed.crt \
+                https://intermediate-ca.cert-lab.local:8443 \
+                caCACert
+
+        if [ ! -f "data/certs/freeipa-ca-signed.crt" ]; then
+            log_error "Failed to sign FreeIPA CSR. Check Intermediate CA logs."
+            return
+        fi
+
+        log_success "FreeIPA CA certificate signed by Intermediate CA"
+    else
+        log_info "Signed certificate already exists, skipping CSR signing"
+    fi
+
+    # Phase 2: Install signed certificate
+    # Use podman run directly (not compose) to override IPA_SERVER_INSTALL_OPTS
+    # with --external-cert-file flags without modifying the git-tracked compose file.
+    log_info "Starting FreeIPA Phase 2: Installing signed certificate..."
+
+    # Remove phase 1 container
+    $podman_cmd rm -f freeipa 2>/dev/null || true
+
+    $podman_cmd run -d --name freeipa \
+        --hostname "ipa.${LAB_DOMAIN:-cert-lab.local}" \
+        --privileged \
+        --network freeipa-net --ip 172.25.0.10 \
+        --add-host "ipa.cert-lab.local:172.25.0.10" \
+        -e "PASSWORD=${ADMIN_PASSWORD:-RedHat123}" \
+        -e "IPA_SERVER_INSTALL_OPTS=-U --realm=CERT-LAB.LOCAL --domain=cert-lab.local --no-ntp --no-host-dns --external-cert-file=/certs/freeipa-ca-signed.crt --external-cert-file=/certs/intermediate-ca.crt --external-cert-file=/certs/root-ca.crt" \
+        -v "$(pwd)/data/freeipa:/data:Z" \
+        -v "$(pwd)/data/certs:/certs:Z" \
+        -p 4443:443 -p 8180:80 -p 3390:389 -p 6360:636 \
+        -p 8800:88 -p 8800:88/udp -p 4640:464 -p 4640:464/udp \
+        --health-cmd "curl -sk https://localhost/ipa/config/ca.crt || exit 1" \
+        --health-interval 60s --health-timeout 30s --health-retries 10 --health-start-period 600s \
+        "quay.io/freeipa/freeipa-server:${IPA_VERSION:-fedora-43}"
+
+    # Wait for installation to complete (timeout: 10 minutes)
+    log_info "Waiting for FreeIPA installation to complete (5-8 minutes)..."
+    local attempt=0
+    local max_attempts=120
+    while [ $attempt -lt $max_attempts ]; do
+        # Check if IPA reports healthy
+        if $podman_cmd exec freeipa curl -sk https://localhost/ipa/config/ca.crt &>/dev/null; then
+            break
+        fi
+        # Check if container exited (installation failure)
+        local status
+        status=$($podman_cmd inspect --format '{{.State.Status}}' freeipa 2>/dev/null) || true
+        if [ "$status" = "exited" ]; then
+            log_error "FreeIPA container exited during phase 2. Check: $podman_cmd logs freeipa"
+            return
+        fi
+        sleep 5
+        ((attempt++))
+    done
+
+    if [ $attempt -ge $max_attempts ]; then
+        log_warn "FreeIPA installation still in progress after 10 minutes."
+        log_info "Monitor with: $podman_cmd logs -f freeipa"
+        return
+    fi
+
+    # Verify subordination
+    local issuer
+    issuer=$($podman_cmd exec freeipa openssl x509 -in /etc/ipa/ca.crt -issuer -noout 2>/dev/null) || true
+    if echo "$issuer" | grep -q "Intermediate CA"; then
+        log_success "FreeIPA CA is subordinate to Intermediate CA"
+    else
+        log_warn "FreeIPA CA issuer: $issuer (expected Intermediate CA)"
+    fi
+
+    log_success "FreeIPA server configured"
+    log_info "Web UI: https://ipa.cert-lab.local:4443/ipa/ui"
+    log_info "Admin: admin / (see .env)"
 }
 
 # Phase 6: Start AWX
@@ -1248,18 +1383,9 @@ quick_start() {
         fi
     fi
 
-    # Start FreeIPA (rootful)
+    # Start FreeIPA (rootful, subordinate to Intermediate CA)
     if [ -f freeipa-compose.yml ]; then
-        if is_rootful_running "freeipa"; then
-            log_success "freeipa is already running"
-        else
-            log_info "Starting FreeIPA..."
-            if [ "$RUNNING_AS_ROOT" = true ]; then
-                podman-compose -f freeipa-compose.yml up -d 2>/dev/null || true
-            else
-                sudo podman-compose -f freeipa-compose.yml up -d 2>/dev/null || true
-            fi
-        fi
+        start_freeipa
     fi
 
     # Start other containers (rootless) - exclude PKI/DS services
