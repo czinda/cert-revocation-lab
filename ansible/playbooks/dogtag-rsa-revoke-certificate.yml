@@ -126,20 +126,9 @@
       when: not (force_revoke | default(false) | bool)
       tags: [validation]
 
-    - name: Check admin credentials exist
-      ansible.builtin.stat:
-        path: "{{ ca_config.admin_cert }}"
-      register: admin_cert_stat
-      tags: [validation]
-
-    - name: Fail if admin credentials missing
-      ansible.builtin.fail:
-        msg: |
-          Admin credentials not found: {{ ca_config.admin_cert }}
-          Run the PKI init script to export admin credentials:
-            sudo podman exec dogtag-{{ target_ca }}-ca /scripts/init-{{ target_ca }}-ca.sh
-      when: not admin_cert_stat.stat.exists
-      tags: [validation]
+    # Note: Admin credential check removed - revocation uses SSH to lab-host
+    # where pki-cli.py accesses certs via podman exec (rootful). The local
+    # /certs mount in EDA is read-only and not used by the SSH revocation path.
 
     # All operations via SSH to lab host (bypasses REST API SSL trust issues)
     - name: Block for Dogtag PKI CLI operations via SSH
