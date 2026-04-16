@@ -996,7 +996,7 @@ start_freeipa() {
         -e "PASSWORD=${ADMIN_PASSWORD:-RedHat123}" \
         -e "IPA_SERVER_INSTALL_OPTS=-U --realm=CERT-LAB.LOCAL --domain=cert-lab.local --no-ntp --no-host-dns --external-cert-file=/certs/freeipa-ca-signed.crt --external-cert-file=/certs/intermediate-ca.crt --external-cert-file=/certs/root-ca.crt" \
         -v "$(pwd)/data/freeipa:/data:Z" \
-        -v "$(pwd)/data/certs:/certs:Z" \
+        -v "$(pwd)/data/certs:/certs:z" \
         -p 4443:443 -p 8180:80 -p 3390:389 -p 6360:636 \
         -p 8800:88 -p 8800:88/udp -p 4640:464 -p 4640:464/udp \
         --health-cmd "curl -sk https://localhost/ipa/config/ca.crt || exit 1" \
@@ -1088,11 +1088,86 @@ start_eda() {
         return
     fi
 
+    # --- Ensure EDA SSH keys exist ---
+    local ssh_dir="$SCRIPT_DIR/data/eda-ssh"
+    local key_file="$ssh_dir/id_ed25519"
+
+    if [[ ! -f "$key_file" ]]; then
+        log_info "Setting up EDA SSH keys..."
+        bash "$SCRIPT_DIR/scripts/setup-eda-ssh.sh" || log_warn "EDA SSH setup had issues (non-fatal)"
+    else
+        log_success "EDA SSH keys already exist"
+    fi
+
+    # --- Fix file ownership for EDA container (uid 1001) ---
+    local eda_uid=1001
+    if ! is_running_as_root; then
+        # Rootless: detect mapped UID
+        local uid_map
+        uid_map=$(podman unshare cat /proc/self/uid_map 2>/dev/null | tail -1)
+        if [[ -n "$uid_map" ]]; then
+            local host_start
+            host_start=$(echo "$uid_map" | awk '{print $2}')
+            if [ "$host_start" -gt 0 ] 2>/dev/null; then
+                eda_uid=$((host_start + 1001 - 1))
+            fi
+        fi
+    fi
+
+    # Fix ownership on eda-ssh and logs directories
+    for dir in "$ssh_dir" "$SCRIPT_DIR/data/logs"; do
+        mkdir -p "$dir"
+        if is_running_as_root; then
+            chown -R "$eda_uid:0" "$dir" 2>/dev/null || true
+        else
+            sudo chown -R "$eda_uid:0" "$dir" 2>/dev/null || true
+        fi
+    done
+    log_info "EDA directory ownership set to uid $eda_uid"
+
+    # --- Auto-populate LAB_HOST_USER, LAB_HOST_IP, LAB_ROOT_DIR in .env ---
+    local env_file="$SCRIPT_DIR/.env"
+    if [[ -f "$env_file" ]]; then
+        local target_user="$ORIGINAL_USER"
+
+        # Set LAB_HOST_IP if missing or empty
+        if grep -q "^LAB_HOST_IP=$" "$env_file" 2>/dev/null; then
+            sed -i "s|^LAB_HOST_IP=$|LAB_HOST_IP=host.containers.internal|" "$env_file"
+            log_info "Set LAB_HOST_IP in .env"
+        fi
+
+        # Set LAB_HOST_USER if empty
+        if grep -q "^LAB_HOST_USER=$" "$env_file" 2>/dev/null; then
+            sed -i "s|^LAB_HOST_USER=$|LAB_HOST_USER=${target_user}|" "$env_file"
+            log_info "Set LAB_HOST_USER=${target_user} in .env"
+        fi
+
+        # Set LAB_ROOT_DIR if empty
+        if grep -q "^LAB_ROOT_DIR=$" "$env_file" 2>/dev/null; then
+            sed -i "s|^LAB_ROOT_DIR=$|LAB_ROOT_DIR=${SCRIPT_DIR}|" "$env_file"
+            log_info "Set LAB_ROOT_DIR=${SCRIPT_DIR} in .env"
+        fi
+    fi
+
+    # --- Fix SELinux context on shared directories ---
+    if command -v chcon &>/dev/null; then
+        for dir in "$SCRIPT_DIR/data/certs" "$ssh_dir" "$SCRIPT_DIR/data/logs"; do
+            if [[ -d "$dir" ]]; then
+                chcon -R -t container_file_t "$dir" 2>/dev/null || true
+                # Strip MCS categories so both rootful and rootless containers can access
+                chcon -R -l s0 "$dir" 2>/dev/null || true
+            fi
+        done
+        log_info "SELinux context set on shared volumes"
+    fi
+
+    # --- Start EDA ---
     run_as_user podman-compose up -d eda-server
     sleep 10
 
     log_success "EDA Server started"
     log_info "EDA listening on port 5000"
+    log_info "SSH bridge: ${ORIGINAL_USER}@host.containers.internal"
 }
 
 # Phase 8: Start Mock Security Tools and IoT Client

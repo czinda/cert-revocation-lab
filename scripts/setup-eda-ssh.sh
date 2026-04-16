@@ -1,6 +1,10 @@
 #!/bin/bash
 # Setup SSH key for EDA container to connect to lab host
 # This allows EDA to run pki-cli.py commands on the host
+#
+# Handles both rootful and rootless podman:
+#   - Rootful (running as root): container uid 1001 = host uid 1001 (no remapping)
+#   - Rootless (running as user): container uid 1001 = mapped host uid via /etc/subuid
 
 set -e
 
@@ -8,6 +12,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAB_ROOT="$(dirname "$SCRIPT_DIR")"
 SSH_DIR="${LAB_ROOT}/data/eda-ssh"
 KEY_FILE="${SSH_DIR}/id_ed25519"
+
+# Determine the target user for SSH authorized_keys
+# When run via sudo, $HOME is root's home but we want the original user's
+if [ -n "$SUDO_USER" ] && [ "$SUDO_USER" != "root" ]; then
+    TARGET_USER="$SUDO_USER"
+    TARGET_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+else
+    TARGET_USER="$USER"
+    TARGET_HOME="$HOME"
+fi
 
 echo "=============================================="
 echo "EDA SSH Key Setup"
@@ -42,38 +56,58 @@ echo "$PUB_KEY"
 echo ""
 
 # Check if the key is already in authorized_keys
-AUTH_KEYS="$HOME/.ssh/authorized_keys"
+AUTH_KEYS="${TARGET_HOME}/.ssh/authorized_keys"
 if [[ -f "$AUTH_KEYS" ]] && grep -qF "$PUB_KEY" "$AUTH_KEYS" 2>/dev/null; then
     echo "Public key already in $AUTH_KEYS"
 else
     echo "Adding public key to $AUTH_KEYS..."
-    mkdir -p "$HOME/.ssh"
-    chmod 700 "$HOME/.ssh"
+    mkdir -p "${TARGET_HOME}/.ssh"
+    chmod 700 "${TARGET_HOME}/.ssh"
     echo "$PUB_KEY" >> "$AUTH_KEYS"
     chmod 600 "$AUTH_KEYS"
+    # Ensure correct ownership when run via sudo
+    if [ -n "$SUDO_USER" ] && [ "$SUDO_USER" != "root" ]; then
+        chown -R "$SUDO_USER:$(id -gn "$SUDO_USER")" "${TARGET_HOME}/.ssh"
+    fi
     echo "Key added successfully."
 fi
 
-# Fix ownership for rootless podman
-# EDA container runs as uid 1001 (appuser), which maps to uid 100000+1000=101000 in rootless podman
-# The UID mapping can be checked with: podman unshare cat /proc/self/uid_map
+# Fix ownership for EDA container (uid 1001)
+# - Rootful podman (running as root): no UID remapping, uid 1001 = uid 1001
+# - Rootless podman: container uid 1001 is remapped via /etc/subuid
+EDA_CONTAINER_UID=1001
+
 echo ""
-echo "Setting file ownership for rootless podman..."
-# Get the mapped UID for container uid 1001
-# In rootless podman: container uid 1 maps to host uid 100000, so uid 1001 maps to 101000
-CONTAINER_UID=101000
-if command -v podman &>/dev/null; then
-    # Check if rootless podman is available
-    UID_MAP=$(podman unshare cat /proc/self/uid_map 2>/dev/null | tail -1)
-    if [[ -n "$UID_MAP" ]]; then
-        # Parse: <container_start> <host_start> <count>
-        HOST_START=$(echo "$UID_MAP" | awk '{print $2}')
-        # Container uid 1001 = HOST_START + (1001 - 1) = HOST_START + 1000
-        CONTAINER_UID=$((HOST_START + 1000))
-        echo "Detected rootless podman UID mapping: container uid 1001 -> host uid $CONTAINER_UID"
+echo "Setting file ownership for EDA container (uid $EDA_CONTAINER_UID)..."
+
+if [ "$(id -u)" = "0" ]; then
+    # Running as root -- no UID remapping in rootful podman
+    CONTAINER_UID=$EDA_CONTAINER_UID
+    echo "Running as root: no UID remapping, using uid $CONTAINER_UID directly"
+else
+    # Rootless podman -- detect UID mapping
+    CONTAINER_UID=$EDA_CONTAINER_UID
+    if command -v podman &>/dev/null; then
+        UID_MAP=$(podman unshare cat /proc/self/uid_map 2>/dev/null | tail -1)
+        if [[ -n "$UID_MAP" ]]; then
+            HOST_START=$(echo "$UID_MAP" | awk '{print $2}')
+            if [ "$HOST_START" -gt 0 ] 2>/dev/null; then
+                # Rootless: container uid 1001 = HOST_START + (1001 - 1)
+                CONTAINER_UID=$((HOST_START + EDA_CONTAINER_UID - 1))
+                echo "Detected rootless podman UID mapping: container uid $EDA_CONTAINER_UID -> host uid $CONTAINER_UID"
+            else
+                echo "Identity UID mapping detected, using uid $CONTAINER_UID"
+            fi
+        fi
     fi
 fi
-sudo chown -R "$CONTAINER_UID:$CONTAINER_UID" "$SSH_DIR"
+
+# Apply ownership
+if [ "$(id -u)" = "0" ]; then
+    chown -R "$CONTAINER_UID:$CONTAINER_UID" "$SSH_DIR"
+else
+    sudo chown -R "$CONTAINER_UID:$CONTAINER_UID" "$SSH_DIR"
+fi
 echo "Ownership set to $CONTAINER_UID"
 
 # Add localhost to known_hosts (for host.containers.internal)
@@ -101,10 +135,10 @@ echo ""
 echo "SSH keys are stored in: $SSH_DIR"
 echo ""
 echo "To test the connection from EDA container:"
-echo "  podman exec eda-server ssh -i /app/.ssh/id_ed25519 ${USER}@host.containers.internal 'echo Connected'"
+echo "  podman exec eda-server ssh -i /app/.ssh/id_ed25519 ${TARGET_USER}@host.containers.internal 'echo Connected'"
 echo ""
-echo "Environment variables to set in .env (optional):"
+echo "Environment variables to set in .env (optional - start-lab.sh sets these automatically):"
 echo "  LAB_HOST_IP=host.containers.internal"
-echo "  LAB_HOST_USER=${USER}"
+echo "  LAB_HOST_USER=${TARGET_USER}"
 echo "  LAB_ROOT_DIR=${LAB_ROOT}"
 echo ""

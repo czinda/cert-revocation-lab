@@ -407,7 +407,8 @@ The `agnosticd/configs/cert-revocation-lab/` directory deploys the lab onto a si
 - **CA healthchecks before init**: Show "unhealthy" until `pkispawn` runs (expected, `start_period: 120s`)
 - **FreeIPA requires rootful podman**: Separate compose file (`freeipa-compose.yml`)
 - **FreeIPA CA is subordinate to Intermediate CA**: Uses `--external-ca` two-phase workflow. `start-lab.sh` automates this: phase 1 generates CSR, `sign-csr.sh` signs it via Intermediate CA with `caCACert` profile, phase 2 installs the signed cert. After initial setup, FreeIPA container restarts normally (install opts ignored)
-- **EDA SSH bridge**: EDA (rootless) connects to PKI (rootful) via SSH (`./scripts/setup-eda-ssh.sh`)
+- **EDA SSH bridge**: EDA (rootless) connects to PKI (rootful) via SSH. Automated by `start-lab.sh` Phase 7 — generates keys, sets `.env` variables, fixes ownership and SELinux context. Manual setup via `./scripts/setup-eda-ssh.sh` still supported for standalone use
+- **SELinux shared volumes**: `data/certs` uses `:z` (shared) not `:Z` (private) in compose files because it is mounted by FreeIPA, PKI containers, and EDA. Using `:Z` stamps private MCS categories preventing cross-container access on SELinux enforcing systems
 - **Port remapping**: FreeIPA 4443/8180/3390/6360; AWX 8084
 - **ECC KRA**: Fails with `NullPointerException` — ECDSA keys can't be used for KRA key wrapping (encryption). KRA init is non-fatal; key archival unavailable in ECC hierarchy
 - **ML-DSA-87 (PQ) hierarchy is experimental**: NSS 3.119 can create ML-DSA-87 keys/certs but cannot verify ML-DSA-87 signatures in cert chain validation (error -8016). Only Root CA initializes; subordinate CAs fail TLS handshake. PQ init is non-fatal
@@ -418,11 +419,20 @@ The `agnosticd/configs/cert-revocation-lab/` directory deploys the lab onto a si
 
 ## EDA SSH Setup
 
-EDA uses SSH to bridge rootless/rootful podman boundary:
+EDA uses SSH to bridge rootless/rootful podman boundary. **Fully automated by `start-lab.sh` Phase 7** — no manual steps required.
+
+What `start-lab.sh` does automatically:
+1. Generates Ed25519 key pair in `data/eda-ssh/` (if not present)
+2. Adds public key to the lab user's `~/.ssh/authorized_keys`
+3. Sets `LAB_HOST_IP`, `LAB_HOST_USER`, `LAB_ROOT_DIR` in `.env` (if empty)
+4. Fixes file ownership for EDA container uid 1001 (rootful: direct; rootless: mapped via subuid)
+5. Sets SELinux `container_file_t` context on shared volumes (`data/certs`, `data/eda-ssh`, `data/logs`)
+
+For standalone use (development, Semaphore, AgnosticD):
 ```bash
-./scripts/setup-eda-ssh.sh   # Generate keys, configure authorized_keys
+./scripts/setup-eda-ssh.sh   # Generate keys, configure authorized_keys, fix ownership
 ```
-Set `LAB_HOST_IP`, `LAB_HOST_USER`, `LAB_ROOT_DIR` in `.env`, then restart EDA.
+The script auto-detects rootful vs rootless podman for correct UID ownership.
 
 ## Detailed Reference (Memory Files)
 

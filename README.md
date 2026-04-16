@@ -183,7 +183,7 @@ sudo ./scripts/pki/init-pq-pki-hierarchy.sh
 # Export admin credentials for EDA
 ./scripts/setup-eda-auth.sh
 
-# Setup SSH for EDA to reach rootful PKI containers
+# Setup SSH for EDA to reach rootful PKI containers (auto-configured by start-lab.sh)
 ./scripts/setup-eda-ssh.sh
 ```
 
@@ -194,6 +194,7 @@ The initialization scripts automatically handle:
 - EST Sub-CA with EST subsystem enabled (RFC 7030)
 - ACME Sub-CA with ACME responder (RSA only, RFC 8555)
 - Admin credential export
+- EDA SSH bridge setup (keys, ownership, SELinux context, `.env` vars)
 
 ### 5. Certificate Operations
 

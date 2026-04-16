@@ -32,7 +32,7 @@ services:
         --external-ca --external-ca-type=generic
     volumes:
       - ./data/freeipa:/data:Z
-      - ./data/certs:/certs:Z
+      - ./data/certs:/certs:z
     ports:
       - "4443:443"        # HTTPS
       - "8180:80"         # HTTP
