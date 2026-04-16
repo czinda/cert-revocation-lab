@@ -391,6 +391,21 @@ Web-based Ansible task management at `http://<lab-host>:3010`. Setup: `./scripts
 
 **Scheduled tasks** (created by `setup-semaphore.sh`): Lab Status (every 5 min), PKI Health Check (every 15 min), Container Status (every 10 min), DNS Check (every 30 min), Cleanup (weekly Sunday at 3 AM). Backup PKI is available as a template but runs manually only.
 
+## GitLab CI / Runner
+
+CI runs on `gitlab.cee.redhat.com` (project ID 204740). Pipeline has 11 jobs across 3 stages (lint, build, security). All lint/security jobs have `allow_failure: true`. Jobs target runners tagged `beaker` via `default: tags: [beaker]`.
+
+**Shell executor**: The runner uses a shell executor (not Docker/podman) — `image:` directives in `.gitlab-ci.yml` are ignored. CI tool dependencies (shellcheck, hadolint, trivy) are installed by the setup script.
+
+**Beaker runner setup** (run on each new Beaker machine):
+```bash
+GITLAB_CEE_TOKEN=glpat-xxx sudo -E ./scripts/setup-gitlab-runner.sh
+sudo ./scripts/teardown-gitlab-runner.sh    # when returning machine
+sudo ./scripts/teardown-gitlab-runner.sh --purge  # also remove package
+```
+
+The setup script handles: gitlab-runner install, self-signed CA trust, API token validation, runner registration via `POST /api/v4/user/runners`, shell executor config, and service start. Runner metadata saved to `/etc/gitlab-runner/.runner-meta.json` for teardown.
+
 ## AgnosticD / RHPDS Deployment
 
 The `agnosticd/configs/cert-revocation-lab/` directory deploys the lab onto a single AWS EC2 instance (`m5.4xlarge`) via RHPDS. Wraps `start-lab.sh --all` with deploy-time password generation. Key variable: `cert_lab_pki_mode` (default: `all`).

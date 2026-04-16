@@ -272,7 +272,19 @@ For web-based management via Ansible Semaphore:
 
 Access at http://localhost:3010 — 20 pre-configured templates for lab operations, certificate management, and incident response.
 
-### 9. Stop / Reset the Lab
+### 9. GitLab CI Runner (Beaker Machines)
+
+For running CI pipelines on `gitlab.cee.redhat.com` using ephemeral Beaker machines:
+
+```bash
+# Register a shell-executor runner (handles CA trust, tool install, API registration)
+GITLAB_CEE_TOKEN=glpat-xxx sudo -E ./scripts/setup-gitlab-runner.sh
+
+# Deregister when returning the machine
+sudo ./scripts/teardown-gitlab-runner.sh
+```
+
+### 10. Stop / Reset the Lab
 
 ```bash
 # Stop all containers

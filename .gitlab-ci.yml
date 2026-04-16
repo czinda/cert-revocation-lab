@@ -7,6 +7,10 @@ variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   PYTHON_VERSION: "3.12"
 
+default:
+  tags:
+    - beaker
+
 # Cache pip downloads between jobs
 .python-cache: &python-cache
   cache:
