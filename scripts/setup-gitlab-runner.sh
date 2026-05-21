@@ -1,16 +1,16 @@
 #!/bin/bash
 #
-# setup-gitlab-runner.sh - Automated GitLab Runner setup for Beaker machines
+# setup-gitlab-runner.sh - Automated GitLab Runner setup
 #
-# Registers a shell-executor GitLab Runner with gitlab.cee.redhat.com via API,
+# Registers a shell-executor GitLab Runner via API,
 # handles self-signed certificate trust, and installs CI tool dependencies.
 #
 # Usage:
-#   sudo ./scripts/setup-gitlab-runner.sh
-#   GITLAB_CEE_TOKEN=glpat-xxx sudo -E ./scripts/setup-gitlab-runner.sh
+#   GITLAB_URL=https://gitlab.example.com GITLAB_TOKEN=glpat-xxx sudo -E ./scripts/setup-gitlab-runner.sh
+#   sudo ./scripts/setup-gitlab-runner.sh --gitlab-url https://gitlab.example.com --token glpat-xxx
 #   sudo ./scripts/setup-gitlab-runner.sh --force
 #
-# Prerequisites: RHEL 10, curl, openssl
+# Prerequisites: Linux, curl, openssl
 
 set -euo pipefail
 
@@ -29,34 +29,33 @@ else
 fi
 
 # Configuration
-GITLAB_URL="${GITLAB_URL:-https://gitlab.cee.redhat.com}"
-GITLAB_PROJECT_ID="${GITLAB_PROJECT_ID:-204740}"
-GITLAB_CEE_TOKEN="${GITLAB_CEE_TOKEN:-}"
+GITLAB_URL="${GITLAB_URL:-}"
+GITLAB_PROJECT_ID="${GITLAB_PROJECT_ID:-}"
+GITLAB_TOKEN="${GITLAB_TOKEN:-}"
 RUNNER_META="/etc/gitlab-runner/.runner-meta.json"
-CA_CERT_PATH="/etc/pki/ca-trust/source/anchors/gitlab-cee-redhat-com.crt"
 
 # Parse arguments
 FORCE=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --force)       FORCE=true; shift ;;
-        --token)       GITLAB_CEE_TOKEN="$2"; shift 2 ;;
+        --token)       GITLAB_TOKEN="$2"; shift 2 ;;
         --project-id)  GITLAB_PROJECT_ID="$2"; shift 2 ;;
         --gitlab-url)  GITLAB_URL="$2"; shift 2 ;;
         --help|-h)
             echo "Usage: setup-gitlab-runner.sh [OPTIONS]"
             echo ""
-            echo "Automated GitLab Runner setup for Beaker RHEL 10 machines."
+            echo "Automated GitLab Runner setup for provisioned machines."
             echo ""
             echo "Options:"
             echo "  --force              Re-register even if runner already exists"
-            echo "  --token TOKEN        GitLab API token (or set GITLAB_CEE_TOKEN)"
-            echo "  --project-id ID      GitLab project ID (default: 204740)"
-            echo "  --gitlab-url URL     GitLab URL (default: https://gitlab.cee.redhat.com)"
+            echo "  --token TOKEN        GitLab API token (or set GITLAB_TOKEN)"
+            echo "  --project-id ID      GitLab project ID"
+            echo "  --gitlab-url URL     GitLab instance URL (or set GITLAB_URL)"
             echo "  --help               Show this help"
             echo ""
             echo "Environment:"
-            echo "  GITLAB_CEE_TOKEN     GitLab personal access token with api scope"
+            echo "  GITLAB_TOKEN     GitLab personal access token with api scope"
             exit 0
             ;;
         *) log_error "Unknown option: $1"; exit 1 ;;
@@ -68,6 +67,18 @@ if [[ "$(id -u)" != "0" ]]; then
     log_error "This script must be run as root (or via sudo)"
     exit 1
 fi
+
+# Require GITLAB_URL and GITLAB_PROJECT_ID
+if [[ -z "$GITLAB_URL" ]]; then
+    log_error "GITLAB_URL is required (e.g., https://gitlab.example.com)"
+    exit 1
+fi
+if [[ -z "$GITLAB_PROJECT_ID" ]]; then
+    log_error "GITLAB_PROJECT_ID is required"
+    exit 1
+fi
+GITLAB_HOST=$(echo "$GITLAB_URL" | sed 's|https\?://||; s|/.*||')
+CA_CERT_PATH="/etc/pki/ca-trust/source/anchors/${GITLAB_HOST}.crt"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Phase 1: Prerequisites
@@ -181,8 +192,6 @@ python3 -m pip --version &>/dev/null || {
 # ──────────────────────────────────────────────────────────────────────────────
 log_phase "Phase 2: Trust GitLab CA Chain"
 
-GITLAB_HOST=$(echo "$GITLAB_URL" | sed 's|https\?://||; s|/.*||')
-
 if [[ -f "$CA_CERT_PATH" ]]; then
     log_success "CA certificate already trusted: $CA_CERT_PATH"
 else
@@ -213,30 +222,30 @@ fi
 log_phase "Phase 3: Authenticate with GitLab API"
 
 # Try environment variable first
-if [[ -z "$GITLAB_CEE_TOKEN" ]]; then
-    log_info "GITLAB_CEE_TOKEN not set, trying git credential store..."
-    GITLAB_CEE_TOKEN=$(git credential fill 2>/dev/null <<EOF | grep password | cut -d= -f2
+if [[ -z "$GITLAB_TOKEN" ]]; then
+    log_info "GITLAB_TOKEN not set, trying git credential store..."
+    GITLAB_TOKEN=$(git credential fill 2>/dev/null <<EOF | grep password | cut -d= -f2
 protocol=https
 host=${GITLAB_HOST}
 EOF
     ) || true
 fi
 
-if [[ -z "$GITLAB_CEE_TOKEN" ]]; then
+if [[ -z "$GITLAB_TOKEN" ]]; then
     log_error "No GitLab API token found."
-    log_error "Set GITLAB_CEE_TOKEN or configure git credentials for $GITLAB_HOST"
-    log_error "  export GITLAB_CEE_TOKEN=glpat-xxxxxxxxxxxx"
+    log_error "Set GITLAB_TOKEN or configure git credentials for $GITLAB_HOST"
+    log_error "  export GITLAB_TOKEN=glpat-xxxxxxxxxxxx"
     exit 1
 fi
 
 # Validate token
-API_USER=$(curl -sf -H "Authorization: Bearer $GITLAB_CEE_TOKEN" \
+API_USER=$(curl -sf -H "Authorization: Bearer $GITLAB_TOKEN" \
     "${GITLAB_URL}/api/v4/user" 2>/dev/null \
     | python3 -c "import sys,json; print(json.load(sys.stdin).get('username',''))" 2>/dev/null || true)
 
 if [[ -z "$API_USER" ]]; then
     # Try with PRIVATE-TOKEN header (PAT)
-    API_USER=$(curl -sf -H "PRIVATE-TOKEN: $GITLAB_CEE_TOKEN" \
+    API_USER=$(curl -sf -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
         "${GITLAB_URL}/api/v4/user" 2>/dev/null \
         | python3 -c "import sys,json; print(json.load(sys.stdin).get('username',''))" 2>/dev/null || true)
 
@@ -244,9 +253,9 @@ if [[ -z "$API_USER" ]]; then
         log_error "Token validation failed — cannot authenticate with $GITLAB_URL"
         exit 1
     fi
-    AUTH_HEADER="PRIVATE-TOKEN: $GITLAB_CEE_TOKEN"
+    AUTH_HEADER="PRIVATE-TOKEN: $GITLAB_TOKEN"
 else
-    AUTH_HEADER="Authorization: Bearer $GITLAB_CEE_TOKEN"
+    AUTH_HEADER="Authorization: Bearer $GITLAB_TOKEN"
 fi
 
 log_success "Authenticated as: $API_USER"
@@ -256,7 +265,7 @@ log_success "Authenticated as: $API_USER"
 # ──────────────────────────────────────────────────────────────────────────────
 log_phase "Phase 4: Register Runner via GitLab API"
 
-RUNNER_DESC="beaker-$(hostname -s)"
+RUNNER_DESC="certlab-$(hostname -s)"
 
 # Check if a runner with this description already exists
 EXISTING_ID=$(curl -sf -H "$AUTH_HEADER" \
@@ -300,7 +309,7 @@ RESPONSE=$(curl -sf -X POST -H "$AUTH_HEADER" \
         \"runner_type\": \"project_type\",
         \"project_id\": $GITLAB_PROJECT_ID,
         \"description\": \"$RUNNER_DESC\",
-        \"tag_list\": [\"beaker\", \"rhel10\"],
+        \"tag_list\": [\"shell\", \"certlab\"],
         \"run_untagged\": true,
         \"locked\": false
     }" \
@@ -342,7 +351,7 @@ gitlab-runner register \
     --token "$RUNNER_TOKEN" \
     --executor shell \
     --description "$RUNNER_DESC" \
-    --tag-list "beaker,rhel10"
+    --tag-list "shell,certlab"
 
 # Tune config.toml for performance
 TOML="/etc/gitlab-runner/config.toml"
@@ -385,7 +394,7 @@ echo ""
 echo "  Runner ID:     $RUNNER_ID"
 echo "  Description:   $RUNNER_DESC"
 echo "  Executor:      shell"
-echo "  Tags:          beaker, rhel10"
+echo "  Tags:          shell, certlab"
 echo "  GitLab:        $GITLAB_URL"
 echo "  Project:       $GITLAB_PROJECT_ID"
 echo "  Config:        /etc/gitlab-runner/config.toml"
@@ -393,5 +402,5 @@ echo "  Metadata:      $RUNNER_META"
 echo ""
 echo "  To teardown:   sudo ./scripts/teardown-gitlab-runner.sh"
 echo "  To verify:     sudo gitlab-runner verify"
-echo "  Pipeline URL:  ${GITLAB_URL}/czinda/cert-revocation-lab/-/pipelines"
+echo "  Pipeline URL:  ${GITLAB_URL}/-/pipelines"
 echo ""

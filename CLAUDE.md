@@ -393,13 +393,13 @@ Web-based Ansible task management at `http://<lab-host>:3010`. Setup: `./scripts
 
 ## GitLab CI / Runner
 
-CI runs on `gitlab.cee.redhat.com` (project ID 204740). Pipeline has 11 jobs across 3 stages (lint, build, security). All lint/security jobs have `allow_failure: true`. Jobs target runners tagged `beaker` via `default: tags: [beaker]`.
+CI pipeline has 11 jobs across 3 stages (lint, build, security). All lint/security jobs have `allow_failure: true`. Jobs target runners tagged `shell` via `default: tags: [shell]`.
 
 **Shell executor**: The runner uses a shell executor (not Docker/podman) — `image:` directives in `.gitlab-ci.yml` are ignored. CI tool dependencies (shellcheck, hadolint, trivy) are installed by the setup script.
 
-**Beaker runner setup** (run on each new Beaker machine):
+**Runner setup** (run on each provisioned machine):
 ```bash
-GITLAB_CEE_TOKEN=glpat-xxx sudo -E ./scripts/setup-gitlab-runner.sh
+GITLAB_URL=https://gitlab.example.com GITLAB_TOKEN=glpat-xxx sudo -E ./scripts/setup-gitlab-runner.sh
 sudo ./scripts/teardown-gitlab-runner.sh    # when returning machine
 sudo ./scripts/teardown-gitlab-runner.sh --purge  # also remove package
 ```

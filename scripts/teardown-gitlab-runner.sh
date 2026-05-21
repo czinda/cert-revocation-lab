@@ -28,14 +28,14 @@ fi
 
 # Configuration
 RUNNER_META="/etc/gitlab-runner/.runner-meta.json"
-GITLAB_CEE_TOKEN="${GITLAB_CEE_TOKEN:-}"
+GITLAB_TOKEN="${GITLAB_TOKEN:-}"
 PURGE=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --purge)  PURGE=true; shift ;;
-        --token)  GITLAB_CEE_TOKEN="$2"; shift 2 ;;
+        --token)  GITLAB_TOKEN="$2"; shift 2 ;;
         --help|-h)
             echo "Usage: teardown-gitlab-runner.sh [OPTIONS]"
             echo ""
@@ -43,7 +43,7 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Options:"
             echo "  --purge        Also remove gitlab-runner package"
-            echo "  --token TOKEN  GitLab API token (or set GITLAB_CEE_TOKEN)"
+            echo "  --token TOKEN  GitLab API token (or set GITLAB_TOKEN)"
             echo "  --help         Show this help"
             exit 0
             ;;
@@ -85,19 +85,19 @@ else
 
     if [[ -n "$RUNNER_ID" ]] && [[ -n "$GITLAB_URL" ]]; then
         # Get API token
-        if [[ -z "$GITLAB_CEE_TOKEN" ]]; then
+        if [[ -z "$GITLAB_TOKEN" ]]; then
             GITLAB_HOST=$(echo "$GITLAB_URL" | sed 's|https\?://||; s|/.*||')
-            GITLAB_CEE_TOKEN=$(git credential fill 2>/dev/null <<EOF | grep password | cut -d= -f2
+            GITLAB_TOKEN=$(git credential fill 2>/dev/null <<EOF | grep password | cut -d= -f2
 protocol=https
 host=${GITLAB_HOST}
 EOF
             ) || true
         fi
 
-        if [[ -n "$GITLAB_CEE_TOKEN" ]]; then
+        if [[ -n "$GITLAB_TOKEN" ]]; then
             # Try Bearer first, then PRIVATE-TOKEN
             HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" \
-                -X DELETE -H "Authorization: Bearer $GITLAB_CEE_TOKEN" \
+                -X DELETE -H "Authorization: Bearer $GITLAB_TOKEN" \
                 "${GITLAB_URL}/api/v4/runners/${RUNNER_ID}" 2>/dev/null || echo "000")
 
             if [[ "$HTTP_CODE" == "204" ]] || [[ "$HTTP_CODE" == "200" ]]; then
@@ -105,7 +105,7 @@ EOF
             else
                 # Retry with PRIVATE-TOKEN header
                 HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" \
-                    -X DELETE -H "PRIVATE-TOKEN: $GITLAB_CEE_TOKEN" \
+                    -X DELETE -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
                     "${GITLAB_URL}/api/v4/runners/${RUNNER_ID}" 2>/dev/null || echo "000")
 
                 if [[ "$HTTP_CODE" == "204" ]] || [[ "$HTTP_CODE" == "200" ]]; then

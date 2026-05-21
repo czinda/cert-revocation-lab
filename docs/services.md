@@ -150,7 +150,7 @@ The EDA container mounts SSH keys (`data/eda-ssh`) to connect to the lab host, s
 
 **SELinux considerations**: The `data/certs` directory is shared across FreeIPA, PKI CAs, and EDA. It uses `:z` (shared) SELinux label in compose files, not `:Z` (private). Using `:Z` stamps exclusive MCS categories that prevent other containers from accessing the files on SELinux enforcing systems (RHEL 10+). The `start-lab.sh` Phase 7 also applies `container_file_t` context and strips MCS categories on `data/certs`, `data/eda-ssh`, and `data/logs` as a safety net.
 
-**File ownership**: The EDA container runs as uid 1001 (`appuser`). In rootless podman, this maps to a higher host uid via `/etc/subuid` (e.g., uid 101000). In rootful podman (e.g., Beaker/RHEL deployments running as root), there is no UID remapping — container uid 1001 = host uid 1001. The `data/eda-ssh` and `data/logs` directories must be owned by the correct uid.
+**File ownership**: The EDA container runs as uid 1001 (`appuser`). In rootless podman, this maps to a higher host uid via `/etc/subuid` (e.g., uid 101000). In rootful podman (e.g., CI deployments running as root), there is no UID remapping — container uid 1001 = host uid 1001. The `data/eda-ssh` and `data/logs` directories must be owned by the correct uid.
 
 **Key volumes:**
 

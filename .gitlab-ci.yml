@@ -9,7 +9,7 @@ variables:
 
 default:
   tags:
-    - beaker
+    - shell
 
 # Cache pip downloads between jobs
 .python-cache: &python-cache

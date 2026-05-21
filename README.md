@@ -272,13 +272,13 @@ For web-based management via Ansible Semaphore:
 
 Access at http://localhost:3010 — 20 pre-configured templates for lab operations, certificate management, and incident response.
 
-### 9. GitLab CI Runner (Beaker Machines)
+### 9. GitLab CI Runner
 
-For running CI pipelines on `gitlab.cee.redhat.com` using ephemeral Beaker machines:
+Register a shell-executor GitLab Runner on a provisioned machine:
 
 ```bash
-# Register a shell-executor runner (handles CA trust, tool install, API registration)
-GITLAB_CEE_TOKEN=glpat-xxx sudo -E ./scripts/setup-gitlab-runner.sh
+# Register runner (handles CA trust, tool install, API registration)
+GITLAB_URL=https://gitlab.example.com GITLAB_TOKEN=glpat-xxx sudo -E ./scripts/setup-gitlab-runner.sh
 
 # Deregister when returning the machine
 sudo ./scripts/teardown-gitlab-runner.sh
