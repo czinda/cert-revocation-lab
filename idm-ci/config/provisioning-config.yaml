@@ -75,3 +75,11 @@ virt:
 
 podman:
     images: {}
+
+python:
+    default: /usr/bin/python3
+    fedora-latest: /usr/bin/python3
+    fedora-42: /usr/bin/python3
+    fedora-41: /usr/bin/python3
+    rhel-10: /usr/bin/python3
+    rhel-9: /usr/bin/python3

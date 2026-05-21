@@ -7,7 +7,7 @@
 # Lab Repository
 # =============================================================================
 
-cert_lab_repo_url: "https://gitlab.cee.redhat.com/czinda/cert-revocation-lab.git"
+cert_lab_repo_url: "https://github.com/czinda/cert-revocation-lab.git"
 cert_lab_repo_branch: main
 cert_lab_deploy_dir: /opt/cert-revocation-lab
 

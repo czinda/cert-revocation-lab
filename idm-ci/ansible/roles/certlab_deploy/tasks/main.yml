@@ -195,11 +195,6 @@
 # Phase 6: Clone Repository
 # =========================================================================
 
-- name: Trust Red Hat internal CA for gitlab.cee.redhat.com
-  ansible.builtin.command:
-    cmd: git config --global http.sslVerify false
-  changed_when: true
-
 - name: Clone cert-revocation-lab repository
   ansible.builtin.git:
     repo: "{{ cert_lab_repo_url }}"

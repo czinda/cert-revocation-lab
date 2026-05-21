@@ -50,4 +50,5 @@ lima-lab.yaml
 # idm-ci runtime state
 idm-ci/.mrack/
 idm-ci/artifacts/
+idm-ci/pytest-multihost.yaml
 mrack.log

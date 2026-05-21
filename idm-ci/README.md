@@ -5,7 +5,7 @@ Deploy the Certificate Revocation Lab on Beaker machines using [mrack](https://g
 ## Prerequisites
 
 ```bash
-pip install mrack mrack-beaker ansible
+pip install -r requirements.txt
 ```
 
 You also need:
