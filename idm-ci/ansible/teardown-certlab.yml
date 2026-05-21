@@ -1,6 +1,6 @@
 ---
 # =============================================================================
-# idm-ci: Teardown cert-revocation-lab before returning the Beaker machine
+# Teardown cert-revocation-lab before returning the provisioned machine
 # =============================================================================
 #
 # Collects logs and artifacts, then stops and cleans up all lab containers.

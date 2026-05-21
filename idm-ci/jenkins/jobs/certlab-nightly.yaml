@@ -32,6 +32,10 @@
             - all
             - rsa
           description: "PKI hierarchies to deploy"
+      - string:
+          name: MRACK_PROVIDER
+          default: beaker
+          description: "mrack provisioning provider (beaker, aws, openstack, static)"
 
     scm:
       - git:
@@ -47,7 +51,8 @@
           set -euo pipefail
           cd "$WORKSPACE/idm-ci"
 
-          echo "=== Stage 1: Provision Beaker machine ==="
+          echo "=== Stage 1: Provision machine ==="
+          export MRACK_PROVIDER="$MRACK_PROVIDER"
           ./scripts/prepare-hosts.sh
 
       - shell: |
@@ -74,7 +79,7 @@
                 - shell: |
                     #!/bin/bash
                     cd "$WORKSPACE/idm-ci"
-                    echo "=== Teardown: Returning Beaker machine ==="
+                    echo "=== Teardown: Returning machine ==="
                     ./scripts/shutdown-hosts.sh
       - archive:
           artifacts: "idm-ci/artifacts/**, idm-ci/.mrack/**"

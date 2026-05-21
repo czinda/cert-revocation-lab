@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# Deploy cert-revocation-lab and run validation on a Beaker machine
+# Deploy cert-revocation-lab and run validation on a provisioned machine
 # =============================================================================
 # Usage: ./scripts/run-tests.sh
 #   env: PKI_MODE=all|rsa|ecc|pqc|dual (default: all)

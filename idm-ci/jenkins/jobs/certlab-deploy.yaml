@@ -1,19 +1,19 @@
 ---
 # =============================================================================
-# Jenkins Job: Deploy cert-revocation-lab on Beaker
+# Jenkins Job: Deploy cert-revocation-lab
 # =============================================================================
-# Provisions a Fedora machine from Beaker, deploys the lab, runs validation,
+# Provisions a machine via mrack, deploys the lab, runs validation,
 # and returns the machine. Teardown always runs to avoid hoarding resources.
 
 - job-template:
     name: certlab-deploy
     display-name: "Cert Revocation Lab — Deploy & Validate"
     description: |
-      Provisions a Beaker machine with Fedora, deploys the full
+      Provisions a machine with Fedora, deploys the full
       cert-revocation-lab (Dogtag PKI + FreeIPA + Kafka + EDA),
       and runs validation checks.
 
-      Triggered manually or by other jobs. The Beaker machine is
+      Triggered manually or by other jobs. The provisioned machine is
       always returned after the run, regardless of success or failure.
     project-type: freestyle
     concurrent: false
@@ -33,6 +33,10 @@
             - pqc
             - dual
           description: "PKI hierarchies to deploy (maps to start-lab.sh flags)"
+      - string:
+          name: MRACK_PROVIDER
+          default: beaker
+          description: "mrack provisioning provider (beaker, aws, openstack, static)"
 
     scm:
       - git:
@@ -48,7 +52,8 @@
           set -euo pipefail
           cd "$WORKSPACE/idm-ci"
 
-          echo "=== Stage 1: Provision Beaker machine ==="
+          echo "=== Stage 1: Provision machine ==="
+          export MRACK_PROVIDER="$MRACK_PROVIDER"
           ./scripts/prepare-hosts.sh
 
       - shell: |
@@ -74,7 +79,7 @@
                 - shell: |
                     #!/bin/bash
                     cd "$WORKSPACE/idm-ci"
-                    echo "=== Teardown: Returning Beaker machine ==="
+                    echo "=== Teardown: Returning machine ==="
                     ./scripts/shutdown-hosts.sh
       - archive:
           artifacts: "idm-ci/artifacts/**, idm-ci/.mrack/**"

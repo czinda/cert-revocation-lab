@@ -10,5 +10,5 @@
     jobs:
       - certlab-deploy
       - certlab-nightly
-    git-url: "https://gitlab.cee.redhat.com/czinda/cert-revocation-lab.git"
+    git-url: "https://github.com/czinda/cert-revocation-lab.git"
     git-branch: main

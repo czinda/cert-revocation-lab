@@ -1,22 +1,20 @@
 #!/bin/bash
 # =============================================================================
-# Provision a Beaker machine using mrack
+# Provision a machine using mrack
 # =============================================================================
 # Usage: ./scripts/prepare-hosts.sh
+#   env: MRACK_PROVIDER=beaker|aws|openstack|static (default: beaker)
 #
-# Provisions a Fedora machine from Beaker per metadata/certlab.yaml specs,
+# Provisions a machine per metadata/certlab.yaml specs,
 # then generates an Ansible inventory for the deploy playbook.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# Set BEAKER_CONF if the system-wide config doesn't exist
-if [ ! -f /etc/beaker/client.conf ] && [ -f "$HOME/.beaker_client/config" ]; then
-    export BEAKER_CONF="$HOME/.beaker_client/config"
-fi
+MRACK_PROVIDER="${MRACK_PROVIDER:-beaker}"
 
-echo "=== Provisioning Beaker machine ==="
-mrack up --provider beaker
+echo "=== Provisioning machine (provider: $MRACK_PROVIDER) ==="
+mrack up --provider "$MRACK_PROVIDER"
 
 echo "=== Generating Ansible inventory ==="
 mkdir -p .mrack

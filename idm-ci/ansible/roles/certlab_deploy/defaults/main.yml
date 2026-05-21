@@ -1,7 +1,7 @@
 ---
 # Default variables for certlab_deploy role
 # Adapted from agnosticd/configs/cert-revocation-lab/default_vars.yml
-# for standalone use with mrack/idm-ci (no AgnosticD framework dependency).
+# for standalone use with mrack (no AgnosticD framework dependency).
 
 # =============================================================================
 # Lab Repository

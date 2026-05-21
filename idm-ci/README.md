@@ -1,6 +1,6 @@
-# idm-ci Integration
+# CI Provisioning Integration
 
-Deploy the Certificate Revocation Lab on Beaker machines using [mrack](https://github.com/neoave/mrack) for provisioning and Ansible for deployment. Optionally orchestrate via Jenkins Job Builder for CI pipelines.
+Deploy the Certificate Revocation Lab on provisioned machines using [mrack](https://github.com/neoave/mrack) for multi-provider provisioning and Ansible for deployment. Optionally orchestrate via Jenkins Job Builder for CI pipelines.
 
 ## Prerequisites
 
@@ -9,16 +9,16 @@ pip install -r requirements.txt
 ```
 
 You also need:
-- Beaker credentials (`~/.beaker_client/config`)
-- SSH key for Beaker machines
-- Network access to Beaker and the lab's git repository
+- Provider credentials (e.g., `~/.beaker_client/config` for Beaker, AWS credentials for EC2)
+- SSH key for provisioned machines
+- Network access to the provider and the lab's git repository
 
 ## Quick Start (Standalone)
 
 ```bash
 cd idm-ci
 
-# 1. Provision a Fedora machine from Beaker
+# 1. Provision a Fedora machine (default provider: beaker)
 ./scripts/prepare-hosts.sh
 
 # 2. Deploy the lab and run validation
@@ -27,6 +27,14 @@ cd idm-ci
 # 3. Return the machine when done
 ./scripts/shutdown-hosts.sh
 ```
+
+### Using a different provider
+
+```bash
+MRACK_PROVIDER=aws ./scripts/prepare-hosts.sh
+```
+
+Supported providers: `beaker`, `aws`, `openstack`, `virt`, `podman`, `static`. Configure provider-specific settings in `config/provisioning-config.yaml`.
 
 ## Configuration
 
@@ -65,10 +73,9 @@ hosts:
   - name: certlab.certlab.test
     os: fedora-42        # Pin to specific Fedora version
     # os: fedora-latest  # Latest Fedora compose (default)
-    # os: rhel-10        # RHEL 10
 ```
 
-OS names map to Beaker distro patterns in `config/provisioning-config.yaml`.
+OS names map to distro patterns in `config/provisioning-config.yaml`.
 
 ## Ansible Playbooks
 
@@ -92,7 +99,7 @@ ansible-playbook -i .mrack/ansible-inventory.yaml \
   ansible/teardown-certlab.yml
 ```
 
-Artifacts are saved to `idm-ci/artifacts/`.
+Artifacts are saved to `artifacts/`.
 
 ## Jenkins Job Builder
 
@@ -100,7 +107,7 @@ Two job templates are provided:
 
 | Job | Trigger | Description |
 |-----|---------|-------------|
-| `certlab-deploy` | Manual | Deploy + validate, parameterized by branch and PKI mode |
+| `certlab-deploy` | Manual | Deploy + validate, parameterized by branch, PKI mode, and provider |
 | `certlab-nightly` | Cron (2 AM) | Full deploy + all test suites, email on failure |
 
 ### Setup
@@ -120,7 +127,7 @@ prepare-hosts.sh          run-tests.sh                     shutdown-hosts.sh
      │                         │                                  │
      ▼                         ▼                                  ▼
  mrack up ─────► ansible-playbook prepare-certlab.yml ──► mrack destroy
- (Beaker)        ├─ Generate credentials                  (always runs)
+                 ├─ Generate credentials                  (always runs)
                  ├─ Install packages
                  ├─ Clone repo + template .env
                  ├─ setup-prerequisites.sh
@@ -133,7 +140,7 @@ prepare-hosts.sh          run-tests.sh                     shutdown-hosts.sh
 
 ## Machine Requirements
 
-The Beaker `host_requires` in `config/provisioning-config.yaml` requests:
+The `hostRequires` in `config/provisioning-config.yaml` requests:
 
 | Resource | Minimum | Rationale |
 |----------|---------|-----------|
@@ -149,10 +156,11 @@ These match the AWS `m5.4xlarge` used by the AgnosticD deployment path.
 ```
 idm-ci/
 ├── mrack.conf                     # mrack main config
+├── requirements.txt               # Python dependencies
 ├── metadata/
 │   └── certlab.yaml               # Host definition
 ├── config/
-│   └── provisioning-config.yaml   # Beaker distro + machine specs
+│   └── provisioning-config.yaml   # Provider + machine specs
 ├── ansible/
 │   ├── prepare-certlab.yml        # Deploy playbook
 │   ├── teardown-certlab.yml       # Cleanup playbook
@@ -162,7 +170,7 @@ idm-ci/
 │   ├── project.yaml               # JJB project
 │   └── jobs/                      # Job templates
 ├── scripts/
-│   ├── prepare-hosts.sh           # Provision Beaker machine
+│   ├── prepare-hosts.sh           # Provision machine
 │   ├── run-tests.sh               # Deploy + test
 │   └── shutdown-hosts.sh          # Return machine
 └── artifacts/                     # Collected logs (gitignored)
@@ -170,10 +178,10 @@ idm-ci/
 
 ## Troubleshooting
 
-**mrack up fails with "no matching systems"**: The Beaker pool may not have machines meeting the 16 vCPU / 64 GB spec. Temporarily lower requirements in `provisioning-config.yaml` and use `PKI_MODE=rsa` (less resource-intensive).
+**mrack up fails with "no matching systems"**: The provider may not have machines meeting the 16 vCPU / 64 GB spec. Temporarily lower requirements in `provisioning-config.yaml` and use `PKI_MODE=rsa` (less resource-intensive).
 
 **start-lab.sh times out**: The default async timeout is 3600s (1 hour). For `--all` mode on slower hardware, increase `cert_lab_start_timeout` via `-e cert_lab_start_timeout=5400`.
 
-**Ansible can't reach the host**: Verify `mrack ssh certlab.certlab.test` works. Check that your SSH key is configured in Beaker.
+**Ansible can't reach the host**: Verify `mrack ssh certlab.certlab.test` works. Check that your SSH key is configured with the provider.
 
 **pkispawn password errors**: Passwords must be alphanumeric only (no `!`, `@`, `#`). The playbook generates safe passwords automatically; only override if you follow this constraint.

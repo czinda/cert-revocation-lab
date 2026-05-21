@@ -1,6 +1,6 @@
 ---
 # =============================================================================
-# idm-ci: Deploy cert-revocation-lab on a Beaker-provisioned machine
+# Deploy cert-revocation-lab on an mrack-provisioned machine
 # =============================================================================
 #
 # Usage:
@@ -10,7 +10,7 @@
 #
 # This playbook has two plays:
 #   1. Generate random credentials on localhost (no special chars for pkispawn)
-#   2. Deploy the lab on the Beaker machine via the certlab_deploy role
+#   2. Deploy the lab on the provisioned host via the certlab_deploy role
 
 # =============================================================================
 # Play 1: Generate Credentials (localhost)
@@ -79,7 +79,7 @@
           Lab user: {{ certlab_user_password }}
 
 # =============================================================================
-# Play 2: Deploy Lab (Beaker machine)
+# Play 2: Deploy Lab (provisioned host)
 # =============================================================================
 
 - name: Deploy cert-revocation-lab

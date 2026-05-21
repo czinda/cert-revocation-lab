@@ -1,5 +1,5 @@
 ---
-# certlab_deploy role — deploys cert-revocation-lab on a Beaker machine
+# certlab_deploy role — deploys cert-revocation-lab on an mrack-provisioned host
 #
 # Combines host preparation, lab deployment, and validation into a single role.
 # Adapted from agnosticd/configs/cert-revocation-lab/ playbooks for standalone
