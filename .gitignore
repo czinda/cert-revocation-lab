@@ -46,3 +46,8 @@ Thumbs.db
 *.tar
 *.img
 lima-lab.yaml
+
+# idm-ci runtime state
+idm-ci/.mrack/
+idm-ci/artifacts/
+mrack.log

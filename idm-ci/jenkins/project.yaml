@@ -1,0 +1,14 @@
+---
+# =============================================================================
+# Jenkins Job Builder — cert-revocation-lab project definition
+# =============================================================================
+# Validate: jenkins-jobs test jenkins/
+# Deploy:   jenkins-jobs update jenkins/
+
+- project:
+    name: cert-revocation-lab
+    jobs:
+      - certlab-deploy
+      - certlab-nightly
+    git-url: "https://gitlab.cee.redhat.com/czinda/cert-revocation-lab.git"
+    git-branch: main

@@ -406,6 +406,20 @@ sudo ./scripts/teardown-gitlab-runner.sh --purge  # also remove package
 
 The setup script handles: gitlab-runner install, self-signed CA trust, API token validation, runner registration via `POST /api/v4/user/runners`, shell executor config, and service start. Runner metadata saved to `/etc/gitlab-runner/.runner-meta.json` for teardown.
 
+## idm-ci / Beaker Deployment
+
+The `idm-ci/` directory provides mrack-based Beaker provisioning and Jenkins Job Builder definitions for deploying the lab via the Red Hat IdM CI infrastructure. Single-host topology (all ~25 containers on one Fedora machine).
+
+```bash
+cd idm-ci
+./scripts/prepare-hosts.sh                        # Provision Fedora from Beaker (mrack up)
+PKI_MODE=rsa ./scripts/run-tests.sh               # Deploy lab + validate
+RUN_FULL_TESTS=true ./scripts/run-tests.sh        # Deploy + all 26 scenarios + advanced suites
+./scripts/shutdown-hosts.sh                        # Return Beaker machine (always run this)
+```
+
+**Machine specs**: 16 vCPU, 64 GB RAM, 100 GB disk (Beaker `host_requires` in `config/provisioning-config.yaml`). **Target OS**: Fedora latest (`Fedora%` distro pattern). **Jenkins jobs**: `certlab-deploy` (manual) and `certlab-nightly` (cron 2 AM, full regression). See `idm-ci/README.md` for full documentation.
+
 ## AgnosticD / RHPDS Deployment
 
 The `agnosticd/configs/cert-revocation-lab/` directory deploys the lab onto a single AWS EC2 instance (`m5.4xlarge`) via RHPDS. Wraps `start-lab.sh --all` with deploy-time password generation. Key variable: `cert_lab_pki_mode` (default: `all`).

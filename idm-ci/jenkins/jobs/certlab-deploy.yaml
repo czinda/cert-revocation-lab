@@ -1,0 +1,89 @@
+---
+# =============================================================================
+# Jenkins Job: Deploy cert-revocation-lab on Beaker
+# =============================================================================
+# Provisions a Fedora machine from Beaker, deploys the lab, runs validation,
+# and returns the machine. Teardown always runs to avoid hoarding resources.
+
+- job-template:
+    name: certlab-deploy
+    display-name: "Cert Revocation Lab — Deploy & Validate"
+    description: |
+      Provisions a Beaker machine with Fedora, deploys the full
+      cert-revocation-lab (Dogtag PKI + FreeIPA + Kafka + EDA),
+      and runs validation checks.
+
+      Triggered manually or by other jobs. The Beaker machine is
+      always returned after the run, regardless of success or failure.
+    project-type: freestyle
+    concurrent: false
+    node: controller
+
+    parameters:
+      - string:
+          name: GIT_BRANCH
+          default: "{git-branch}"
+          description: "Git branch to deploy"
+      - choice:
+          name: PKI_MODE
+          choices:
+            - all
+            - rsa
+            - ecc
+            - pqc
+            - dual
+          description: "PKI hierarchies to deploy (maps to start-lab.sh flags)"
+
+    scm:
+      - git:
+          url: "{git-url}"
+          branches:
+            - "${{GIT_BRANCH}}"
+          clean:
+            before: true
+
+    builders:
+      - shell: |
+          #!/bin/bash
+          set -euo pipefail
+          cd "$WORKSPACE/idm-ci"
+
+          echo "=== Stage 1: Provision Beaker machine ==="
+          ./scripts/prepare-hosts.sh
+
+      - shell: |
+          #!/bin/bash
+          set -euo pipefail
+          cd "$WORKSPACE/idm-ci"
+
+          echo "=== Stage 2-5: Deploy and validate ==="
+          export PKI_MODE="$PKI_MODE"
+          export GIT_BRANCH="$GIT_BRANCH"
+          ./scripts/run-tests.sh
+
+    publishers:
+      - postbuildscript:
+          builders:
+            - role: BOTH
+              build-on:
+                - SUCCESS
+                - FAILURE
+                - UNSTABLE
+                - ABORTED
+              build-steps:
+                - shell: |
+                    #!/bin/bash
+                    cd "$WORKSPACE/idm-ci"
+                    echo "=== Teardown: Returning Beaker machine ==="
+                    ./scripts/shutdown-hosts.sh
+      - archive:
+          artifacts: "idm-ci/artifacts/**, idm-ci/.mrack/**"
+          allow-empty: true
+
+    wrappers:
+      - timeout:
+          timeout: 120
+          fail: true
+      - timestamps: {}
+      - ansicolor:
+          colormap: xterm

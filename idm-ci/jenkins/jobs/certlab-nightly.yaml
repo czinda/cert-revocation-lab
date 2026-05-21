@@ -1,0 +1,105 @@
+---
+# =============================================================================
+# Jenkins Job: Nightly full regression for cert-revocation-lab
+# =============================================================================
+# Extends the deploy job with full test suites and scheduled trigger.
+# Runs all 26 security scenarios + advanced test suites overnight.
+
+- job-template:
+    name: certlab-nightly
+    display-name: "Cert Revocation Lab — Nightly Regression"
+    description: |
+      Nightly build: deploys the full lab and runs comprehensive test suites.
+      Includes all 26 revocation scenarios, lifecycle tests, protocol tests,
+      and multi-PKI verification.
+
+      Runs at 2 AM daily. Sends email on failure.
+    project-type: freestyle
+    concurrent: false
+    node: controller
+
+    triggers:
+      - timed: "H 2 * * *"
+
+    parameters:
+      - string:
+          name: GIT_BRANCH
+          default: "{git-branch}"
+          description: "Git branch to deploy"
+      - choice:
+          name: PKI_MODE
+          choices:
+            - all
+            - rsa
+          description: "PKI hierarchies to deploy"
+
+    scm:
+      - git:
+          url: "{git-url}"
+          branches:
+            - "${{GIT_BRANCH}}"
+          clean:
+            before: true
+
+    builders:
+      - shell: |
+          #!/bin/bash
+          set -euo pipefail
+          cd "$WORKSPACE/idm-ci"
+
+          echo "=== Stage 1: Provision Beaker machine ==="
+          ./scripts/prepare-hosts.sh
+
+      - shell: |
+          #!/bin/bash
+          set -euo pipefail
+          cd "$WORKSPACE/idm-ci"
+
+          echo "=== Stage 2-5: Deploy, validate, and run full tests ==="
+          export PKI_MODE="$PKI_MODE"
+          export GIT_BRANCH="$GIT_BRANCH"
+          export RUN_FULL_TESTS=true
+          ./scripts/run-tests.sh
+
+    publishers:
+      - postbuildscript:
+          builders:
+            - role: BOTH
+              build-on:
+                - SUCCESS
+                - FAILURE
+                - UNSTABLE
+                - ABORTED
+              build-steps:
+                - shell: |
+                    #!/bin/bash
+                    cd "$WORKSPACE/idm-ci"
+                    echo "=== Teardown: Returning Beaker machine ==="
+                    ./scripts/shutdown-hosts.sh
+      - archive:
+          artifacts: "idm-ci/artifacts/**, idm-ci/.mrack/**"
+          allow-empty: true
+      - email-ext:
+          recipients: "$DEFAULT_RECIPIENTS"
+          reply-to: "$DEFAULT_REPLYTO"
+          content-type: text
+          subject: "[certlab-nightly] $BUILD_STATUS - Build #$BUILD_NUMBER"
+          body: |
+            Nightly regression $BUILD_STATUS.
+
+            Branch: $GIT_BRANCH
+            PKI Mode: $PKI_MODE
+            Build: $BUILD_URL
+          attach-build-log: true
+          send-to:
+            - developers
+          failure: true
+          fixed: true
+
+    wrappers:
+      - timeout:
+          timeout: 180
+          fail: true
+      - timestamps: {}
+      - ansicolor:
+          colormap: xterm
