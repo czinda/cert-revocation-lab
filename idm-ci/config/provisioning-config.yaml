@@ -1,0 +1,83 @@
+---
+# mrack provisioning configuration for cert-revocation-lab
+#
+# Machine specs are intentionally larger than typical mrack topologies
+# because the lab runs ~25 containers on a single machine.
+
+ssh_key_filename: ~/.ssh/id_ed25519
+
+post_provisioning_check:
+    ssh:
+        enabled: true
+        port: 22
+        timeout: 10
+
+beaker:
+    strategy: retry
+    max_retry: 2
+
+    distros:
+        fedora-latest: Fedora-42%
+        fedora-42: Fedora-42%
+        fedora-41: Fedora-41%
+        fedora-40: Fedora-40%
+        rhel-10: RHEL-10%
+        rhel-10.2: RHEL-10.2%
+        rhel-10.1: RHEL-10.1%
+        c10s: CentOS-Stream-10%
+
+    distro_variants:
+        default: BaseOS
+        Fedora-42%: Server
+        Fedora-41%: Server
+        Fedora-40%: Server
+
+    # The lab needs a beefy machine — 16 vCPU, 64 GB RAM minimum.
+    hostRequires:
+        certlab:
+            and:
+                - cpu_count:
+                    _value: 16
+                    _op: ">="
+                - memory:
+                    _value: 65536
+                    _op: ">="
+
+    pubkey: ~/.ssh/id_ed25519.pub
+    reserve_duration: 86400
+    timeout: 60
+
+# Stub entries — mrack validates all installed providers on startup.
+static: {}
+
+openstack:
+    images: {}
+    flavors:
+        default: m1.medium
+    networks:
+        - provider-net
+    keypair: unused
+    pubkey: ~/.ssh/id_ed25519.pub
+
+aws:
+    images: {}
+    flavors:
+        default: t3.medium
+    keypair: unused
+    pubkey: ~/.ssh/id_ed25519.pub
+    security_groups:
+        - default
+
+virt:
+    images: {}
+
+podman:
+    images: {}
+
+python:
+    default: /usr/bin/python3
+    fedora-latest: /usr/bin/python3
+    fedora-42: /usr/bin/python3
+    fedora-41: /usr/bin/python3
+    rhel-10: /usr/bin/python3
+    rhel-9: /usr/bin/python3

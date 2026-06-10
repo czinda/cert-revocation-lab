@@ -1,0 +1,13 @@
+---
+# mrack host definition for cert-revocation-lab
+#
+# Single-host topology: all ~25 containers deploy on one beefy machine.
+# Unlike typical multi-host topologies (server/client/replica),
+# this lab uses one machine with podman-compose.
+
+domains:
+  - name: certlab.test
+    hosts:
+      - name: certlab.certlab.test
+        group: certlab
+        os: fedora-latest

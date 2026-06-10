@@ -1,0 +1,378 @@
+---
+# certlab_deploy role — deploys cert-revocation-lab on an mrack-provisioned host
+#
+# Combines host preparation, lab deployment, and validation into a single role.
+# Adapted from agnosticd/configs/cert-revocation-lab/ playbooks for standalone
+# use without AgnosticD framework dependencies.
+
+# =========================================================================
+# Phase 0: Ansible Prerequisites (Fedora 42+ needs libdnf5 for dnf module)
+# =========================================================================
+
+- name: Ensure Ansible prerequisites are installed (Fedora 42+)
+  ansible.builtin.raw: >-
+    rpm -q python3-libdnf5 python3-passlib >/dev/null 2>&1 ||
+    dnf install -y python3-libdnf5 python3-passlib
+  changed_when: "'Installing' in _prereq_result.stdout"
+  register: _prereq_result
+  when: ansible_distribution == "Fedora" and ansible_distribution_major_version | int >= 42
+
+# =========================================================================
+# Phase 1: Package Installation
+# =========================================================================
+
+- name: Install container tools
+  ansible.builtin.dnf:
+    name:
+      - podman
+      - podman-compose
+      - buildah
+      - skopeo
+      - slirp4netns
+      - fuse-overlayfs
+      - containernetworking-plugins
+    state: present
+
+- name: Install system utilities
+  ansible.builtin.dnf:
+    name:
+      - git
+      - curl
+      - wget
+      - jq
+      - openssl
+      - python3
+      - python3-pip
+      - bind-utils
+      - openssh-clients
+    state: present
+
+- name: Install Python dependencies for lab CLI
+  ansible.builtin.raw: pip3 install typer rich httpx
+  changed_when: "'Successfully installed' in _pip_result.stdout"
+  register: _pip_result
+
+# =========================================================================
+# Phase 2: Lab User Setup
+# =========================================================================
+
+- name: Create lab user
+  ansible.builtin.user:
+    name: "{{ certlab_user }}"
+    password: "{{ certlab_user_password | password_hash('sha512') }}"
+    groups: wheel
+    append: true
+    create_home: true
+
+- name: Allow lab user passwordless sudo
+  ansible.builtin.copy:
+    content: "{{ certlab_user }} ALL=(ALL) NOPASSWD: ALL\n"
+    dest: "/etc/sudoers.d/{{ certlab_user }}"
+    mode: "0440"
+    validate: "visudo -cf %s"
+
+# =========================================================================
+# Phase 3: Container Runtime Configuration
+# =========================================================================
+
+- name: Configure subuid for lab user
+  ansible.builtin.lineinfile:
+    path: /etc/subuid
+    regexp: "^{{ certlab_user }}:"
+    line: "{{ certlab_user }}:100000:65536"
+    create: true
+    mode: "0644"
+
+- name: Configure subgid for lab user
+  ansible.builtin.lineinfile:
+    path: /etc/subgid
+    regexp: "^{{ certlab_user }}:"
+    line: "{{ certlab_user }}:100000:65536"
+    create: true
+    mode: "0644"
+
+- name: Enable lingering for lab user
+  ansible.builtin.command:
+    cmd: "loginctl enable-linger {{ certlab_user }}"
+  changed_when: true
+
+# =========================================================================
+# Phase 4: Kernel Parameters
+# =========================================================================
+
+- name: Set kernel parameters for containers
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/99-containers.conf
+    reload: true
+  loop:
+    - { name: "fs.inotify.max_user_watches", value: "524288" }
+    - { name: "fs.inotify.max_user_instances", value: "512" }
+
+# =========================================================================
+# Phase 5: Firewall Configuration
+# =========================================================================
+
+- name: Check if firewalld is running
+  ansible.builtin.systemd:
+    name: firewalld
+  register: firewalld_status
+  ignore_errors: true
+
+- name: Open lab service ports in firewalld
+  ansible.posix.firewalld:
+    port: "{{ item }}"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop:
+    # RSA PKI CAs + OCSP + KRA
+    - 8443/tcp
+    - 8444/tcp
+    - 8445/tcp
+    - 8446/tcp
+    - 8447/tcp
+    - 8448/tcp
+    - 8449/tcp
+    # PQ PKI CAs + OCSP + KRA
+    - 8453/tcp
+    - 8454/tcp
+    - 8455/tcp
+    - 8456/tcp
+    - 8457/tcp
+    - 8458/tcp
+    # ECC PKI CAs + OCSP + KRA
+    - 8463/tcp
+    - 8464/tcp
+    - 8465/tcp
+    - 8466/tcp
+    - 8467/tcp
+    - 8468/tcp
+    # FreeIPA
+    - 4443/tcp
+    # AWX
+    - 8084/tcp
+    # Mock EDR / SIEM / CT-log
+    - 8082/tcp
+    - 8083/tcp
+    - 8086/tcp
+    # IoT Client
+    - 8085/tcp
+    # EDA
+    - 5000/tcp
+    # Kafka
+    - 9092/tcp
+    # Jupyter
+    - 8888/tcp
+    # Grafana
+    - 3000/tcp
+    # Prometheus + PKI Exporter
+    - 9090/tcp
+    - 9091/tcp
+    # CRL CDP + Policy Engine + Chain Viz + Pin Validator + KMIP
+    - 8088/tcp
+    - 8089/tcp
+    - 8090/tcp
+    - 8091/tcp
+    - 8092/tcp
+    # DNS (dnsmasq)
+    - 5353/tcp
+    - 5353/udp
+  when: firewalld_status.status.ActiveState | default('') == 'active'
+
+- name: Trust podman network interface in firewalld
+  ansible.posix.firewalld:
+    interface: podman0
+    zone: trusted
+    permanent: true
+    immediate: true
+    state: enabled
+  when: firewalld_status.status.ActiveState | default('') == 'active'
+  ignore_errors: true
+
+# =========================================================================
+# Phase 6: Clone Repository
+# =========================================================================
+
+- name: Clone cert-revocation-lab repository
+  ansible.builtin.git:
+    repo: "{{ cert_lab_repo_url }}"
+    dest: "{{ cert_lab_deploy_dir }}"
+    version: "{{ cert_lab_repo_branch }}"
+    force: true
+
+- name: Set ownership of lab directory
+  ansible.builtin.file:
+    path: "{{ cert_lab_deploy_dir }}"
+    owner: "{{ certlab_user }}"
+    group: "{{ certlab_user }}"
+    recurse: true
+
+# =========================================================================
+# Phase 7: Generate .env Configuration
+# =========================================================================
+
+- name: Template .env from generated credentials
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ cert_lab_deploy_dir }}/.env"
+    owner: "{{ certlab_user }}"
+    group: "{{ certlab_user }}"
+    mode: "0600"
+
+# =========================================================================
+# Phase 8: Run Prerequisites and DNS Setup
+# =========================================================================
+
+- name: Run setup-prerequisites.sh
+  ansible.builtin.command:
+    cmd: bash setup-prerequisites.sh
+    chdir: "{{ cert_lab_deploy_dir }}"
+  changed_when: true
+
+- name: Configure DNS resolution for cert-lab.local
+  ansible.builtin.command:
+    cmd: bash scripts/setup-dns.sh
+    chdir: "{{ cert_lab_deploy_dir }}"
+  changed_when: true
+
+# =========================================================================
+# Phase 9: Deploy Lab
+# =========================================================================
+
+- name: Resolve PKI mode flag
+  ansible.builtin.set_fact:
+    _pki_flag: >-
+      {{ {'rsa': '--rsa', 'ecc': '--ecc', 'pqc': '--pqc',
+          'dual': '--dual', 'all': '--all'}[cert_lab_pki_mode | default('all')] }}
+
+- name: "Run start-lab.sh {{ _pki_flag }}"
+  ansible.builtin.command:
+    cmd: "bash start-lab.sh {{ _pki_flag }}"
+    chdir: "{{ cert_lab_deploy_dir }}"
+  async: "{{ cert_lab_start_timeout }}"
+  poll: 30
+  changed_when: true
+  environment:
+    NONINTERACTIVE: "1"
+
+# =========================================================================
+# Phase 10: EDA Authentication Setup
+# =========================================================================
+
+- name: Export admin credentials for EDA
+  ansible.builtin.command:
+    cmd: bash scripts/setup-eda-auth.sh
+    chdir: "{{ cert_lab_deploy_dir }}"
+  changed_when: true
+  ignore_errors: true
+
+- name: Setup EDA SSH access
+  ansible.builtin.command:
+    cmd: bash scripts/setup-eda-ssh.sh
+    chdir: "{{ cert_lab_deploy_dir }}"
+  changed_when: true
+  become_user: "{{ certlab_user }}"
+  ignore_errors: true
+
+- name: Set LAB_HOST_IP in .env
+  ansible.builtin.lineinfile:
+    path: "{{ cert_lab_deploy_dir }}/.env"
+    regexp: "^LAB_HOST_IP="
+    line: "LAB_HOST_IP=host.containers.internal"
+
+- name: Set LAB_HOST_USER in .env
+  ansible.builtin.lineinfile:
+    path: "{{ cert_lab_deploy_dir }}/.env"
+    regexp: "^LAB_HOST_USER="
+    line: "LAB_HOST_USER={{ certlab_user }}"
+
+- name: Set LAB_ROOT_DIR in .env
+  ansible.builtin.lineinfile:
+    path: "{{ cert_lab_deploy_dir }}/.env"
+    regexp: "^LAB_ROOT_DIR="
+    line: "LAB_ROOT_DIR={{ cert_lab_deploy_dir }}"
+
+- name: Restart EDA server to apply credentials
+  ansible.builtin.command:
+    cmd: podman restart eda-server
+  become_user: "{{ certlab_user }}"
+  changed_when: true
+  ignore_errors: true
+
+# =========================================================================
+# Phase 11: Validation
+# =========================================================================
+
+- name: Run lab validation
+  ansible.builtin.command:
+    cmd: ./lab validate --skip-e2e
+    chdir: "{{ cert_lab_deploy_dir }}"
+  become_user: "{{ certlab_user }}"
+  register: validate_result
+  changed_when: false
+  ignore_errors: true
+  timeout: "{{ cert_lab_validate_timeout }}"
+
+- name: Display validation results
+  ansible.builtin.debug:
+    var: validate_result.stdout_lines
+  when: validate_result is defined
+
+# =========================================================================
+# Phase 12: E2E Smoke Test
+# =========================================================================
+
+- name: Run E2E smoke test (RSA key compromise scenario)
+  ansible.builtin.command:
+    cmd: >-
+      ./lab test --pki-type rsa
+      --scenario "Certificate Private Key Compromise"
+      --wait 60
+    chdir: "{{ cert_lab_deploy_dir }}"
+  become_user: "{{ certlab_user }}"
+  register: e2e_result
+  changed_when: false
+  ignore_errors: true
+  timeout: 120
+
+- name: Display E2E test results
+  ansible.builtin.debug:
+    var: e2e_result.stdout_lines
+  when: e2e_result is defined
+
+# =========================================================================
+# Phase 13: Report
+# =========================================================================
+
+- name: Display access information
+  ansible.builtin.debug:
+    msg: |
+      ==========================================
+        Certificate Revocation Lab - Deployed
+      ==========================================
+
+      SSH:  ssh {{ certlab_user }}@{{ ansible_host }}
+      Lab:  {{ cert_lab_deploy_dir }}
+      Mode: {{ cert_lab_pki_mode }}
+
+      PKI Services:
+        RSA Root CA:         https://{{ ansible_host }}:8443/ca
+        RSA Intermediate CA: https://{{ ansible_host }}:8444/ca
+        RSA IoT CA:          https://{{ ansible_host }}:8445/ca
+
+      Other Services:
+        AWX:       http://{{ ansible_host }}:8084
+        Grafana:   http://{{ ansible_host }}:3000
+        Jupyter:   http://{{ ansible_host }}:8888
+
+      Credentials:
+        PKI Admin: caadmin / {{ cert_lab_pki_admin_password }}
+        AWX Admin: admin / {{ cert_lab_admin_password }}
+        Jupyter:   {{ cert_lab_jupyter_token }}
+
+      Quick Start:
+        cd {{ cert_lab_deploy_dir }}
+        ./lab status
+        ./lab test --pki-type rsa --scenario 'Certificate Private Key Compromise'

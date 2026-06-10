@@ -1,0 +1,99 @@
+---
+# =============================================================================
+# Teardown cert-revocation-lab before returning the provisioned machine
+# =============================================================================
+#
+# Collects logs and artifacts, then stops and cleans up all lab containers.
+# Run this before 'mrack destroy' to preserve diagnostic data.
+
+- name: Teardown cert-revocation-lab
+  hosts: certlab
+  become: true
+  gather_facts: false
+
+  vars:
+    cert_lab_deploy_dir: /opt/cert-revocation-lab
+    certlab_user: certlab
+    artifact_dir: "{{ playbook_dir }}/../artifacts"
+
+  tasks:
+    # =========================================================================
+    # Collect Logs
+    # =========================================================================
+
+    - name: Create local artifact directory
+      ansible.builtin.file:
+        path: "{{ artifact_dir }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+
+    - name: Capture podman container list
+      ansible.builtin.command:
+        cmd: podman ps -a --format json
+      register: container_list
+      changed_when: false
+      ignore_errors: true
+
+    - name: Save container list
+      ansible.builtin.copy:
+        content: "{{ container_list.stdout }}"
+        dest: "{{ artifact_dir }}/containers.json"
+        mode: "0644"
+      delegate_to: localhost
+      when: container_list is succeeded
+
+    - name: Capture rootful container list
+      ansible.builtin.command:
+        cmd: podman ps -a --format json
+      become_user: root
+      register: rootful_container_list
+      changed_when: false
+      ignore_errors: true
+
+    - name: Save rootful container list
+      ansible.builtin.copy:
+        content: "{{ rootful_container_list.stdout }}"
+        dest: "{{ artifact_dir }}/containers-rootful.json"
+        mode: "0644"
+      delegate_to: localhost
+      when: rootful_container_list is succeeded
+
+    - name: Fetch lab validation output
+      ansible.builtin.command:
+        cmd: ./lab validate --skip-e2e
+        chdir: "{{ cert_lab_deploy_dir }}"
+      become_user: "{{ certlab_user }}"
+      register: final_validation
+      changed_when: false
+      ignore_errors: true
+      timeout: 120
+
+    - name: Save final validation
+      ansible.builtin.copy:
+        content: "{{ final_validation.stdout | default('validation skipped') }}"
+        dest: "{{ artifact_dir }}/final-validation.txt"
+        mode: "0644"
+      delegate_to: localhost
+
+    - name: Fetch log files from host
+      ansible.builtin.fetch:
+        src: "{{ cert_lab_deploy_dir }}/{{ item }}"
+        dest: "{{ artifact_dir }}/"
+        flat: true
+        fail_on_missing: false
+      loop:
+        - data/logs/lab.log
+        - data/logs/pki-init.log
+
+    # =========================================================================
+    # Stop and Clean Lab
+    # =========================================================================
+
+    - name: Run stop-lab.sh --clean
+      ansible.builtin.command:
+        cmd: bash stop-lab.sh --clean
+        chdir: "{{ cert_lab_deploy_dir }}"
+      changed_when: true
+      ignore_errors: true
+      timeout: 300

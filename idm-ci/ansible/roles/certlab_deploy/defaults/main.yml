@@ -1,0 +1,71 @@
+---
+# Default variables for certlab_deploy role
+# Adapted from agnosticd/configs/cert-revocation-lab/default_vars.yml
+# for standalone use with mrack (no AgnosticD framework dependency).
+
+# =============================================================================
+# Lab Repository
+# =============================================================================
+
+cert_lab_repo_url: "https://github.com/czinda/cert-revocation-lab.git"
+cert_lab_repo_branch: main
+cert_lab_deploy_dir: /opt/cert-revocation-lab
+
+# =============================================================================
+# PKI Mode
+# =============================================================================
+# Maps to start-lab.sh flags:
+#   rsa  -> --rsa   (RSA-4096 only)
+#   ecc  -> --ecc   (ECC P-384 only)
+#   pqc  -> --pqc   (ML-DSA-87 only)
+#   dual -> --dual  (RSA + ML-DSA-87)
+#   all  -> --all   (RSA + ECC + ML-DSA-87)
+
+cert_lab_pki_mode: all
+
+# =============================================================================
+# Lab Domain
+# =============================================================================
+
+cert_lab_domain: cert-lab.local
+cert_lab_ipa_realm: CERT-LAB.LOCAL
+cert_lab_security_domain: CERT-LAB
+
+# =============================================================================
+# Credentials
+# =============================================================================
+# Leave empty to auto-generate random 16-char alphanumeric passwords in
+# prepare-certlab.yml. Set explicitly to override.
+#
+# IMPORTANT: Avoid special characters (especially !) in passwords.
+# pkispawn and shell escaping do not handle them reliably.
+
+cert_lab_admin_password: ""
+cert_lab_db_password: ""
+cert_lab_ds_password: ""
+cert_lab_pki_admin_password: ""
+cert_lab_pki_client_pkcs12_password: ""
+cert_lab_pki_backup_password: ""
+cert_lab_pki_token_password: ""
+cert_lab_awx_secret_key: ""
+cert_lab_jupyter_token: ""
+
+# =============================================================================
+# Timeouts (seconds)
+# =============================================================================
+
+cert_lab_start_timeout: 3600
+cert_lab_validate_timeout: 300
+
+# =============================================================================
+# Lab User
+# =============================================================================
+
+certlab_user: certlab
+certlab_user_password: ""
+
+# =============================================================================
+# Connection
+# =============================================================================
+
+ansible_user: root
