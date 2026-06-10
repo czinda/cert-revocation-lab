@@ -1,0 +1,149 @@
+# Dogtag PKI from Main Branch (includes ML-KEM KRA + ML-DSA-87 support)
+#
+# Mirrors the upstream dogtagpki/pki Dockerfile multi-stage pattern:
+# - JSS and LDAPJDK imported as pre-built RPMs from quay.io dist images
+# - PKI built via ./build.sh rpm (spec-based), not Maven
+# - Final image targets pki-ca stage (used for all subsystems at runtime)
+#
+# Build:
+#   podman build -t localhost/dogtag-pki-main:latest -f Containerfile .
+#   ./build.sh
+#
+# The pki-ca image works for CA, KRA, OCSP, and EST/ACME subsystems.
+# Subsystem selection happens at runtime via pkispawn or pki-server create.
+
+ARG BASE_IMAGE="registry.fedoraproject.org/fedora:latest"
+ARG PKI_REPO="https://github.com/dogtagpki/pki.git"
+ARG PKI_BRANCH="master"
+
+################################################################################
+# Stage 1: Clone source and install build dependencies
+################################################################################
+FROM $BASE_IMAGE AS pki-builder
+
+ARG PKI_REPO
+ARG PKI_BRANCH
+
+RUN dnf install -y dnf-plugins-core systemd git rpm-build \
+    && dnf clean all
+
+WORKDIR /root/pki
+
+RUN git clone --depth 1 --branch $PKI_BRANCH $PKI_REPO . \
+    && echo "PKI_COMMIT=$(git rev-parse HEAD)" > /root/pki-build-info \
+    && echo "PKI_BRANCH=$PKI_BRANCH" >> /root/pki-build-info \
+    && echo "PKI_DATE=$(git log -1 --format=%ci)" >> /root/pki-build-info
+
+RUN dnf builddep -y --skip-unavailable pki.spec \
+    && dnf clean all
+
+COPY --from=quay.io/dogtagpki/jss-dist:latest /root/RPMS /tmp/RPMS/
+COPY --from=quay.io/dogtagpki/ldapjdk-dist:latest /root/RPMS /tmp/RPMS/
+
+RUN dnf install -y /tmp/RPMS/* \
+    && dnf clean all \
+    && rm -rf /tmp/RPMS
+
+RUN ./build.sh --work-dir=build rpm
+
+################################################################################
+# Stage 2: Lightweight dist image holding only the built RPMs
+################################################################################
+FROM alpine:latest AS pki-dist
+
+COPY --from=pki-builder /root/pki/build/RPMS /root/RPMS/
+COPY --from=pki-builder /root/pki-build-info /root/pki-build-info
+
+################################################################################
+# Stage 3: Runtime base with PKI dependencies
+################################################################################
+FROM $BASE_IMAGE AS pki-runtime
+
+RUN dnf install -y dnf-plugins-core systemd \
+    && dnf clean all
+
+RUN dnf install -y dogtag-pki \
+    && REGEX="^java-|^dogtag-|^python3-dogtag-" \
+    && REGEX="$REGEX|^apache-commons-cli-|^apache-commons-codec-|^apache-commons-io-|^apache-commons-lang3-|^apache-commons-logging-|^apache-commons-net-" \
+    && REGEX="$REGEX|^httpcomponents-|^slf4j-" \
+    && REGEX="$REGEX|^jakarta-activation-|^jakarta-annotations-|^jaxb-api-" \
+    && REGEX="$REGEX|^jboss-logging-|^jboss-jaxrs-2.0-api-" \
+    && REGEX="$REGEX|^jackson-|^pki-resteasy-" \
+    && rpm -e --nodeps $(rpm -qa | grep -E "$REGEX") \
+    && dnf clean all
+
+COPY --from=quay.io/dogtagpki/jss-dist:latest /root/RPMS /tmp/RPMS/
+COPY --from=quay.io/dogtagpki/ldapjdk-dist:latest /root/RPMS /tmp/RPMS/
+COPY --from=pki-dist /root/RPMS /tmp/RPMS/
+
+RUN dnf install -y /tmp/RPMS/* \
+    && dnf clean all \
+    && rm -rf /tmp/RPMS
+
+RUN chown -R pkiuser:pkiuser /home/pkiuser
+
+################################################################################
+# Stage 4: PKI server setup (NSS, JSS, SSL connector)
+################################################################################
+FROM pki-runtime AS pki-server
+
+RUN pki-server create \
+    --group root \
+    --conf /conf \
+    --logs /logs
+
+RUN usermod pkiuser -g root
+
+RUN pki-server nss-create --no-password
+
+RUN pki-server jss-enable
+
+RUN pki-server http-connector-add \
+    --port 8443 \
+    --scheme https \
+    --secure true \
+    --sslEnabled true \
+    --sslProtocol SSL \
+    --sslImpl org.dogtagpki.jss.tomcat.JSSImplementation \
+    Secure
+
+RUN pki-server http-connector-cert-add \
+    --keyAlias sslserver \
+    --keystoreType pkcs11 \
+    --keystoreProvider Mozilla-JSS
+
+RUN pki-server webapp-deploy \
+    --descriptor /usr/share/pki/server/conf/Catalina/localhost/ROOT.xml \
+    ROOT
+
+RUN pki-server webapp-deploy \
+    --descriptor /usr/share/pki/server/conf/Catalina/localhost/pki.xml \
+    pki
+
+RUN cp -r /conf /var/lib/pki/pki-tomcat/conf.default
+
+RUN chown -Rf pkiuser:root /var/lib/pki/pki-tomcat \
+    && chmod -Rf g+rw /var/lib/pki/pki-tomcat
+
+VOLUME [ "/certs", "/conf", "/logs" ]
+
+CMD [ "/usr/share/pki/server/bin/pki-server-run" ]
+
+################################################################################
+# Stage 5: CA subsystem (final target)
+################################################################################
+FROM pki-server AS pki-ca
+
+COPY --from=pki-dist /root/pki-build-info /root/pki-build-info
+
+RUN pki-server ca-create
+RUN pki-server ca-deploy
+
+RUN cp -r /conf/* /var/lib/pki/pki-tomcat/conf.default
+
+RUN chown -Rf pkiuser:root /var/lib/pki/pki-tomcat \
+    && chmod -Rf g+rw /var/lib/pki/pki-tomcat
+
+EXPOSE 8080 8443
+
+CMD [ "/usr/share/pki/ca/bin/pki-ca-run" ]

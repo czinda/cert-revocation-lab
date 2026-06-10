@@ -77,7 +77,7 @@ services:
 
   # Dogtag ECC Root CA - ECDSA P-384 Self-Signed
   dogtag-ecc-root-ca:
-    image: quay.io/dogtagpki/pki-ca:${PKI_VERSION:-latest}
+    image: ${PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
     container_name: dogtag-ecc-root-ca
     hostname: ecc-root-ca.${LAB_DOMAIN:-cert-lab.local}
     privileged: true
@@ -129,7 +129,7 @@ services:
 
   # Dogtag ECC Intermediate CA - ECDSA P-384
   dogtag-ecc-intermediate-ca:
-    image: quay.io/dogtagpki/pki-ca:${PKI_VERSION:-latest}
+    image: ${PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
     container_name: dogtag-ecc-intermediate-ca
     hostname: ecc-intermediate-ca.${LAB_DOMAIN:-cert-lab.local}
     privileged: true
@@ -183,7 +183,7 @@ services:
 
   # Dogtag ECC IoT Sub-CA - ECDSA P-384
   dogtag-ecc-iot-ca:
-    image: quay.io/dogtagpki/pki-ca:${PKI_VERSION:-latest}
+    image: ${PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
     container_name: dogtag-ecc-iot-ca
     hostname: ecc-iot-ca.${LAB_DOMAIN:-cert-lab.local}
     privileged: true
@@ -238,7 +238,7 @@ services:
   # ECC EST Registration Authority - Standalone RA proxying to ECC Intermediate CA
   # No local CA subsystem, no LDAP — lightweight EST (RFC 7030) gateway
   dogtag-ecc-est-ca:
-    image: quay.io/dogtagpki/pki-ca:${PKI_VERSION:-latest}
+    image: ${PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
     container_name: dogtag-ecc-est-ca
     hostname: ecc-est-ca.${LAB_DOMAIN:-cert-lab.local}
     privileged: true
@@ -296,7 +296,7 @@ services:
 
   # Dogtag ECC OCSP Responder - Dedicated OCSP subsystem (ECDSA P-384)
   dogtag-ecc-ocsp:
-    image: quay.io/dogtagpki/pki-ca:${PKI_VERSION:-latest}
+    image: ${PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
     container_name: dogtag-ecc-ocsp
     hostname: ecc-ocsp.${LAB_DOMAIN:-cert-lab.local}
     privileged: true
@@ -365,7 +365,7 @@ services:
       retries: 10
 
   dogtag-ecc-kra:
-    image: quay.io/dogtagpki/pki-ca:${PKI_VERSION:-latest}
+    image: ${PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
     container_name: dogtag-ecc-kra
     hostname: ecc-kra.${LAB_DOMAIN:-cert-lab.local}
     privileged: true
