@@ -44,9 +44,11 @@ Thumbs.db
 
 # mrack / idm-ci runtime artifacts
 idm-ci/.mrack/
+idm-ci/.venv/
 idm-ci/mrack.log
 idm-ci/pytest-multihost.yaml
 idm-ci/artifacts/
+mrack.log
 
 # Podman/Docker
 *.tar
