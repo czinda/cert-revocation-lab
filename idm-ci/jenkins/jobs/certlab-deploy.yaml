@@ -33,6 +33,10 @@
             - pqc
             - dual
           description: "PKI hierarchies to deploy (maps to start-lab.sh flags)"
+      - bool:
+          name: BUILD_DOGTAG
+          default: false
+          description: "Build Dogtag from main branch (adds ~25 min, gets ML-KEM KRA support)"
       - string:
           name: MRACK_PROVIDER
           default: beaker
@@ -64,6 +68,7 @@
           echo "=== Stage 2-5: Deploy and validate ==="
           export PKI_MODE="$PKI_MODE"
           export GIT_BRANCH="$GIT_BRANCH"
+          export BUILD_DOGTAG="$BUILD_DOGTAG"
           ./scripts/run-tests.sh
 
     publishers:

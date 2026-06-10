@@ -5,6 +5,7 @@
 # Usage: ./scripts/run-tests.sh
 #   env: PKI_MODE=all|rsa|ecc|pqc|dual (default: all)
 #   env: GIT_BRANCH=main (default: main)
+#   env: BUILD_DOGTAG=true|false (default: false) — build Dogtag from main for ML-KEM KRA
 #   env: RUN_FULL_TESTS=true|false (default: false)
 #
 # Requires prepare-hosts.sh to have run first (needs .mrack/ansible-inventory.yaml).
@@ -14,6 +15,7 @@ cd "$(dirname "$0")/.."
 
 PKI_MODE="${PKI_MODE:-all}"
 GIT_BRANCH="${GIT_BRANCH:-main}"
+BUILD_DOGTAG="${BUILD_DOGTAG:-false}"
 RUN_FULL_TESTS="${RUN_FULL_TESTS:-false}"
 INVENTORY=".mrack/ansible-inventory.yaml"
 
@@ -23,15 +25,17 @@ if [ ! -f "$INVENTORY" ]; then
 fi
 
 echo "=== Deploying cert-revocation-lab ==="
-echo "  PKI Mode:   $PKI_MODE"
-echo "  Branch:     $GIT_BRANCH"
-echo "  Full tests: $RUN_FULL_TESTS"
+echo "  PKI Mode:      $PKI_MODE"
+echo "  Branch:        $GIT_BRANCH"
+echo "  Build Dogtag:  $BUILD_DOGTAG"
+echo "  Full tests:    $RUN_FULL_TESTS"
 echo ""
 
 ansible-playbook -i "$INVENTORY" \
     ansible/prepare-certlab.yml \
     -e "cert_lab_pki_mode=$PKI_MODE" \
-    -e "cert_lab_repo_branch=$GIT_BRANCH"
+    -e "cert_lab_repo_branch=$GIT_BRANCH" \
+    -e "cert_lab_build_dogtag=$BUILD_DOGTAG"
 
 if [ "$RUN_FULL_TESTS" = "true" ]; then
     echo ""

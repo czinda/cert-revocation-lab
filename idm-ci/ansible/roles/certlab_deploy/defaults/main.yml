@@ -24,6 +24,15 @@ cert_lab_deploy_dir: /opt/cert-revocation-lab
 cert_lab_pki_mode: all
 
 # =============================================================================
+# Custom Dogtag Build
+# =============================================================================
+# When true, builds Dogtag PKI from upstream master branch before deploying.
+# This adds ~20-30 min but gets ML-KEM KRA support (FIPS 203) and latest
+# ML-DSA-87 fixes not yet in a tagged release.
+
+cert_lab_build_dogtag: false
+
+# =============================================================================
 # Lab Domain
 # =============================================================================
 

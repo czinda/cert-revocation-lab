@@ -238,6 +238,34 @@
   changed_when: true
 
 # =========================================================================
+# Phase 8.5: Build Dogtag PKI from main (optional — for ML-KEM KRA support)
+# =========================================================================
+# When cert_lab_build_dogtag is true, builds Dogtag from upstream master
+# branch to get ML-KEM KRA key recovery (FIPS 203) and latest ML-DSA-87
+# fixes. Adds ~20-30 min to deployment. The built image is set as
+# PKI_IMAGE in .env so all PKI hierarchies use it.
+
+- name: Build Dogtag PKI from main branch
+  ansible.builtin.command:
+    cmd: >-
+      bash containers/dogtag-main/build.sh
+      --image localhost/dogtag-pki-main:latest
+    chdir: "{{ cert_lab_deploy_dir }}"
+  async: 3600
+  poll: 60
+  changed_when: true
+  become: true
+  become_user: "{{ certlab_user }}"
+  when: cert_lab_build_dogtag | default(false) | bool
+
+- name: Set PKI_IMAGE in .env for custom build
+  ansible.builtin.lineinfile:
+    path: "{{ cert_lab_deploy_dir }}/.env"
+    regexp: "^PKI_IMAGE="
+    line: "PKI_IMAGE=localhost/dogtag-pki-main:latest"
+  when: cert_lab_build_dogtag | default(false) | bool
+
+# =========================================================================
 # Phase 9: Deploy Lab
 # =========================================================================
 

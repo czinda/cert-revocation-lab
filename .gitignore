@@ -42,6 +42,12 @@ venv/
 .DS_Store
 Thumbs.db
 
+# mrack / idm-ci runtime artifacts
+idm-ci/.mrack/
+idm-ci/mrack.log
+idm-ci/pytest-multihost.yaml
+idm-ci/artifacts/
+
 # Podman/Docker
 *.tar
 *.img
