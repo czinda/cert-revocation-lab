@@ -14,7 +14,7 @@ post_provisioning_check:
 
 beaker:
     strategy: retry
-    max_retry: 2
+    max_retry: 3
 
     distros:
         fedora-latest: Fedora-42%
@@ -45,7 +45,7 @@ beaker:
 
     pubkey: ~/.ssh/id_ed25519.pub
     reserve_duration: 86400
-    timeout: 60
+    timeout: 90
 
 # Stub entries — mrack validates all installed providers on startup.
 static: {}
