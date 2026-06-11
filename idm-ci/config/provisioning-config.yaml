@@ -44,7 +44,7 @@ beaker:
                     _op: ">="
 
     pubkey: ~/.ssh/id_ed25519.pub
-    reserve_duration: 86400
+    reserve_duration: 259200
     timeout: 90
 
 # Stub entries — mrack validates all installed providers on startup.

@@ -16,10 +16,6 @@ MRACK_PROVIDER="${MRACK_PROVIDER:-beaker}"
 echo "=== Provisioning machine (provider: $MRACK_PROVIDER) ==="
 mrack up --provider "$MRACK_PROVIDER"
 
-echo "=== Generating Ansible inventory ==="
-mkdir -p .mrack
-mrack ansible-inventory > .mrack/ansible-inventory.yaml
-
 echo "=== Machine provisioned ==="
 echo "Inventory: .mrack/ansible-inventory.yaml"
 cat .mrack/ansible-inventory.yaml
