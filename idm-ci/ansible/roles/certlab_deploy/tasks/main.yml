@@ -196,6 +196,11 @@
 # Phase 6: Clone Repository
 # =========================================================================
 
+- name: Mark deploy dir as git safe directory
+  ansible.builtin.command:
+    cmd: git config --global --add safe.directory {{ cert_lab_deploy_dir }}
+  changed_when: true
+
 - name: Clone cert-revocation-lab repository
   ansible.builtin.git:
     repo: "{{ cert_lab_repo_url }}"
