@@ -45,6 +45,7 @@
       - python3-pip
       - bind-utils
       - openssh-clients
+      - which
     state: present
 
 - name: Install Python dependencies for lab CLI
