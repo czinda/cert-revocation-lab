@@ -253,22 +253,33 @@ sign_csr() {
     fi
     log_info "Request ID: $request_id"
 
-    # Approve request
-    log_info "Approving certificate request..."
-    $PODMAN exec "$signer_container" bash -c "
-        # Find admin cert nickname
-        ADMIN_NICK=\$(certutil -L -d /root/.dogtag/nssdb | grep -i 'administrator' | head -1 | sed 's/[[:space:]]*[uCTcPp,]*\$//')
+    # Check request status — admin-authenticated submits may auto-approve
+    local request_status=$(echo "$request_output" | grep "Request Status:" | awk '{print $3}' | tr '[:upper:]' '[:lower:]')
+    log_info "Request Status: ${request_status:-unknown}"
 
-        if [ -n \"\$ADMIN_NICK\" ]; then
-            pki -d /root/.dogtag/nssdb -c '' \
-                -n \"\$ADMIN_NICK\" \
-                -U '$ca_url' \
-                ca-cert-request-approve --force '$request_id'
-        else
-            echo 'No admin cert found, trying anonymous...'
-            exit 1
-        fi
-    "
+    if [ "$request_status" = "rejected" ]; then
+        log_error "Certificate request was rejected"
+        echo "$request_output"
+        return 1
+    elif [ "$request_status" = "complete" ]; then
+        log_success "Request auto-approved (admin agent authentication)"
+    else
+        # Status is pending or unknown — attempt explicit approval
+        log_info "Approving certificate request..."
+        $PODMAN exec "$signer_container" bash -c "
+            ADMIN_NICK=\$(certutil -L -d /root/.dogtag/nssdb | grep -i 'administrator' | head -1 | sed 's/[[:space:]]*[uCTcPp,]*\$//')
+
+            if [ -n \"\$ADMIN_NICK\" ]; then
+                pki -d /root/.dogtag/nssdb -c '' \
+                    -n \"\$ADMIN_NICK\" \
+                    -U '$ca_url' \
+                    ca-cert-request-approve --force '$request_id'
+            else
+                echo 'No admin cert found, trying anonymous...'
+                exit 1
+            fi
+        "
+    fi
 
     # Get certificate ID from request
     sleep 2

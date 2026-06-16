@@ -94,27 +94,36 @@ fi
 
 log_info "Request ID: $REQUEST_ID"
 
-# Approve the request (agent action)
-# The pki CLI prompts "Are you sure (y/N)?" — pipe 'y' for non-interactive use.
-# Also pipe 'y' for any SSL trust prompts that may appear first.
-log_info "Approving certificate request..."
-if [ -n "$ADMIN_NICK" ]; then
-    echo -e "y\ny" | pki -d "$NSS_DB" -c "$NSS_PASSWORD" \
-        -U "${CA_URL}" \
-        -n "$ADMIN_NICK" \
-        ca-cert-request-approve "$REQUEST_ID" || {
-            log_warn "Client cert auth failed, trying username/password..."
-            echo -e "y\ny" | pki -d "$NSS_DB" -c "$NSS_PASSWORD" \
-                -U "${CA_URL}" \
-                -u caadmin -w "$PKI_PASSWORD" \
-                ca-cert-request-approve "$REQUEST_ID"
-        }
+# Check request status — admin-authenticated submits may auto-approve
+REQUEST_STATUS=$(echo "$REQUEST_OUTPUT" | grep "Request Status:" | awk '{print $3}' | tr '[:upper:]' '[:lower:]')
+log_info "Request Status: ${REQUEST_STATUS:-unknown}"
+
+if [ "$REQUEST_STATUS" = "rejected" ]; then
+    log_error "Certificate request was rejected"
+    echo "$REQUEST_OUTPUT"
+    exit 1
+elif [ "$REQUEST_STATUS" = "complete" ]; then
+    log_info "Request auto-approved (admin agent authentication)"
 else
-    # No admin cert in NSS — use username/password auth
-    echo -e "y\ny" | pki -d "$NSS_DB" -c "$NSS_PASSWORD" \
-        -U "${CA_URL}" \
-        -u caadmin -w "$PKI_PASSWORD" \
-        ca-cert-request-approve "$REQUEST_ID"
+    # Status is pending or unknown — attempt explicit approval
+    log_info "Approving certificate request..."
+    if [ -n "$ADMIN_NICK" ]; then
+        echo -e "y\ny" | pki -d "$NSS_DB" -c "$NSS_PASSWORD" \
+            -U "${CA_URL}" \
+            -n "$ADMIN_NICK" \
+            ca-cert-request-approve "$REQUEST_ID" || {
+                log_warn "Client cert auth failed, trying username/password..."
+                echo -e "y\ny" | pki -d "$NSS_DB" -c "$NSS_PASSWORD" \
+                    -U "${CA_URL}" \
+                    -u caadmin -w "$PKI_PASSWORD" \
+                    ca-cert-request-approve "$REQUEST_ID"
+            }
+    else
+        echo -e "y\ny" | pki -d "$NSS_DB" -c "$NSS_PASSWORD" \
+            -U "${CA_URL}" \
+            -u caadmin -w "$PKI_PASSWORD" \
+            ca-cert-request-approve "$REQUEST_ID"
+    fi
 fi
 
 # Extract certificate ID from the approval output
