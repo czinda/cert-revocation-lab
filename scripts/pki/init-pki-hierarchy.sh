@@ -319,9 +319,9 @@ patch_cacert_profile() {
         ADMIN_NICK=\$(certutil -L -d \$NSS_DB | grep -i 'administrator' | head -1 | sed 's/[[:space:]]*[uCTcPp,]*\$//')
         if [ -z \"\$ADMIN_NICK\" ]; then echo 'No admin cert found'; exit 1; fi
 
-        pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$ca_url' ca-profile-disable caCACert 2>/dev/null
-        pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$ca_url' ca-profile-show caCACert --raw --output /tmp/caCACert_raw.cfg 2>/dev/null
-        if grep -q 'keyParameters=' /tmp/caCACert_raw.cfg && ! grep -q '44,65,87' /tmp/caCACert_raw.cfg; then
+        pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$ca_url' ca-profile-disable caCACert 2>&1 || true
+        pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$ca_url' ca-profile-show caCACert --raw --output /tmp/caCACert_raw.cfg 2>&1
+        if [ -f /tmp/caCACert_raw.cfg ] && grep -q 'keyParameters=' /tmp/caCACert_raw.cfg && ! grep -q '44,65,87' /tmp/caCACert_raw.cfg; then
             sed -i 's|keyParameters=\(.*\)|keyParameters=\1,44,65,87|' /tmp/caCACert_raw.cfg
             cp /tmp/caCACert_raw.cfg /tmp/caCACert
             cd /tmp && pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$ca_url' ca-profile-mod caCACert --raw /tmp/caCACert 2>/dev/null
@@ -590,12 +590,10 @@ init_intermediate_ca() {
     sign_csr "$ROOT_CONTAINER" "/certs/intermediate-ca.csr" "/certs/intermediate-ca-signed.crt" \
         "$ROOT_URL" "caCACert"
 
-    # PQ: self-sign the TLS CSR so pkispawn step2 gets an RSA-signed TLS cert
-    selfsign_tls_csr "$INTERMEDIATE_CONTAINER" "${INST_PREFIX}intermediate-ca" \
-        "/certs/intermediate-ca-tls.csr" "/certs/intermediate-ca-tls.crt"
-
     # Phase 2: Install signed certificate
-    # PQ: pkispawn may still fail at TLS verification but the CA is fully configured
+    # PQ: pkispawn creates the TLS cert (RSA-4096 key, ML-DSA-87 signature) then fails at
+    # TLS verification because JSS can't serve ML-DSA-87-signed certs. The CA is fully
+    # configured — we replace the TLS cert with self-signed RSA and restart afterward.
     log_info "Running Intermediate CA initialization (Phase 2: certificate installation)..."
     $PODMAN exec "$INTERMEDIATE_CONTAINER" /scripts/init-${SCRIPT_PREFIX}intermediate-ca.sh || {
         if [ "$PKI_TYPE" = "pq" ]; then
@@ -660,10 +658,6 @@ init_iot_ca() {
     # Sign the CA CSR with Intermediate CA
     sign_csr "$INTERMEDIATE_CONTAINER" "/certs/iot-ca.csr" "/certs/iot-ca-signed.crt" \
         "$INTERMEDIATE_URL" "caCACert"
-
-    # PQ: self-sign the TLS CSR so pkispawn step2 gets an RSA-signed TLS cert
-    selfsign_tls_csr "$IOT_CONTAINER" "${INST_PREFIX}iot-ca" \
-        "/certs/iot-ca-tls.csr" "/certs/iot-ca-tls.crt"
 
     # Phase 2: Install signed certificate
     log_info "Running IoT CA initialization (Phase 2: certificate installation)..."
