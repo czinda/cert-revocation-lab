@@ -476,6 +476,17 @@ patch_pq_tomcat_tls() {
     else
         echo 'JAVA_OPTS="-Djdk.tls.maxHandshakeMessageSize=64000"' >> "$tomcat_conf"
     fi
+
+    # Patch caCACert profile template to accept ML-DSA key sizes (44=ML-DSA-44, 65=ML-DSA-65, 87=ML-DSA-87)
+    # Without this, subordinate CA CSR enrollment is rejected: "Key Parameters Not Matched"
+    local profile_dir="/usr/share/pki/ca/conf/profiles/ca"
+    local profile_file="${profile_dir}/caCACert.cfg"
+    if [ -f "$profile_file" ]; then
+        if ! grep -q "87" "$profile_file" 2>/dev/null; then
+            log_info "Patching caCACert profile template to accept ML-DSA key sizes..."
+            sed -i 's/keyParameters=\(.*\)/keyParameters=\1,44,65,87/' "$profile_file"
+        fi
+    fi
 }
 
 # Patch pkispawn cert verification for ML-DSA-87 (post-quantum)

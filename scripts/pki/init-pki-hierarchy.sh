@@ -290,6 +290,8 @@ selfsign_tls_csr() {
 
 # Patch caCACert profile to accept ML-DSA key sizes (PQ only)
 # Usage: patch_cacert_profile <container> <ca_url>
+# For file-based profiles (ProfileSubsystem): edit the file directly and restart Tomcat
+# For LDAP-based profiles: use pki CLI with admin cert auth (may fail with ML-DSA admin certs)
 patch_cacert_profile() {
     [ "$PKI_TYPE" = "pq" ] || return 0
 
@@ -298,35 +300,47 @@ patch_cacert_profile() {
 
     log_info "Patching caCACert profile to accept ML-DSA key sizes on $container..."
     $PODMAN exec "$container" bash -c "
-        NSS_DB=/root/.dogtag/nssdb
-        mkdir -p \$NSS_DB
+        # Detect instance name
+        INSTANCE=\$(ls /var/lib/pki/ 2>/dev/null | head -1)
+        if [ -z \"\$INSTANCE\" ]; then echo 'No PKI instance found'; exit 1; fi
 
-        # Initialize NSS if needed
-        if [ ! -f \$NSS_DB/cert9.db ]; then
-            certutil -N -d \$NSS_DB --empty-password
+        # Check profile subsystem type
+        CS_CFG=\"/var/lib/pki/\$INSTANCE/conf/ca/CS.cfg\"
+        PROFILE_CFG=\"/var/lib/pki/\$INSTANCE/conf/ca/profiles/ca/caCACert.cfg\"
+
+        if grep -q 'ProfileSubsystem' \"\$CS_CFG\" 2>/dev/null && [ -f \"\$PROFILE_CFG\" ]; then
+            # File-based profiles — edit directly
+            if grep -q 'keyParameters=' \"\$PROFILE_CFG\" && ! grep -q '44,65,87' \"\$PROFILE_CFG\"; then
+                sed -i 's|keyParameters=\(.*\)|keyParameters=\1,44,65,87|' \"\$PROFILE_CFG\"
+                echo 'Profile patched (file-based), restarting Tomcat...'
+                pkill -f java 2>/dev/null || true
+                sleep 3
+                pki-server start \"\$INSTANCE\" 2>/dev/null &
+                sleep 15
+            else
+                echo 'Profile already has ML-DSA key sizes'
+            fi
+        else
+            # LDAP-based profiles — try pki CLI
+            NSS_DB=/root/.dogtag/nssdb
+            mkdir -p \$NSS_DB
+            if [ ! -f \$NSS_DB/cert9.db ]; then
+                certutil -N -d \$NSS_DB --empty-password
+            fi
+            for p12 in /root/.dogtag/*/ca_admin_cert.p12; do
+                [ -f \"\$p12\" ] && pk12util -i \"\$p12\" -d \$NSS_DB -k /dev/null -W 'RedHat123' 2>/dev/null && break
+            done
+            ADMIN_NICK=\$(certutil -L -d \$NSS_DB | grep -i 'administrator' | head -1 | sed 's/[[:space:]]*[uCTcPp,]*\$//')
+            if [ -z \"\$ADMIN_NICK\" ]; then echo 'No admin cert found'; exit 1; fi
+            pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$ca_url' ca-profile-disable caCACert 2>&1 || true
+            pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$ca_url' ca-profile-show caCACert --raw --output /tmp/caCACert_raw.cfg 2>&1
+            if [ -f /tmp/caCACert_raw.cfg ] && grep -q 'keyParameters=' /tmp/caCACert_raw.cfg && ! grep -q '44,65,87' /tmp/caCACert_raw.cfg; then
+                sed -i 's|keyParameters=\(.*\)|keyParameters=\1,44,65,87|' /tmp/caCACert_raw.cfg
+                cp /tmp/caCACert_raw.cfg /tmp/caCACert
+                cd /tmp && pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$ca_url' ca-profile-mod caCACert --raw /tmp/caCACert 2>/dev/null
+            fi
+            pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$ca_url' ca-profile-enable caCACert 2>/dev/null
         fi
-
-        # Import admin cert from pkispawn output
-        for p12 in /root/.dogtag/*/ca_admin_cert.p12; do
-            [ -f \"\$p12\" ] && pk12util -i \"\$p12\" -d \$NSS_DB -k /dev/null -W 'RedHat123' 2>/dev/null && break
-        done
-
-        # Trust PQ self-signed TLS certs
-        for tlscrt in /certs/*-tls.crt; do
-            [ -f \"\$tlscrt\" ] && certutil -A -d \$NSS_DB -n \"PQ TLS \$(basename \$tlscrt .crt)\" -t 'P,P,P' -a -i \"\$tlscrt\" 2>/dev/null || true
-        done
-
-        ADMIN_NICK=\$(certutil -L -d \$NSS_DB | grep -i 'administrator' | head -1 | sed 's/[[:space:]]*[uCTcPp,]*\$//')
-        if [ -z \"\$ADMIN_NICK\" ]; then echo 'No admin cert found'; exit 1; fi
-
-        pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$ca_url' ca-profile-disable caCACert 2>&1 || true
-        pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$ca_url' ca-profile-show caCACert --raw --output /tmp/caCACert_raw.cfg 2>&1
-        if [ -f /tmp/caCACert_raw.cfg ] && grep -q 'keyParameters=' /tmp/caCACert_raw.cfg && ! grep -q '44,65,87' /tmp/caCACert_raw.cfg; then
-            sed -i 's|keyParameters=\(.*\)|keyParameters=\1,44,65,87|' /tmp/caCACert_raw.cfg
-            cp /tmp/caCACert_raw.cfg /tmp/caCACert
-            cd /tmp && pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$ca_url' ca-profile-mod caCACert --raw /tmp/caCACert 2>/dev/null
-        fi
-        pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$ca_url' ca-profile-enable caCACert 2>/dev/null
     " && log_success "caCACert profile patched for ML-DSA on $container" \
       || log_warn "Profile patch failed on $container (non-fatal)"
 }
