@@ -309,14 +309,10 @@ patch_cacert_profile() {
         PROFILE_CFG=\"/var/lib/pki/\$INSTANCE/conf/ca/profiles/ca/caCACert.cfg\"
 
         if grep -q 'ProfileSubsystem' \"\$CS_CFG\" 2>/dev/null && [ -f \"\$PROFILE_CFG\" ]; then
-            # File-based profiles — edit directly
+            # File-based profiles — edit directly, restart handled by caller
             if grep -q 'keyParameters=' \"\$PROFILE_CFG\" && ! grep -q '44,65,87' \"\$PROFILE_CFG\"; then
                 sed -i 's|keyParameters=\(.*\)|keyParameters=\1,44,65,87|' \"\$PROFILE_CFG\"
-                echo 'Profile patched (file-based), restarting Tomcat...'
-                pkill -f java 2>/dev/null || true
-                sleep 3
-                pki-server start \"\$INSTANCE\" 2>/dev/null &
-                sleep 15
+                echo 'PROFILE_PATCHED'
             else
                 echo 'Profile already has ML-DSA key sizes'
             fi
@@ -571,6 +567,13 @@ init_root_ca() {
 
     patch_cacert_profile "$ROOT_CONTAINER" "$ROOT_URL"
 
+    # File-based profile patch needs a container restart to reload
+    if $PODMAN exec "$ROOT_CONTAINER" grep -q "44,65,87" /var/lib/pki/*/conf/ca/profiles/ca/caCACert.cfg 2>/dev/null; then
+        log_info "Restarting Root CA container to reload patched profiles..."
+        $PODMAN restart "$ROOT_CONTAINER" 2>/dev/null || true
+        wait_for_ca "${CA_PREFIX}Root CA" "$ROOT_URL" 120 "$ROOT_CONTAINER"
+    fi
+
     log_success "${CA_PREFIX}Root CA initialization complete"
 }
 
@@ -636,6 +639,12 @@ init_intermediate_ca() {
 
     # Patch caCACert profile on Intermediate CA so IoT CA CSRs with ML-DSA keys pass
     patch_cacert_profile "$INTERMEDIATE_CONTAINER" "$INTERMEDIATE_URL"
+
+    if $PODMAN exec "$INTERMEDIATE_CONTAINER" grep -q "44,65,87" /var/lib/pki/*/conf/ca/profiles/ca/caCACert.cfg 2>/dev/null; then
+        log_info "Restarting Intermediate CA container to reload patched profiles..."
+        $PODMAN restart "$INTERMEDIATE_CONTAINER" 2>/dev/null || true
+        wait_for_ca "${CA_PREFIX}Intermediate CA" "$INTERMEDIATE_URL" 120 "$INTERMEDIATE_CONTAINER"
+    fi
 
     # Fix security domain so OCSP/KRA subsystem pkispawn can validate install tokens
     fix_security_domain "$INTERMEDIATE_CONTAINER" "${INST_PREFIX}intermediate-ca" "$INTERMEDIATE_HOSTNAME"
