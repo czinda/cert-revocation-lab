@@ -111,6 +111,12 @@ EST_URL="https://${EST_HOSTNAME}:8443"
 OCSP_URL="https://${OCSP_HOSTNAME}:8443"
 KRA_URL="https://${KRA_HOSTNAME}:8443"
 
+# HTTP URLs for PQ hierarchy — ML-DSA admin certs can't authenticate over HTTPS
+# (NSS client-side cert validation fails for ML-DSA signatures in the pki CLI)
+ROOT_HTTP_URL="http://${ROOT_HOSTNAME}:8080"
+INTERMEDIATE_HTTP_URL="http://${INTERMEDIATE_HOSTNAME}:8080"
+IOT_HTTP_URL="http://${IOT_HOSTNAME}:8080"
+
 # Override log functions with PKI-type-specific prefix
 log_info() { echo -e "${BLUE}[${LOG_PREFIX}]${NC} $*"; }
 log_success() { echo -e "${GREEN}[${LOG_PREFIX}]${NC} $*"; }
@@ -158,6 +164,9 @@ sed -i "1s|.*|#!/usr/bin/bash|" /usr/bin/systemctl
 # CAs need a self-signed RSA TLS cert for HTTPS while keeping ML-DSA-87 for PKI signing.
 # Uses OpenSSL for key generation (certutil is too slow due to entropy issues).
 # Usage: replace_pq_tls_cert <container> <instance> <hostname> [cert_nickname]
+# NOTE: With full ML-DSA-87 and the JDK TLS handshake fix, ML-DSA TLS certs work
+# natively. This function is only needed when using hybrid mode (RSA TLS + ML-DSA signing).
+# For full PQ mode, HTTPS works with ML-DSA server certs — skip the replacement.
 replace_pq_tls_cert() {
     [ "$PKI_TYPE" = "pq" ] || return 0
 
@@ -353,8 +362,11 @@ restart_pki_server() {
 
     log_info "Restarting $name..."
     $PODMAN exec "$container" bash -c "
-        pkill -9 java 2>/dev/null || true
-        sleep 3
+        # SIGTERM first (graceful), then SIGKILL only if needed — SIGKILL corrupts NSS databases
+        pkill -TERM java 2>/dev/null || true
+        sleep 5
+        pkill -0 java 2>/dev/null && pkill -9 java 2>/dev/null
+        sleep 2
         mkdir -p /var/log/pki/${instance}
         nohup pki-server run ${instance} > /var/log/pki/${instance}/catalina.out 2>&1 &
     "
@@ -464,11 +476,18 @@ sign_csr() {
         fi
     " 2>/dev/null || true
 
+    # For PQ, use HTTP to avoid ML-DSA client cert auth issues
+    local submit_url="$ca_url"
+    if [ "$PKI_TYPE" = "pq" ]; then
+        submit_url=$(echo "$ca_url" | sed 's|https://\(.*\):8443|http://\1:8080|')
+        log_info "Using HTTP for PQ CSR submission: $submit_url"
+    fi
+
     # Submit CSR
     log_info "Submitting CSR to CA..."
     local request_output=$($PODMAN exec "$signer_container" bash -c "
         pki -d /root/.dogtag/nssdb \
-            -U '$ca_url' \
+            -U '$submit_url' \
             ca-cert-request-submit \
             --profile '$profile' \
             --csr-file '$csr_file' 2>&1
@@ -499,9 +518,9 @@ sign_csr() {
             ADMIN_NICK=\$(certutil -L -d /root/.dogtag/nssdb | grep -i 'administrator' | head -1 | sed 's/[[:space:]]*[uCTcPp,]*\$//')
 
             if [ -n \"\$ADMIN_NICK\" ]; then
-                pki -d /root/.dogtag/nssdb -c '' \
+                pki -d /root/.dogtag/nssdb -c RedHat123 \
                     -n \"\$ADMIN_NICK\" \
-                    -U '$ca_url' \
+                    -U '$submit_url' \
                     ca-cert-request-approve --force '$request_id'
             else
                 echo 'No admin cert found, trying anonymous...'
@@ -514,7 +533,7 @@ sign_csr() {
     sleep 2
     local cert_info=$($PODMAN exec "$signer_container" bash -c "
         pki -d /root/.dogtag/nssdb \
-            -U '$ca_url' \
+            -U '$submit_url' \
             ca-cert-request-show '$request_id' 2>&1
     ")
 
@@ -530,7 +549,7 @@ sign_csr() {
     log_info "Exporting certificate..."
     $PODMAN exec "$signer_container" bash -c "
         pki -d /root/.dogtag/nssdb \
-            -U '$ca_url' \
+            -U '$submit_url' \
             ca-cert-export '$cert_id' \
             --output-file '$output_cert'
     "
@@ -568,10 +587,10 @@ init_root_ca() {
     patch_cacert_profile "$ROOT_CONTAINER" "$ROOT_URL"
 
     # File-based profile patch needs a container restart to reload
-    if $PODMAN exec "$ROOT_CONTAINER" grep -q "44,65,87" /var/lib/pki/*/conf/ca/profiles/ca/caCACert.cfg 2>/dev/null; then
-        log_info "Restarting Root CA container to reload patched profiles..."
-        $PODMAN restart "$ROOT_CONTAINER" 2>/dev/null || true
-        wait_for_ca "${CA_PREFIX}Root CA" "$ROOT_URL" 120 "$ROOT_CONTAINER"
+    if $PODMAN exec "$ROOT_CONTAINER" bash -c 'grep -q "44,65,87" /var/lib/pki/*/conf/ca/profiles/ca/caCACert.cfg 2>/dev/null'; then
+        log_info "Restarting Root CA to reload patched profiles..."
+        restart_pki_server "$ROOT_CONTAINER" "${INST_PREFIX}root-ca" \
+            "${CA_PREFIX}Root CA" "${ROOT_URL}/ca/admin/ca/getStatus" 120
     fi
 
     log_success "${CA_PREFIX}Root CA initialization complete"
@@ -608,23 +627,18 @@ init_intermediate_ca() {
         "$ROOT_URL" "caCACert"
 
     # Phase 2: Install signed certificate
-    # PQ: pkispawn creates the TLS cert (RSA-4096 key, ML-DSA-87 signature) then fails at
-    # TLS verification because JSS can't serve ML-DSA-87-signed certs. The CA is fully
-    # configured — we replace the TLS cert with self-signed RSA and restart afterward.
     log_info "Running Intermediate CA initialization (Phase 2: certificate installation)..."
     $PODMAN exec "$INTERMEDIATE_CONTAINER" /scripts/init-${SCRIPT_PREFIX}intermediate-ca.sh || {
         if [ "$PKI_TYPE" = "pq" ]; then
-            log_warn "Phase 2 pkispawn SSL verification failed (expected for PQ — JSS/ML-DSA-87 TLS limitation)"
+            log_warn "Phase 2 pkispawn may have partial failures (PQ TLS negotiation)"
         else
             log_error "Intermediate CA Phase 2 failed"
             return 1
         fi
     }
 
-    # PQ workaround: replace ML-DSA-87-signed TLS cert with self-signed RSA-4096
-    replace_pq_tls_cert "$INTERMEDIATE_CONTAINER" "${INST_PREFIX}intermediate-ca" "$INTERMEDIATE_HOSTNAME"
     if [ "$PKI_TYPE" = "pq" ]; then
-        # Build ca-chain.crt since Phase 2 pkispawn failed before the chain was created
+        # Build ca-chain.crt for the full PQ hierarchy
         $PODMAN exec "$INTERMEDIATE_CONTAINER" bash -c "
             if [ -f /certs/root-ca.crt ] && [ -f /certs/intermediate-ca-signed.crt ]; then
                 cp /certs/intermediate-ca-signed.crt /certs/intermediate-ca.crt
@@ -640,10 +654,10 @@ init_intermediate_ca() {
     # Patch caCACert profile on Intermediate CA so IoT CA CSRs with ML-DSA keys pass
     patch_cacert_profile "$INTERMEDIATE_CONTAINER" "$INTERMEDIATE_URL"
 
-    if $PODMAN exec "$INTERMEDIATE_CONTAINER" grep -q "44,65,87" /var/lib/pki/*/conf/ca/profiles/ca/caCACert.cfg 2>/dev/null; then
-        log_info "Restarting Intermediate CA container to reload patched profiles..."
-        $PODMAN restart "$INTERMEDIATE_CONTAINER" 2>/dev/null || true
-        wait_for_ca "${CA_PREFIX}Intermediate CA" "$INTERMEDIATE_URL" 120 "$INTERMEDIATE_CONTAINER"
+    if $PODMAN exec "$INTERMEDIATE_CONTAINER" bash -c 'grep -q "44,65,87" /var/lib/pki/*/conf/ca/profiles/ca/caCACert.cfg 2>/dev/null'; then
+        log_info "Restarting Intermediate CA to reload patched profiles..."
+        restart_pki_server "$INTERMEDIATE_CONTAINER" "${INST_PREFIX}intermediate-ca" \
+            "${CA_PREFIX}Intermediate CA" "${INTERMEDIATE_URL}/ca/admin/ca/getStatus" 120
     fi
 
     # Fix security domain so OCSP/KRA subsystem pkispawn can validate install tokens
@@ -686,15 +700,13 @@ init_iot_ca() {
     log_info "Running IoT CA initialization (Phase 2: certificate installation)..."
     $PODMAN exec "$IOT_CONTAINER" /scripts/init-${SCRIPT_PREFIX}iot-ca.sh || {
         if [ "$PKI_TYPE" = "pq" ]; then
-            log_warn "Phase 2 pkispawn SSL verification failed (expected for PQ — JSS/ML-DSA-87 TLS limitation)"
+            log_warn "Phase 2 pkispawn may have partial failures (PQ TLS negotiation)"
         else
             log_error "IoT CA Phase 2 failed"
             return 1
         fi
     }
 
-    # PQ workaround: replace ML-DSA-87-signed TLS cert with self-signed RSA-4096
-    replace_pq_tls_cert "$IOT_CONTAINER" "${INST_PREFIX}iot-ca" "$IOT_HOSTNAME"
     if [ "$PKI_TYPE" = "pq" ]; then
         restart_pki_server "$IOT_CONTAINER" "${INST_PREFIX}iot-ca" \
             "${CA_PREFIX}IoT CA" "${IOT_URL}/ca/admin/ca/getStatus" 120
@@ -941,8 +953,6 @@ init_ocsp() {
         fi
     }
 
-    # PQ workaround: replace ML-DSA-87-signed TLS cert with self-signed RSA-4096
-    replace_pq_tls_cert "$OCSP_CONTAINER" "${INST_PREFIX}ocsp" "$OCSP_HOSTNAME"
     if [ "$PKI_TYPE" = "pq" ]; then
         restart_pki_server "$OCSP_CONTAINER" "${INST_PREFIX}ocsp" \
             "${CA_PREFIX}OCSP Responder" "$OCSP_URL/ocsp/admin/ocsp/getStatus" 120
@@ -989,8 +999,6 @@ init_kra() {
         fi
     fi
 
-    # PQ workaround: replace ML-DSA-87-signed TLS cert with self-signed RSA-4096
-    replace_pq_tls_cert "$KRA_CONTAINER" "${INST_PREFIX}kra" "$KRA_HOSTNAME"
     if [ "$PKI_TYPE" = "pq" ]; then
         restart_pki_server "$KRA_CONTAINER" "${INST_PREFIX}kra" \
             "${CA_PREFIX}KRA" "$KRA_URL/kra/admin/kra/getStatus" 120
