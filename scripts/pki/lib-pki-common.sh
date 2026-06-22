@@ -453,6 +453,31 @@ trust_ca_certs() {
     fi
 }
 
+# Patch Tomcat TLS handshake buffer for ML-DSA-87 (post-quantum)
+# ML-DSA-87 certs are ~4.6KB (vs ~300B for RSA-4096), so TLS handshake
+# messages exceed the JDK default 16KB limit. Without this, JSS/Tomcat
+# fails with NullPointerException during TLS negotiation.
+# Ref: https://gitlab.cee.redhat.com/idm/pki-pytest-ansible RHCS11_0 configure_common.yml
+patch_pq_tomcat_tls() {
+    local tomcat_conf="/usr/share/pki/server/conf/tomcat.conf"
+    if [ ! -f "$tomcat_conf" ]; then
+        log_warn "tomcat.conf not found at $tomcat_conf — skipping TLS handshake patch"
+        return 0
+    fi
+
+    if grep -q "maxHandshakeMessageSize" "$tomcat_conf" 2>/dev/null; then
+        log_info "TLS handshake size already patched"
+        return 0
+    fi
+
+    log_info "Patching tomcat.conf for ML-DSA-87 TLS handshake size (64KB)..."
+    if grep -q '^JAVA_OPTS=' "$tomcat_conf"; then
+        sed -i 's/^JAVA_OPTS="\(.*\)"/JAVA_OPTS="\1 -Djdk.tls.maxHandshakeMessageSize=64000"/' "$tomcat_conf"
+    else
+        echo 'JAVA_OPTS="-Djdk.tls.maxHandshakeMessageSize=64000"' >> "$tomcat_conf"
+    fi
+}
+
 # Patch pkispawn cert verification for ML-DSA-87 (post-quantum)
 # NSS nss-cert-verify returns error -8016 for ML-DSA certs even though
 # they are valid (certutil -V confirms validity). This wraps the `pki`
@@ -493,8 +518,9 @@ export_pki_env() {
     # Trust CA certs so pkispawn can verify SSL connections to security domain
     trust_ca_certs
 
-    # Patch cert verification for PQ (ML-DSA-87) if needed
+    # Patch for PQ (ML-DSA-87) if needed
     if [ "${PKI_TYPE:-}" = "pq" ] || [[ "${PKI_INSTANCE:-}" == *pq* ]]; then
+        patch_pq_tomcat_tls
         patch_pq_cert_verify
     fi
 
