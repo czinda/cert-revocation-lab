@@ -514,28 +514,42 @@ sign_csr() {
     else
         # Status is pending or unknown — attempt explicit approval
         log_info "Approving certificate request..."
-        $PODMAN exec "$signer_container" bash -c "
-            ADMIN_NICK=\$(certutil -L -d /root/.dogtag/nssdb | grep -i 'administrator' | head -1 | sed 's/[[:space:]]*[uCTcPp,]*\$//')
-
-            if [ -n \"\$ADMIN_NICK\" ]; then
-                pki -d /root/.dogtag/nssdb -c RedHat123 \
-                    -n \"\$ADMIN_NICK\" \
-                    -U '$submit_url' \
+        if [ "$PKI_TYPE" = "pq" ]; then
+            # PQ: use basic auth over HTTP (client cert auth doesn't work without TLS)
+            $PODMAN exec "$signer_container" bash -c "
+                pki -U '$submit_url' -u caadmin -w RedHat123 \
                     ca-cert-request-approve --force '$request_id'
-            else
-                echo 'No admin cert found, trying anonymous...'
-                exit 1
-            fi
-        "
+            "
+        else
+            $PODMAN exec "$signer_container" bash -c "
+                ADMIN_NICK=\$(certutil -L -d /root/.dogtag/nssdb | grep -i 'administrator' | head -1 | sed 's/[[:space:]]*[uCTcPp,]*\$//')
+                if [ -n \"\$ADMIN_NICK\" ]; then
+                    pki -d /root/.dogtag/nssdb -c RedHat123 \
+                        -n \"\$ADMIN_NICK\" \
+                        -U '$submit_url' \
+                        ca-cert-request-approve --force '$request_id'
+                else
+                    echo 'No admin cert found'; exit 1
+                fi
+            "
+        fi
     fi
 
     # Get certificate ID from request
     sleep 2
-    local cert_info=$($PODMAN exec "$signer_container" bash -c "
-        pki -d /root/.dogtag/nssdb \
-            -U '$submit_url' \
-            ca-cert-request-show '$request_id' 2>&1
-    ")
+    local cert_info
+    if [ "$PKI_TYPE" = "pq" ]; then
+        cert_info=$($PODMAN exec "$signer_container" bash -c "
+            pki -U '$submit_url' -u caadmin -w RedHat123 \
+                ca-cert-request-show '$request_id' 2>&1
+        ")
+    else
+        cert_info=$($PODMAN exec "$signer_container" bash -c "
+            pki -d /root/.dogtag/nssdb \
+                -U '$submit_url' \
+                ca-cert-request-show '$request_id' 2>&1
+        ")
+    fi
 
     local cert_id=$(echo "$cert_info" | grep "Certificate ID:" | awk '{print $3}')
     if [ -z "$cert_id" ]; then
@@ -547,12 +561,20 @@ sign_csr() {
 
     # Export certificate
     log_info "Exporting certificate..."
-    $PODMAN exec "$signer_container" bash -c "
-        pki -d /root/.dogtag/nssdb \
-            -U '$submit_url' \
-            ca-cert-export '$cert_id' \
-            --output-file '$output_cert'
-    "
+    if [ "$PKI_TYPE" = "pq" ]; then
+        $PODMAN exec "$signer_container" bash -c "
+            pki -U '$submit_url' -u caadmin -w RedHat123 \
+                ca-cert-export '$cert_id' \
+                --output-file '$output_cert'
+        "
+    else
+        $PODMAN exec "$signer_container" bash -c "
+            pki -d /root/.dogtag/nssdb \
+                -U '$submit_url' \
+                ca-cert-export '$cert_id' \
+                --output-file '$output_cert'
+        "
+    fi
 
     # Verify
     if $PODMAN exec "$signer_container" openssl x509 -in "$output_cert" -noout -subject 2>/dev/null; then
