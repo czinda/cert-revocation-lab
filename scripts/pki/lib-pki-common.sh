@@ -485,7 +485,8 @@ patch_pq_tomcat_tls() {
     # Patch ALL profile templates to accept ML-DSA key sizes (44,65,87)
     # Without this, pkispawn's internal cert issuance is rejected: "Key Parameters Not Matched"
     # Affects: caCACert, caInternalAuthOCSPCert, caInternalAuthServerCert, etc.
-    local profile_dir="/usr/share/pki/ca/conf/profiles/ca"
+    # NOTE: profiles are at /usr/share/pki/ca/profiles/ca/ (NOT conf/profiles/ca/)
+    local profile_dir="/usr/share/pki/ca/profiles/ca"
     if [ -d "$profile_dir" ]; then
         local patched=0
         for profile_file in "$profile_dir"/*.cfg; do
