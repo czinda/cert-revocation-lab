@@ -477,11 +477,10 @@ patch_pq_tomcat_tls() {
         echo 'JAVA_OPTS="-Djdk.tls.maxHandshakeMessageSize=64000"' >> "$tomcat_conf"
     fi
 
-    # Also set for ALL Java processes (pki CLI, pkispawn) — not just Tomcat
-    # JDK_JAVA_OPTIONS (Java 9+) is picked up silently — unlike JAVA_TOOL_OPTIONS
-    # which prints "Picked up JAVA_TOOL_OPTIONS: ..." to stderr, corrupting
-    # pki-server output parsing and breaking cert export.
-    export JDK_JAVA_OPTIONS="-Djdk.tls.maxHandshakeMessageSize=64000"
+    # NOTE: Do NOT set JAVA_TOOL_OPTIONS or JDK_JAVA_OPTIONS — both print
+    # messages to stderr that corrupt pki-server cert-export output parsing.
+    # The JAVA_OPTS in tomcat.conf is sufficient for Tomcat/JSS TLS.
+    # For pki CLI calls, we use HTTP URLs (not HTTPS) for PQ, avoiding TLS entirely.
 
     # Patch caCACert profile template to accept ML-DSA key sizes (44=ML-DSA-44, 65=ML-DSA-65, 87=ML-DSA-87)
     # Without this, subordinate CA CSR enrollment is rejected: "Key Parameters Not Matched"
