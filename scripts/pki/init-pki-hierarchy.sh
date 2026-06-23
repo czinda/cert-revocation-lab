@@ -1211,6 +1211,26 @@ main() {
     init_root_ca
     init_intermediate_ca
     init_iot_ca
+
+    # PQ: patch issuing CAs' web.xml to allow HTTP security domain operations
+    # before OCSP/KRA pkispawn tries to join (Tomcat redirects HTTP→HTTPS otherwise)
+    if [ "$PKI_TYPE" = "pq" ]; then
+        for ca_ct in "$ROOT_CONTAINER" "$INTERMEDIATE_CONTAINER"; do
+            $PODMAN exec "$ca_ct" bash -c "
+                WEB_XML=/usr/share/pki/ca/webapps/ca/WEB-INF/web.xml
+                if grep -q CONFIDENTIAL \$WEB_XML 2>/dev/null; then
+                    sed -i 's|<transport-guarantee>CONFIDENTIAL</transport-guarantee>|<transport-guarantee>NONE</transport-guarantee>|g' \$WEB_XML
+                    echo 'web.xml patched: CONFIDENTIAL → NONE'
+                fi
+            " 2>/dev/null || true
+        done
+        # Restart CAs to reload web.xml
+        restart_pki_server "$ROOT_CONTAINER" "${INST_PREFIX}root-ca" \
+            "${CA_PREFIX}Root CA" "${ROOT_URL}/ca/admin/ca/getStatus" 120
+        restart_pki_server "$INTERMEDIATE_CONTAINER" "${INST_PREFIX}intermediate-ca" \
+            "${CA_PREFIX}Intermediate CA" "${INTERMEDIATE_URL}/ca/admin/ca/getStatus" 120
+    fi
+
     init_ocsp
     init_kra
     init_est_ca

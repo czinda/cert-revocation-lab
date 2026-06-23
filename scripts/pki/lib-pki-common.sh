@@ -494,6 +494,27 @@ patch_pq_tomcat_tls() {
     fi
 }
 
+# Patch Tomcat web.xml to allow HTTP for security domain operations (post-quantum)
+# Dogtag's CA web.xml marks account/login and securityDomain/installToken endpoints
+# with <transport-guarantee>CONFIDENTIAL</transport-guarantee>, causing Tomcat to
+# redirect HTTP requests to HTTPS (302). With full ML-DSA-87, the pki CLI's NSS
+# client can't validate ML-DSA cert chains for HTTPS client auth, so OCSP/KRA
+# pkispawn fails when it follows the redirect to HTTPS.
+# Fix: replace CONFIDENTIAL with NONE in the CA webapp's web.xml.
+patch_pq_web_xml() {
+    local web_xml="/usr/share/pki/ca/webapps/ca/WEB-INF/web.xml"
+    if [ ! -f "$web_xml" ]; then
+        return 0
+    fi
+
+    if ! grep -q "CONFIDENTIAL" "$web_xml" 2>/dev/null; then
+        return 0
+    fi
+
+    log_info "Patching CA web.xml: removing HTTPS redirect for security domain endpoints..."
+    sed -i 's|<transport-guarantee>CONFIDENTIAL</transport-guarantee>|<transport-guarantee>NONE</transport-guarantee>|g' "$web_xml"
+}
+
 # Patch pkispawn cert verification for ML-DSA-87 (post-quantum)
 # NSS nss-cert-verify returns error -8016 for ML-DSA certs even though
 # they are valid (certutil -V confirms validity). This wraps the `pki`
@@ -537,6 +558,7 @@ export_pki_env() {
     # Patch for PQ (ML-DSA-87) if needed
     if [ "${PKI_TYPE:-}" = "pq" ] || [[ "${PKI_INSTANCE:-}" == *pq* ]]; then
         patch_pq_tomcat_tls
+        patch_pq_web_xml
         patch_pq_cert_verify
     fi
 
