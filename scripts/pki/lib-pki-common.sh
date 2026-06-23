@@ -492,7 +492,7 @@ patch_pq_tomcat_tls() {
         for profile_file in "$profile_dir"/*.cfg; do
             if grep -q "keyParameters=" "$profile_file" 2>/dev/null && ! grep -q ",87" "$profile_file" 2>/dev/null; then
                 sed -i 's/keyParameters=\(.*\)/keyParameters=\1,44,65,87/' "$profile_file"
-                ((patched++))
+                patched=$((patched + 1))
             fi
         done
         if [ "$patched" -gt 0 ]; then
