@@ -1251,6 +1251,29 @@ main() {
             "${CA_PREFIX}Root CA" "${ROOT_URL}/ca/admin/ca/getStatus" 120
         restart_pki_server "$INTERMEDIATE_CONTAINER" "${INST_PREFIX}intermediate-ca" \
             "${CA_PREFIX}Intermediate CA" "${INTERMEDIATE_URL}/ca/admin/ca/getStatus" 120
+
+        # Add HTTP port (8080) security domain entry — pkispawn's get_host() looks up
+        # hostname:port from the URI, but LDAP entries use SecurePort (8443) in the CN.
+        # Without this, "Unable to find security domain host: hostname:8080"
+        log_info "Adding HTTP port security domain entry for OCSP/KRA pkispawn..."
+        $PODMAN exec "$ROOT_CONTAINER" bash -c "
+            ldapadd -x -H ldap://ds-${CA_PREFIX}root.cert-lab.local:3389 \
+                -D 'cn=Directory Manager' -w '${DS_PASSWORD:-RedHat123}' << LDIF 2>/dev/null || true
+dn: cn=${ROOT_HOSTNAME}:8080,cn=CAList,ou=Security Domain,o=pki-${CA_PREFIX}root-ca-CA
+objectClass: top
+objectClass: pkiSubsystem
+cn: ${ROOT_HOSTNAME}:8080
+Host: ${ROOT_HOSTNAME}
+SecurePort: 8443
+SecureAgentPort: 8443
+SecureAdminPort: 8443
+SecureEEClientAuthPort: 8443
+UnSecurePort: 8080
+Clone: FALSE
+SubsystemName: CA ${ROOT_HOSTNAME} 8080
+DomainManager: TRUE
+LDIF
+        " || true
     fi
 
     init_ocsp
