@@ -482,14 +482,20 @@ patch_pq_tomcat_tls() {
     # The JAVA_OPTS in tomcat.conf is sufficient for Tomcat/JSS TLS.
     # For pki CLI calls, we use HTTP URLs (not HTTPS) for PQ, avoiding TLS entirely.
 
-    # Patch caCACert profile template to accept ML-DSA key sizes (44=ML-DSA-44, 65=ML-DSA-65, 87=ML-DSA-87)
-    # Without this, subordinate CA CSR enrollment is rejected: "Key Parameters Not Matched"
+    # Patch ALL profile templates to accept ML-DSA key sizes (44,65,87)
+    # Without this, pkispawn's internal cert issuance is rejected: "Key Parameters Not Matched"
+    # Affects: caCACert, caInternalAuthOCSPCert, caInternalAuthServerCert, etc.
     local profile_dir="/usr/share/pki/ca/conf/profiles/ca"
-    local profile_file="${profile_dir}/caCACert.cfg"
-    if [ -f "$profile_file" ]; then
-        if ! grep -q "87" "$profile_file" 2>/dev/null; then
-            log_info "Patching caCACert profile template to accept ML-DSA key sizes..."
-            sed -i 's/keyParameters=\(.*\)/keyParameters=\1,44,65,87/' "$profile_file"
+    if [ -d "$profile_dir" ]; then
+        local patched=0
+        for profile_file in "$profile_dir"/*.cfg; do
+            if grep -q "keyParameters=" "$profile_file" 2>/dev/null && ! grep -q ",87" "$profile_file" 2>/dev/null; then
+                sed -i 's/keyParameters=\(.*\)/keyParameters=\1,44,65,87/' "$profile_file"
+                ((patched++))
+            fi
+        done
+        if [ "$patched" -gt 0 ]; then
+            log_info "Patched $patched profile templates to accept ML-DSA key sizes"
         fi
     fi
 }
