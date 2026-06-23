@@ -478,11 +478,10 @@ patch_pq_tomcat_tls() {
     fi
 
     # Also set for ALL Java processes (pki CLI, pkispawn) — not just Tomcat
-    # JAVA_TOOL_OPTIONS is picked up by every JVM invocation in the container
-    if ! grep -q "maxHandshakeMessageSize" /etc/environment 2>/dev/null; then
-        echo 'JAVA_TOOL_OPTIONS="-Djdk.tls.maxHandshakeMessageSize=64000"' >> /etc/environment
-    fi
-    export JAVA_TOOL_OPTIONS="-Djdk.tls.maxHandshakeMessageSize=64000"
+    # JDK_JAVA_OPTIONS (Java 9+) is picked up silently — unlike JAVA_TOOL_OPTIONS
+    # which prints "Picked up JAVA_TOOL_OPTIONS: ..." to stderr, corrupting
+    # pki-server output parsing and breaking cert export.
+    export JDK_JAVA_OPTIONS="-Djdk.tls.maxHandshakeMessageSize=64000"
 
     # Patch caCACert profile template to accept ML-DSA key sizes (44=ML-DSA-44, 65=ML-DSA-65, 87=ML-DSA-87)
     # Without this, subordinate CA CSR enrollment is rejected: "Key Parameters Not Matched"
