@@ -196,22 +196,24 @@ pki_ca_signing_signing_algorithm=SHA384withEC
 
 ### ML-DSA-87 (Post-Quantum - NIST FIPS 204)
 ```ini
-# CA signing and OCSP signing use ML-DSA-87
+# ALL certs use ML-DSA-87 (full PQ, no hybrid)
 pki_ca_signing_key_type=mldsa
 pki_ca_signing_key_algorithm=ML-DSA-87
 pki_ca_signing_key_size=87
 pki_ca_signing_signing_algorithm=ML-DSA-87
 
-# TLS, admin, subsystem, audit certs use RSA-2048 (hybrid approach)
-# OpenSSL/NSS cannot verify ML-DSA-87 cert chains for TLS yet
-pki_sslserver_key_type=rsa
-pki_sslserver_key_algorithm=SHA256withRSA
-pki_sslserver_key_size=2048
+# TLS, admin, subsystem, audit — also ML-DSA-87
+pki_sslserver_key_type=mldsa
+pki_sslserver_key_algorithm=ML-DSA-87
+pki_sslserver_key_size=87
+
+# KRA storage/transport use ML-KEM-1024 (FIPS 203 key encapsulation)
+pki_storage_key_type=mlkem
+pki_storage_key_algorithm=ML-KEM-1024
+pki_storage_key_size=1024
 ```
 
-**Note**: ML-DSA-87 support is included in the upstream `quay.io/dogtagpki/pki-ca:latest` image (11.10.0+). The PQ hierarchy uses a hybrid approach — ML-DSA-87 for CA/OCSP signing, RSA-2048 for transport certs — because NSS cannot verify ML-DSA-87 signatures in TLS cert chain validation yet (error -8016). See Known Limitations.
-
-**Building from main**: To get ML-KEM KRA support (FIPS 203 key encapsulation for key archival/recovery), build from Dogtag's main branch: `./containers/dogtag-main/build.sh`, then set `PKI_IMAGE=localhost/dogtag-pki-main:latest` in `.env`.
+**Note**: The full PQ hierarchy (branch `feature/pq-full-mldsa87`) uses ML-DSA-87 for ALL certificates and ML-KEM-1024 for KRA key archival. The upstream `quay.io/dogtagpki/pki-ca:latest` image (Dogtag 11.10.0, JSS 5.10.0, NSS 3.123.1) includes both ML-DSA-87 and ML-KEM support. HTTPS works with the JDK TLS handshake size fix (`-Djdk.tls.maxHandshakeMessageSize=64000`). The `pki` CLI uses HTTP for CSR signing/approval because NSS client-side cert validation doesn't support ML-DSA chains yet.
 
 ## Environment Configuration
 
@@ -428,9 +430,9 @@ The `agnosticd/configs/cert-revocation-lab/` directory deploys the lab onto a si
 - **SELinux shared volumes**: `data/certs` uses `:z` (shared) not `:Z` (private) in compose files because it is mounted by FreeIPA, PKI containers, and EDA. Using `:Z` stamps private MCS categories preventing cross-container access on SELinux enforcing systems
 - **Port remapping**: FreeIPA 4443/8180/3390/6360; AWX 8084
 - **ECC KRA**: Fails with `NullPointerException` — ECDSA keys can't be used for KRA key wrapping (encryption). KRA init is non-fatal; key archival unavailable in ECC hierarchy
-- **ML-DSA-87 (PQ) hierarchy is experimental**: NSS 3.119 can create ML-DSA-87 keys/certs but cannot verify ML-DSA-87 signatures in cert chain validation (error -8016). Only Root CA initializes; subordinate CAs fail TLS handshake. PQ init is non-fatal
-- **PQ hybrid crypto**: PQ configs use ML-DSA-87 for CA/OCSP signing but RSA-2048 for TLS/admin/subsystem certs (OpenSSL/TLS compatibility). Even so, the CA signature on TLS certs is ML-DSA-87, which NSS can't verify yet
-- **PQ image**: Defaults to upstream `quay.io/dogtagpki/pki-ca:latest` (11.10.0~alpha1). For ML-KEM KRA support, build from main: `./containers/dogtag-main/build.sh` and set `PKI_IMAGE` in `.env`
+- **ML-DSA-87 (PQ) full hierarchy**: The `feature/pq-full-mldsa87` branch deploys all 5 subsystems (Root CA, Intermediate CA, IoT CA, OCSP, KRA) with ML-DSA-87 on ALL certs + ML-KEM-1024 for KRA. Requires JDK TLS handshake fix (`-Djdk.tls.maxHandshakeMessageSize=64000`), web.xml CONFIDENTIAL→NONE patch, HTTP for `pki` CLI operations, and profile key parameter patching. See `memory/pq-full-mldsa87-deployment.md` for details
+- **PQ NSS client-side TLS**: NSS 3.123.1 cannot validate ML-DSA-87 cert chains in the client TLS auth path (server TLS works with JDK fix). The `pki` CLI uses HTTP (:8080) with basic auth instead of HTTPS for CSR signing and approval
+- **PQ image**: Uses upstream `quay.io/dogtagpki/pki-ca:latest` (Dogtag 11.10.0, JSS 5.10.0, NSS 3.123.1). ML-DSA-87 and ML-KEM support are included — no need to build from main
 - **certutil key generation**: `certutil -R` is extremely slow on some systems due to NSS entropy. EST/ACME RA init scripts use `openssl req` + PKCS#12 import instead
 - **EST simplereenroll (RFC 7030 §4.2.2)**: Returns 401 Unauthorized. `PKIInMemoryRealm` only supports password auth but `simplereenroll` requires TLS client cert authentication to identify the cert being renewed. `SSLAuthenticatorWithFallback` tries cert auth first and doesn't fall back to Basic when the realm can't map the cert. Would require switching to an LDAP-backed realm (`PKILDAPRealm`) which needs a 389 DS instance the lightweight EST RA doesn't have
 
