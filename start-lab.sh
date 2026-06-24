@@ -638,7 +638,7 @@ start_pki_hierarchy() {
 
 # Build the PQ Dogtag image if it doesn't exist
 build_pq_image() {
-    local image_name="${PQ_PKI_IMAGE:-localhost/dogtag-pki-pq:latest}"
+    local image_name="${PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}"
 
     log_info "Checking for PQ PKI image: $image_name"
 
@@ -659,23 +659,25 @@ build_pq_image() {
         return 0
     fi
 
+    # Upstream image includes ML-DSA-87 + ML-KEM support (Dogtag 11.10.0+)
+    # Building from main is only needed for bleeding-edge features
     log_warn "PQ PKI image not found. Building from source..."
     log_info "This compiles Dogtag PKI from master branch and may take 15-30 minutes."
 
-    if [ ! -f containers/dogtag-pq/build.sh ]; then
-        log_error "containers/dogtag-pq/build.sh not found"
+    if [ ! -f containers/dogtag-main/build.sh ]; then
+        log_error "containers/dogtag-main/build.sh not found"
         log_info "Cannot build PQ PKI image. Skipping PQ PKI startup."
         return 1
     fi
 
     # Build the image (needs rootful podman for privileged containers later)
     if is_running_as_root; then
-        if ! bash containers/dogtag-pq/build.sh "$image_name"; then
+        if ! bash containers/dogtag-main/build.sh "$image_name"; then
             log_error "PQ PKI image build failed"
             return 1
         fi
     else
-        if ! sudo bash containers/dogtag-pq/build.sh "$image_name"; then
+        if ! sudo bash containers/dogtag-main/build.sh "$image_name"; then
             log_error "PQ PKI image build failed"
             return 1
         fi

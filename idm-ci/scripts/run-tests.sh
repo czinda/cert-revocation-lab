@@ -45,10 +45,19 @@ if [ "$RUN_FULL_TESTS" = "true" ]; then
         | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('certlab',{}).get('hosts',[''])[0])" 2>/dev/null || echo "")
 
     if [ -n "$CERTLAB_HOST" ]; then
+        # RSA tests (always run)
         ssh -o StrictHostKeyChecking=no "root@$CERTLAB_HOST" \
             "cd /opt/cert-revocation-lab && sudo -u certlab ./lab test --all --pki-type rsa"
         ssh -o StrictHostKeyChecking=no "root@$CERTLAB_HOST" \
             "cd /opt/cert-revocation-lab && sudo -u certlab ./lab test-advanced --suite lifecycle --pki-type rsa"
+
+        # PQ tests (when deployed with pqc or all mode)
+        PKI_MODE="${PKI_MODE:-rsa}"
+        if [ "$PKI_MODE" = "pqc" ] || [ "$PKI_MODE" = "all" ] || [ "$PKI_MODE" = "dual" ]; then
+            echo "=== Running PQ (ML-DSA-87) tests ==="
+            ssh -o StrictHostKeyChecking=no "root@$CERTLAB_HOST" \
+                "cd /opt/cert-revocation-lab && sudo -u certlab ./lab test --pki-type pqc --scenario 'Certificate Private Key Compromise'" || true
+        fi
     else
         echo "WARNING: Could not determine host from inventory, skipping full tests"
     fi

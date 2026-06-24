@@ -111,11 +111,7 @@ EST_URL="https://${EST_HOSTNAME}:8443"
 OCSP_URL="https://${OCSP_HOSTNAME}:8443"
 KRA_URL="https://${KRA_HOSTNAME}:8443"
 
-# HTTP URLs for PQ hierarchy — ML-DSA admin certs can't authenticate over HTTPS
-# (NSS client-side cert validation fails for ML-DSA signatures in the pki CLI)
-ROOT_HTTP_URL="http://${ROOT_HOSTNAME}:8080"
-INTERMEDIATE_HTTP_URL="http://${INTERMEDIATE_HOSTNAME}:8080"
-IOT_HTTP_URL="http://${IOT_HOSTNAME}:8080"
+PKI_PASSWORD="${PKI_ADMIN_PASSWORD:-${ADMIN_PASSWORD:-RedHat123}}"
 
 # Override log functions with PKI-type-specific prefix
 log_info() { echo -e "${BLUE}[${LOG_PREFIX}]${NC} $*"; }
@@ -159,141 +155,6 @@ sed -i "1s|.*|#!/usr/bin/bash|" /usr/bin/systemctl
     log_success "Mock systemctl installed in $container"
 }
 
-# Replace TLS cert with self-signed RSA-4096 (legacy — only for hybrid PQ mode)
-# With the JDK TLS handshake fix (-Djdk.tls.maxHandshakeMessageSize=64000),
-# ML-DSA-87 TLS certs work natively. This function is NOT called in full PQ mode.
-# Retained for backward compatibility with hybrid deployments.
-# Usage: replace_pq_tls_cert <container> <instance> <hostname> [cert_nickname]
-replace_pq_tls_cert() {
-    [ "$PKI_TYPE" = "pq" ] || return 0
-
-    local container="$1"
-    local instance="$2"
-    local hostname="$3"
-    local cert_nick="${4:-Server-Cert cert-${instance}}"
-    local nss_db="/var/lib/pki/${instance}/conf/alias"
-    local pw_conf="/var/lib/pki/${instance}/conf/password.conf"
-
-    log_info "Replacing ML-DSA-87-signed TLS cert with self-signed RSA-4096 in $container..."
-
-    $PODMAN exec "$container" bash -c "
-        INTERNAL_PW=\$(grep ^internal= '${pw_conf}' | head -1 | cut -d= -f2)
-        echo \"\$INTERNAL_PW\" > /tmp/nss_pw.txt
-
-        # Generate RSA-4096 self-signed TLS cert
-        openssl req -x509 -newkey rsa:4096 -nodes \
-            -keyout /tmp/pq-tls.key -out /tmp/pq-tls.crt \
-            -days 730 \
-            -subj '/CN=${hostname}/OU=PQ TLS Transport/O=Cert-Lab/C=US' \
-            -addext 'subjectAltName=DNS:${hostname}' \
-            -addext 'keyUsage=digitalSignature,keyEncipherment' \
-            -addext 'extendedKeyUsage=serverAuth' 2>/dev/null
-
-        # Bundle as PKCS#12
-        openssl pkcs12 -export \
-            -in /tmp/pq-tls.crt -inkey /tmp/pq-tls.key \
-            -out /tmp/pq-tls.p12 \
-            -name '${cert_nick}' \
-            -passout pass:\"\$INTERNAL_PW\" 2>/dev/null
-
-        # Replace in NSS database
-        certutil -D -d '${nss_db}' -n '${cert_nick}' 2>/dev/null || true
-        pk12util -i /tmp/pq-tls.p12 -d '${nss_db}' \
-            -k /tmp/nss_pw.txt -w /tmp/nss_pw.txt 2>/dev/null
-
-        # Also trust the self-signed cert in the pki CLI's client NSS database
-        # so sign_csr() can connect via HTTPS without UNKNOWN_ISSUER errors
-        # Use P,P,P (trusted peer) not CT,C,C (trusted CA) — these are server certs
-        if [ -d /root/.dogtag/nssdb ]; then
-            certutil -A -d /root/.dogtag/nssdb -n 'PQ TLS ${hostname}' \
-                -t 'P,P,P' -a -i /tmp/pq-tls.crt 2>/dev/null || true
-        fi
-
-        # Save TLS cert to shared /certs/ volume for cross-container trust
-        cp /tmp/pq-tls.crt /certs/${hostname}-tls.crt 2>/dev/null || true
-
-        rm -f /tmp/pq-tls.key /tmp/pq-tls.crt /tmp/pq-tls.p12 /tmp/nss_pw.txt
-    "
-
-    log_success "Self-signed RSA-4096 TLS cert installed for $container"
-}
-
-# Self-sign a TLS CSR (legacy — only for hybrid PQ mode, not used in full PQ)
-# Extracts the RSA private key from NSS via PKCS#12, signs the CSR with OpenSSL,
-# and saves the cert where pkispawn step2 expects it.
-# Usage: selfsign_tls_csr <container> <instance> <csr_path> <cert_path>
-selfsign_tls_csr() {
-    [ "$PKI_TYPE" = "pq" ] || return 0
-
-    local container="$1"
-    local instance="$2"
-    local csr_path="$3"
-    local cert_path="$4"
-
-    if ! $PODMAN exec "$container" test -f "$csr_path" 2>/dev/null; then
-        return 0
-    fi
-
-    log_info "Self-signing TLS CSR $csr_path for $container..."
-
-    $PODMAN exec "$container" bash -c "
-        INTERNAL_PW=\$(grep ^internal= /var/lib/pki/${instance}/conf/password.conf | head -1 | cut -d= -f2)
-        NSS_DB=/var/lib/pki/${instance}/conf/alias
-        TEMP_NICK='temp-sslserver-export'
-
-        # Find the sslserver key in NSS and create a temporary self-signed cert for export
-        # certutil -S with the key that already exists isn't possible, so we:
-        # 1. Create a self-signed cert using the existing key via certutil
-        echo \"\$INTERNAL_PW\" > /tmp/nss_pw.txt
-
-        # Get the key ID from the CSR to match the right key
-        KEY_ID=\$(certutil -K -d \$NSS_DB -f /tmp/nss_pw.txt 2>/dev/null | grep -i rsa | tail -1 | awk '{print \$4}')
-
-        if [ -n \"\$KEY_ID\" ]; then
-            # Export the key via a temporary self-signed cert
-            certutil -S -n \"\$TEMP_NICK\" \
-                -s 'CN=temp' -x -t 'u,u,u' \
-                -k \"\$KEY_ID\" -v 24 \
-                -d \$NSS_DB -f /tmp/nss_pw.txt \
-                --keyUsage digitalSignature,keyEncipherment \
-                -z /dev/urandom 2>/dev/null
-
-            # Export to PKCS#12
-            pk12util -o /tmp/tls-export.p12 -n \"\$TEMP_NICK\" \
-                -d \$NSS_DB -k /tmp/nss_pw.txt -w /tmp/nss_pw.txt 2>/dev/null
-
-            # Extract private key with OpenSSL
-            openssl pkcs12 -in /tmp/tls-export.p12 -nocerts -nodes \
-                -out /tmp/tls-key.pem -passin pass:\"\$INTERNAL_PW\" 2>/dev/null
-
-            # Delete the temporary cert from NSS
-            certutil -D -d \$NSS_DB -n \"\$TEMP_NICK\" 2>/dev/null
-
-            # Self-sign the original CSR with the extracted key
-            openssl x509 -req -in '${csr_path}' \
-                -signkey /tmp/tls-key.pem \
-                -out '${cert_path}' \
-                -days 730 -sha256 2>/dev/null
-
-            rm -f /tmp/tls-export.p12 /tmp/tls-key.pem /tmp/nss_pw.txt
-        else
-            # Fallback: generate a fresh RSA-4096 key + self-signed cert
-            # and import the key into NSS (replaces pkispawn's key)
-            openssl req -x509 -newkey rsa:4096 -nodes \
-                -keyout /tmp/tls-key.pem -out '${cert_path}' \
-                -days 730 -sha256 \
-                -subj \"\$(openssl req -in '${csr_path}' -noout -subject 2>/dev/null | sed 's/subject=//')\" 2>/dev/null
-            rm -f /tmp/tls-key.pem /tmp/nss_pw.txt
-        fi
-    "
-
-    if $PODMAN exec "$container" test -f "$cert_path" 2>/dev/null; then
-        log_success "TLS cert created: $cert_path"
-    else
-        log_warn "TLS CSR self-signing failed for $container"
-    fi
-}
-
 # Patch caCACert profile to accept ML-DSA key sizes (PQ only)
 # Usage: patch_cacert_profile <container> <ca_url>
 # For file-based profiles (ProfileSubsystem): edit the file directly and restart Tomcat
@@ -304,10 +165,16 @@ patch_cacert_profile() {
     local container="$1"
     local ca_url="$2"
 
+    # For PQ, use HTTP to avoid ML-DSA client cert auth issues
+    local profile_url="$ca_url"
+    if [ "$PKI_TYPE" = "pq" ]; then
+        profile_url=$(echo "$ca_url" | sed 's|https://\(.*\):8443|http://\1:8080|')
+    fi
+
     log_info "Patching caCACert profile to accept ML-DSA key sizes on $container..."
     $PODMAN exec "$container" bash -c "
         # Detect instance name
-        INSTANCE=\$(ls /var/lib/pki/ 2>/dev/null | head -1)
+        INSTANCE=\$(ls -d /var/lib/pki/pki-* 2>/dev/null | head -1 | xargs basename 2>/dev/null)
         if [ -z \"\$INSTANCE\" ]; then echo 'No PKI instance found'; exit 1; fi
 
         # Check profile subsystem type
@@ -323,25 +190,36 @@ patch_cacert_profile() {
                 echo 'Profile already has ML-DSA key sizes'
             fi
         else
-            # LDAP-based profiles — try pki CLI
-            NSS_DB=/root/.dogtag/nssdb
-            mkdir -p \$NSS_DB
-            if [ ! -f \$NSS_DB/cert9.db ]; then
-                certutil -N -d \$NSS_DB --empty-password
+            # LDAP-based profiles — use pki CLI (HTTP + basic auth for PQ)
+            if [ '$PKI_TYPE' = 'pq' ]; then
+                pki -U '$profile_url' -u caadmin -w '$PKI_PASSWORD' ca-profile-disable caCACert 2>&1 || true
+                pki -U '$profile_url' -u caadmin -w '$PKI_PASSWORD' ca-profile-show caCACert --raw --output /tmp/caCACert_raw.cfg 2>&1
+                if [ -f /tmp/caCACert_raw.cfg ] && grep -q 'keyParameters=' /tmp/caCACert_raw.cfg && ! grep -q '44,65,87' /tmp/caCACert_raw.cfg; then
+                    sed -i 's|keyParameters=\(.*\)|keyParameters=\1,44,65,87|' /tmp/caCACert_raw.cfg
+                    cp /tmp/caCACert_raw.cfg /tmp/caCACert
+                    cd /tmp && pki -U '$profile_url' -u caadmin -w '$PKI_PASSWORD' ca-profile-mod caCACert --raw /tmp/caCACert 2>/dev/null
+                fi
+                pki -U '$profile_url' -u caadmin -w '$PKI_PASSWORD' ca-profile-enable caCACert 2>/dev/null
+            else
+                NSS_DB=/root/.dogtag/nssdb
+                mkdir -p \$NSS_DB
+                if [ ! -f \$NSS_DB/cert9.db ]; then
+                    certutil -N -d \$NSS_DB --empty-password
+                fi
+                for p12 in /root/.dogtag/*/ca_admin_cert.p12; do
+                    [ -f \"\$p12\" ] && pk12util -i \"\$p12\" -d \$NSS_DB -k /dev/null -W '$PKI_PASSWORD' 2>/dev/null && break
+                done
+                ADMIN_NICK=\$(certutil -L -d \$NSS_DB | grep -i 'administrator' | head -1 | sed 's/[[:space:]]*[uCTcPp,]*\$//')
+                if [ -z \"\$ADMIN_NICK\" ]; then echo 'No admin cert found'; exit 1; fi
+                pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$profile_url' ca-profile-disable caCACert 2>&1 || true
+                pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$profile_url' ca-profile-show caCACert --raw --output /tmp/caCACert_raw.cfg 2>&1
+                if [ -f /tmp/caCACert_raw.cfg ] && grep -q 'keyParameters=' /tmp/caCACert_raw.cfg && ! grep -q '44,65,87' /tmp/caCACert_raw.cfg; then
+                    sed -i 's|keyParameters=\(.*\)|keyParameters=\1,44,65,87|' /tmp/caCACert_raw.cfg
+                    cp /tmp/caCACert_raw.cfg /tmp/caCACert
+                    cd /tmp && pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$profile_url' ca-profile-mod caCACert --raw /tmp/caCACert 2>/dev/null
+                fi
+                pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$profile_url' ca-profile-enable caCACert 2>/dev/null
             fi
-            for p12 in /root/.dogtag/*/ca_admin_cert.p12; do
-                [ -f \"\$p12\" ] && pk12util -i \"\$p12\" -d \$NSS_DB -k /dev/null -W 'RedHat123' 2>/dev/null && break
-            done
-            ADMIN_NICK=\$(certutil -L -d \$NSS_DB | grep -i 'administrator' | head -1 | sed 's/[[:space:]]*[uCTcPp,]*\$//')
-            if [ -z \"\$ADMIN_NICK\" ]; then echo 'No admin cert found'; exit 1; fi
-            pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$ca_url' ca-profile-disable caCACert 2>&1 || true
-            pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$ca_url' ca-profile-show caCACert --raw --output /tmp/caCACert_raw.cfg 2>&1
-            if [ -f /tmp/caCACert_raw.cfg ] && grep -q 'keyParameters=' /tmp/caCACert_raw.cfg && ! grep -q '44,65,87' /tmp/caCACert_raw.cfg; then
-                sed -i 's|keyParameters=\(.*\)|keyParameters=\1,44,65,87|' /tmp/caCACert_raw.cfg
-                cp /tmp/caCACert_raw.cfg /tmp/caCACert
-                cd /tmp && pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$ca_url' ca-profile-mod caCACert --raw /tmp/caCACert 2>/dev/null
-            fi
-            pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$ca_url' ca-profile-enable caCACert 2>/dev/null
         fi
     " && log_success "caCACert profile patched for ML-DSA on $container" \
       || log_warn "Profile patch failed on $container (non-fatal)"
@@ -359,11 +237,16 @@ restart_pki_server() {
 
     log_info "Restarting $name..."
     $PODMAN exec "$container" bash -c "
-        # SIGTERM first (graceful), then SIGKILL only if needed — SIGKILL corrupts NSS databases
+        # SIGTERM first (graceful) — SIGKILL corrupts NSS databases
         pkill -TERM java 2>/dev/null || true
-        sleep 5
+        # Poll for up to 15s (ML-DSA-87 ops are slower than RSA)
+        for _i in \$(seq 1 15); do
+            pkill -0 java 2>/dev/null || break
+            sleep 1
+        done
+        # Last resort SIGKILL if still alive
         pkill -0 java 2>/dev/null && pkill -9 java 2>/dev/null
-        sleep 2
+        sleep 1
         mkdir -p /var/log/pki/${instance}
         nohup pki-server run ${instance} > /var/log/pki/${instance}/catalina.out 2>&1 &
     "
@@ -514,14 +397,14 @@ sign_csr() {
         if [ "$PKI_TYPE" = "pq" ]; then
             # PQ: use basic auth over HTTP (client cert auth doesn't work without TLS)
             $PODMAN exec "$signer_container" bash -c "
-                pki -U '$submit_url' -u caadmin -w RedHat123 \
+                pki -U '$submit_url' -u caadmin -w '$PKI_PASSWORD' \
                     ca-cert-request-approve --force '$request_id'
             "
         else
             $PODMAN exec "$signer_container" bash -c "
                 ADMIN_NICK=\$(certutil -L -d /root/.dogtag/nssdb | grep -i 'administrator' | head -1 | sed 's/[[:space:]]*[uCTcPp,]*\$//')
                 if [ -n \"\$ADMIN_NICK\" ]; then
-                    pki -d /root/.dogtag/nssdb -c RedHat123 \
+                    pki -d /root/.dogtag/nssdb -c '$PKI_PASSWORD' \
                         -n \"\$ADMIN_NICK\" \
                         -U '$submit_url' \
                         ca-cert-request-approve --force '$request_id'
@@ -537,7 +420,7 @@ sign_csr() {
     local cert_info
     if [ "$PKI_TYPE" = "pq" ]; then
         cert_info=$($PODMAN exec "$signer_container" bash -c "
-            pki -U '$submit_url' -u caadmin -w RedHat123 \
+            pki -U '$submit_url' -u caadmin -w '$PKI_PASSWORD' \
                 ca-cert-request-show '$request_id' 2>&1
         ")
     else
@@ -560,7 +443,7 @@ sign_csr() {
     log_info "Exporting certificate..."
     if [ "$PKI_TYPE" = "pq" ]; then
         $PODMAN exec "$signer_container" bash -c "
-            pki -U '$submit_url' -u caadmin -w RedHat123 \
+            pki -U '$submit_url' -u caadmin -w '$PKI_PASSWORD' \
                 ca-cert-export '$cert_id' \
                 --output-file '$output_cert'
         "
@@ -1231,24 +1114,10 @@ main() {
     init_intermediate_ca
     init_iot_ca
 
-    # PQ: patch issuing CAs' web.xml to allow HTTP security domain operations
-    # before OCSP/KRA pkispawn tries to join (Tomcat redirects HTTP→HTTPS otherwise)
+    # PQ: web.xml CONFIDENTIAL→NONE is already applied by lib-pki-common.sh
+    # patch_pq_web_xml() during each container's export_pki_env() before pkispawn.
+    # Only the LDAP security domain entry is needed here for OCSP/KRA pkispawn.
     if [ "$PKI_TYPE" = "pq" ]; then
-        for ca_ct in "$ROOT_CONTAINER" "$INTERMEDIATE_CONTAINER"; do
-            $PODMAN exec "$ca_ct" bash -c "
-                WEB_XML=/usr/share/pki/ca/webapps/ca/WEB-INF/web.xml
-                if grep -q CONFIDENTIAL \$WEB_XML 2>/dev/null; then
-                    sed -i 's|<transport-guarantee>CONFIDENTIAL</transport-guarantee>|<transport-guarantee>NONE</transport-guarantee>|g' \$WEB_XML
-                    echo 'web.xml patched: CONFIDENTIAL → NONE'
-                fi
-            " 2>/dev/null || true
-        done
-        # Restart CAs to reload web.xml
-        restart_pki_server "$ROOT_CONTAINER" "${INST_PREFIX}root-ca" \
-            "${CA_PREFIX}Root CA" "${ROOT_URL}/ca/admin/ca/getStatus" 120
-        restart_pki_server "$INTERMEDIATE_CONTAINER" "${INST_PREFIX}intermediate-ca" \
-            "${CA_PREFIX}Intermediate CA" "${INTERMEDIATE_URL}/ca/admin/ca/getStatus" 120
-
         # Add HTTP port (8080) security domain entry — pkispawn's get_host() looks up
         # hostname:port from the URI, but LDAP entries use SecurePort (8443) in the CN.
         # Without this, "Unable to find security domain host: hostname:8080"

@@ -501,13 +501,12 @@ patch_pq_tomcat_tls() {
     fi
 }
 
-# Patch Tomcat web.xml to allow HTTP for security domain operations (post-quantum)
-# Dogtag's CA web.xml marks account/login and securityDomain/installToken endpoints
-# with <transport-guarantee>CONFIDENTIAL</transport-guarantee>, causing Tomcat to
-# redirect HTTP requests to HTTPS (302). With full ML-DSA-87, the pki CLI's NSS
-# client can't validate ML-DSA cert chains for HTTPS client auth, so OCSP/KRA
-# pkispawn fails when it follows the redirect to HTTPS.
-# Fix: replace CONFIDENTIAL with NONE in the CA webapp's web.xml.
+# Patch Tomcat web.xml to allow HTTP for all CA operations (post-quantum)
+# With full ML-DSA-87, the pki CLI's NSS client can't validate ML-DSA cert
+# chains for HTTPS client auth. This replaces ALL CONFIDENTIAL transport
+# guarantees with NONE, allowing HTTP for security domain, enrollment, agent,
+# and admin endpoints. This is intentionally broad for lab/dev — in production,
+# upstream NSS/JSS ML-DSA client cert validation must be fixed instead.
 patch_pq_web_xml() {
     local web_xml="/usr/share/pki/ca/webapps/ca/WEB-INF/web.xml"
     if [ ! -f "$web_xml" ]; then
@@ -518,7 +517,7 @@ patch_pq_web_xml() {
         return 0
     fi
 
-    log_info "Patching CA web.xml: removing HTTPS redirect for security domain endpoints..."
+    log_info "Patching CA web.xml: CONFIDENTIAL→NONE for all endpoints (PQ lab mode)..."
     sed -i 's|<transport-guarantee>CONFIDENTIAL</transport-guarantee>|<transport-guarantee>NONE</transport-guarantee>|g' "$web_xml"
 }
 

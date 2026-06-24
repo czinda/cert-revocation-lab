@@ -273,6 +273,11 @@
 # Phase 9: Deploy Lab
 # =========================================================================
 
+- name: Validate PKI mode
+  ansible.builtin.assert:
+    that: cert_lab_pki_mode | default('all') in ['rsa', 'ecc', 'pqc', 'dual', 'all']
+    fail_msg: "Invalid cert_lab_pki_mode '{{ cert_lab_pki_mode }}'. Valid: rsa, ecc, pqc, dual, all"
+
 - name: Resolve PKI mode flag
   ansible.builtin.set_fact:
     _pki_flag: >-
@@ -400,9 +405,9 @@
         Jupyter:   http://{{ ansible_host }}:8888
 
       Credentials:
-        PKI Admin: caadmin / {{ cert_lab_pki_admin_password }}
-        AWX Admin: admin / {{ cert_lab_admin_password }}
-        Jupyter:   {{ cert_lab_jupyter_token }}
+        PKI Admin: caadmin / (see .env on host)
+        AWX Admin: admin / (see .env on host)
+        Jupyter:   (see .env on host)
 
       Quick Start:
         cd {{ cert_lab_deploy_dir }}
