@@ -1094,10 +1094,15 @@ main() {
     init_intermediate_ca
     init_iot_ca
 
-    # PQ: web.xml CONFIDENTIAL→NONE is already applied by lib-pki-common.sh
-    # patch_pq_web_xml() during each container's export_pki_env() before pkispawn.
-    # Only the LDAP security domain entry is needed here for OCSP/KRA pkispawn.
+    # PQ: ensure CAs have reloaded patched web.xml before OCSP/KRA pkispawn.
+    # lib-pki-common.sh patches web.xml pre-pkispawn, but the running Tomcat may
+    # have cached the old CONFIDENTIAL values. Restart ensures HTTP endpoints
+    # accept install-token auth for OCSP/KRA cert enrollment.
     if [ "$PKI_TYPE" = "pq" ]; then
+        restart_pki_server "$ROOT_CONTAINER" "${INST_PREFIX}root-ca" \
+            "${CA_PREFIX}Root CA" "${ROOT_URL}/ca/admin/ca/getStatus" 120
+        restart_pki_server "$INTERMEDIATE_CONTAINER" "${INST_PREFIX}intermediate-ca" \
+            "${CA_PREFIX}Intermediate CA" "${INTERMEDIATE_URL}/ca/admin/ca/getStatus" 120
         # Add HTTP port (8080) security domain entry — pkispawn's get_host() looks up
         # hostname:port from the URI, but LDAP entries use SecurePort (8443) in the CN.
         # Without this, "Unable to find security domain host: hostname:8080"
