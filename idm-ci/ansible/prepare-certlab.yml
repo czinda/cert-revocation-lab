@@ -75,7 +75,6 @@
     - name: Display credentials summary
       ansible.builtin.debug:
         msg: "Credentials generated and stored in .env on target host"
-      no_log: true
 
 # =============================================================================
 # Play 2: Deploy Lab (provisioned host)

@@ -165,16 +165,14 @@ patch_cacert_profile() {
     local container="$1"
     local ca_url="$2"
 
-    # For PQ, use HTTP to avoid ML-DSA client cert auth issues
-    local profile_url="$ca_url"
-    if [ "$PKI_TYPE" = "pq" ]; then
-        profile_url=$(echo "$ca_url" | sed 's|https://\(.*\):8443|http://\1:8080|')
-    fi
+    # PQ uses HTTP + basic auth (NSS can't validate ML-DSA client certs over HTTPS)
+    local profile_url
+    profile_url=$(echo "$ca_url" | sed 's|https://\(.*\):8443|http://\1:8080|')
 
     log_info "Patching caCACert profile to accept ML-DSA key sizes on $container..."
     $PODMAN exec "$container" bash -c "
         # Detect instance name
-        INSTANCE=\$(ls -d /var/lib/pki/pki-* 2>/dev/null | head -1 | xargs basename 2>/dev/null)
+        INSTANCE=\$(ls -d /var/lib/pki/pki-* 2>/dev/null | head -1 | xargs -r basename 2>/dev/null)
         if [ -z \"\$INSTANCE\" ]; then echo 'No PKI instance found'; exit 1; fi
 
         # Check profile subsystem type
@@ -190,36 +188,15 @@ patch_cacert_profile() {
                 echo 'Profile already has ML-DSA key sizes'
             fi
         else
-            # LDAP-based profiles — use pki CLI (HTTP + basic auth for PQ)
-            if [ '$PKI_TYPE' = 'pq' ]; then
-                pki -U '$profile_url' -u caadmin -w '$PKI_PASSWORD' ca-profile-disable caCACert 2>&1 || true
-                pki -U '$profile_url' -u caadmin -w '$PKI_PASSWORD' ca-profile-show caCACert --raw --output /tmp/caCACert_raw.cfg 2>&1
-                if [ -f /tmp/caCACert_raw.cfg ] && grep -q 'keyParameters=' /tmp/caCACert_raw.cfg && ! grep -q '44,65,87' /tmp/caCACert_raw.cfg; then
-                    sed -i 's|keyParameters=\(.*\)|keyParameters=\1,44,65,87|' /tmp/caCACert_raw.cfg
-                    cp /tmp/caCACert_raw.cfg /tmp/caCACert
-                    cd /tmp && pki -U '$profile_url' -u caadmin -w '$PKI_PASSWORD' ca-profile-mod caCACert --raw /tmp/caCACert 2>/dev/null
-                fi
-                pki -U '$profile_url' -u caadmin -w '$PKI_PASSWORD' ca-profile-enable caCACert 2>/dev/null
-            else
-                NSS_DB=/root/.dogtag/nssdb
-                mkdir -p \$NSS_DB
-                if [ ! -f \$NSS_DB/cert9.db ]; then
-                    certutil -N -d \$NSS_DB --empty-password
-                fi
-                for p12 in /root/.dogtag/*/ca_admin_cert.p12; do
-                    [ -f \"\$p12\" ] && pk12util -i \"\$p12\" -d \$NSS_DB -k /dev/null -W '$PKI_PASSWORD' 2>/dev/null && break
-                done
-                ADMIN_NICK=\$(certutil -L -d \$NSS_DB | grep -i 'administrator' | head -1 | sed 's/[[:space:]]*[uCTcPp,]*\$//')
-                if [ -z \"\$ADMIN_NICK\" ]; then echo 'No admin cert found'; exit 1; fi
-                pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$profile_url' ca-profile-disable caCACert 2>&1 || true
-                pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$profile_url' ca-profile-show caCACert --raw --output /tmp/caCACert_raw.cfg 2>&1
-                if [ -f /tmp/caCACert_raw.cfg ] && grep -q 'keyParameters=' /tmp/caCACert_raw.cfg && ! grep -q '44,65,87' /tmp/caCACert_raw.cfg; then
-                    sed -i 's|keyParameters=\(.*\)|keyParameters=\1,44,65,87|' /tmp/caCACert_raw.cfg
-                    cp /tmp/caCACert_raw.cfg /tmp/caCACert
-                    cd /tmp && pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$profile_url' ca-profile-mod caCACert --raw /tmp/caCACert 2>/dev/null
-                fi
-                pki -d \$NSS_DB -c '' -n \"\$ADMIN_NICK\" -U '$profile_url' ca-profile-enable caCACert 2>/dev/null
+            # LDAP-based profiles — HTTP + basic auth
+            pki -U '$profile_url' -u caadmin -w '$PKI_PASSWORD' ca-profile-disable caCACert 2>&1 || true
+            pki -U '$profile_url' -u caadmin -w '$PKI_PASSWORD' ca-profile-show caCACert --raw --output /tmp/caCACert_raw.cfg 2>&1
+            if [ -f /tmp/caCACert_raw.cfg ] && grep -q 'keyParameters=' /tmp/caCACert_raw.cfg && ! grep -q '44,65,87' /tmp/caCACert_raw.cfg; then
+                sed -i 's|keyParameters=\(.*\)|keyParameters=\1,44,65,87|' /tmp/caCACert_raw.cfg
+                cp /tmp/caCACert_raw.cfg /tmp/caCACert
+                cd /tmp && pki -U '$profile_url' -u caadmin -w '$PKI_PASSWORD' ca-profile-mod caCACert --raw /tmp/caCACert 2>/dev/null
             fi
+            pki -U '$profile_url' -u caadmin -w '$PKI_PASSWORD' ca-profile-enable caCACert 2>/dev/null
         fi
     " && log_success "caCACert profile patched for ML-DSA on $container" \
       || log_warn "Profile patch failed on $container (non-fatal)"
@@ -244,9 +221,12 @@ restart_pki_server() {
             pkill -0 java 2>/dev/null || break
             sleep 1
         done
-        # Last resort SIGKILL if still alive
-        pkill -0 java 2>/dev/null && pkill -9 java 2>/dev/null
-        sleep 1
+        # Last resort SIGKILL if still alive — WARNING: may corrupt NSS databases
+        if pkill -0 java 2>/dev/null; then
+            echo 'WARNING: SIGTERM timeout — using SIGKILL (NSS database may be corrupted)' >&2
+            pkill -9 java 2>/dev/null
+        fi
+        sleep 2
         mkdir -p /var/log/pki/${instance}
         nohup pki-server run ${instance} > /var/log/pki/${instance}/catalina.out 2>&1 &
     "
@@ -340,7 +320,7 @@ sign_csr() {
 
         if [ -f \"\$ADMIN_P12\" ]; then
             # Try various passwords (RedHat123 without special chars to avoid escaping issues)
-            for pw in 'RedHat123' '' '\${PKI_CLIENT_PKCS12_PASSWORD}' '\${PKI_ADMIN_PASSWORD}'; do
+            for pw in '$PKI_PASSWORD' '' '\${PKI_CLIENT_PKCS12_PASSWORD}'; do
                 if pk12util -i \"\$ADMIN_P12\" -d \$NSS_DB -k /dev/null -W \"\$pw\" 2>/dev/null; then
                     echo 'Admin cert imported'
                     break

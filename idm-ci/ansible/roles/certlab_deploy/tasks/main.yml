@@ -276,7 +276,7 @@
 - name: Validate PKI mode
   ansible.builtin.assert:
     that: cert_lab_pki_mode | default('all') in ['rsa', 'ecc', 'pqc', 'dual', 'all']
-    fail_msg: "Invalid cert_lab_pki_mode '{{ cert_lab_pki_mode }}'. Valid: rsa, ecc, pqc, dual, all"
+    fail_msg: "Invalid cert_lab_pki_mode '{{ cert_lab_pki_mode | default('undefined') }}'. Valid: rsa, ecc, pqc, dual, all"
 
 - name: Resolve PKI mode flag
   ansible.builtin.set_fact:

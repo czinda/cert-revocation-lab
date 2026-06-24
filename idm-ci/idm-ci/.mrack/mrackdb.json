@@ -1,0 +1,84 @@
+{
+  "hosts": [
+    {
+      "error": null,
+      "group": "certlab",
+      "host_id": "J:12774451",
+      "ip_addrs": [
+        "10.6.10.50"
+      ],
+      "meta_extra": null,
+      "name": "certlab.certlab.test",
+      "operating_system": "fedora-latest",
+      "password": null,
+      "provider": "beaker",
+      "rawdata": {
+        "JobID": "J:12774451",
+        "id": "12774451",
+        "logs": {
+          "boot.log": "https://beaker.engineering.redhat.com/recipes/21458399/logs/boot.log",
+          "console.log": "https://beaker.engineering.redhat.com/recipes/21458399/logs/console.log",
+          "dmesg.log": "https://beaker.engineering.redhat.com/recipes/21458399/tasks/219682161/results/1010089422/logs/dmesg.log",
+          "harness.log": "https://beaker.engineering.redhat.com/recipes/21458399/tasks/219682161/logs/harness.log",
+          "resultoutputfile.log": "https://beaker.engineering.redhat.com/recipes/21458399/tasks/219682161/results/1010089422/logs/resultoutputfile.log",
+          "systemd_journal.log": "https://beaker.engineering.redhat.com/recipes/21458399/logs/systemd_journal.log",
+          "taskout.log": "https://beaker.engineering.redhat.com/recipes/21458399/tasks/219682161/logs/taskout.log"
+        },
+        "mrack_req": {
+          "arch": "x86_64",
+          "distro": "Fedora-42%",
+          "distro_tags": [],
+          "group": "certlab",
+          "hostRequires": {
+            "and": [
+              {
+                "cpu_count": {
+                  "_op": ">=",
+                  "_value": 16
+                }
+              },
+              {
+                "memory": {
+                  "_op": ">=",
+                  "_value": 65536
+                }
+              }
+            ]
+          },
+          "job_group": null,
+          "job_owner": null,
+          "kernel_options": null,
+          "kernel_options_post": null,
+          "ks_append": [
+            "%post\n%end\n%post\nmkdir -p /root/.ssh\ncat >>/root/.ssh/authorized_keys << \"__EOF__\"\n# keys added by mrack:\nssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHzoJ2XLaxDVOweQZ4cyeKUQIsZ7/Pi+xkHxZDAQYH6m czinda@czinda1-mac\n# end section of keys added by mrack\n__EOF__\nrestorecon -R /root/.ssh\nchmod go-w /root /root/.ssh /root/.ssh/authorized_keys\n%end"
+          ],
+          "ks_meta": null,
+          "meta_distro": false,
+          "name": "certlab.certlab.test",
+          "os": "fedora-latest",
+          "priority": "Normal",
+          "product": "[internal]",
+          "retention_tag": "audit",
+          "tasks": [
+            {
+              "name": "/distribution/dummy",
+              "params": [
+                "RSTRNT_DISABLED=10_avc_check"
+              ],
+              "role": "STANDALONE"
+            }
+          ],
+          "variant": "Server",
+          "watchdog": null,
+          "whiteboard": "This job has been created using mrack."
+        },
+        "result": "Pass",
+        "rid": "21458399",
+        "status": "Reserved",
+        "system": "hpe-dl560egen8-01.khw.eng.rdu2.dc.redhat.com"
+      },
+      "status": "active",
+      "username": "root"
+    }
+  ]
+}

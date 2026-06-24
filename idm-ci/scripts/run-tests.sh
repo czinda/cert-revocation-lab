@@ -52,11 +52,12 @@ if [ "$RUN_FULL_TESTS" = "true" ]; then
             "cd /opt/cert-revocation-lab && sudo -u certlab ./lab test-advanced --suite lifecycle --pki-type rsa"
 
         # PQ tests (when deployed with pqc or all mode)
-        PKI_MODE="${PKI_MODE:-rsa}"
         if [ "$PKI_MODE" = "pqc" ] || [ "$PKI_MODE" = "all" ] || [ "$PKI_MODE" = "dual" ]; then
             echo "=== Running PQ (ML-DSA-87) tests ==="
-            ssh -o StrictHostKeyChecking=no "root@$CERTLAB_HOST" \
-                "cd /opt/cert-revocation-lab && sudo -u certlab ./lab test --pki-type pqc --scenario 'Certificate Private Key Compromise'" || true
+            if ! ssh -o StrictHostKeyChecking=no "root@$CERTLAB_HOST" \
+                "cd /opt/cert-revocation-lab && sudo -u certlab ./lab test --pki-type pqc --scenario 'Certificate Private Key Compromise'"; then
+                echo "WARNING: PQ test failed (exit code $?)"
+            fi
         fi
     else
         echo "WARNING: Could not determine host from inventory, skipping full tests"

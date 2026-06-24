@@ -1,0 +1,21 @@
+all:
+  children:
+    certlab:
+      hosts:
+        certlab.certlab.test: {}
+  hosts:
+    certlab.certlab.test:
+      ansible_host: 10.6.10.50
+      ansible_python_interpreter: /usr/bin/python3
+      ansible_ssh_common_args: -o 'StrictHostKeyChecking=no' -o 'UserKnownHostsFile=/dev/null'
+      ansible_ssh_private_key_file: /Users/czinda/.ssh/id_ed25519
+      ansible_user: root
+      meta_dc_record: DC=certlab,DC=test
+      meta_domain: certlab.test
+      meta_fqdn: certlab.certlab.test
+      meta_hostname: certlab
+      meta_ip: 10.6.10.50
+      meta_os: fedora-latest
+      meta_os_type: linux
+      meta_provider: beaker
+      meta_provider_id: J:12774451
