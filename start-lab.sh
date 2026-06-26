@@ -668,15 +668,92 @@ start_pq_pki_hierarchy() {
     else
         log_info "Starting PQ PKI containers (requires sudo for privileged mode)..."
 
-        if is_running_as_root; then
-            podman-compose -f pki-pq-compose.yml up -d
-        else
-            sudo podman-compose -f pki-pq-compose.yml up -d
-        fi
+        # Start DS containers ONE AT A TIME to avoid ns-slapd initialization race.
+        # podman-compose ignores depends_on service_healthy conditions, so launching
+        # all DS containers simultaneously causes 2-3 to crash from resource contention
+        # during concurrent NSS database creation and slapd startup.
+        log_info "Starting PQ Directory Servers sequentially (avoiding init race)..."
+        for ds in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-ocsp ds-pq-kra; do
+            log_info "Starting $ds..."
+            if is_running_as_root; then
+                podman-compose -f pki-pq-compose.yml up -d --no-recreate "$ds"
+            else
+                sudo podman-compose -f pki-pq-compose.yml up -d --no-recreate "$ds"
+            fi
 
-        # Wait for all PQ containers to be running
-        log_info "Waiting for PQ PKI containers to start..."
-        for ctr in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-ocsp ds-pq-kra dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-ocsp dogtag-pq-kra dogtag-pq-est-ca; do
+            # Wait for this DS to become healthy before starting the next
+            local elapsed=0
+            local max_wait=180
+            while [ $elapsed -lt $max_wait ]; do
+                local health=""
+                if is_running_as_root; then
+                    health=$(podman inspect --format '{{.State.Health.Status}}' "$ds" 2>/dev/null || echo "none")
+                else
+                    health=$(sudo podman inspect --format '{{.State.Health.Status}}' "$ds" 2>/dev/null || echo "none")
+                fi
+                if [ "$health" = "healthy" ]; then
+                    log_success "$ds is healthy"
+                    break
+                fi
+                # Check if container exited (crashed) — retry once
+                local state=""
+                if is_running_as_root; then
+                    state=$(podman inspect --format '{{.State.Status}}' "$ds" 2>/dev/null || echo "missing")
+                else
+                    state=$(sudo podman inspect --format '{{.State.Status}}' "$ds" 2>/dev/null || echo "missing")
+                fi
+                if [ "$state" = "exited" ]; then
+                    log_warn "$ds crashed during init, retrying..."
+                    if is_running_as_root; then
+                        podman rm -f "$ds" 2>/dev/null
+                        podman volume rm -f "cert-revocation-lab_${ds}-data" 2>/dev/null
+                        podman-compose -f pki-pq-compose.yml up -d --no-recreate "$ds"
+                    else
+                        sudo podman rm -f "$ds" 2>/dev/null
+                        sudo podman volume rm -f "cert-revocation-lab_${ds}-data" 2>/dev/null
+                        sudo podman-compose -f pki-pq-compose.yml up -d --no-recreate "$ds"
+                    fi
+                fi
+                sleep 10
+                ((elapsed += 10)) || true
+            done
+            if [ $elapsed -ge $max_wait ]; then
+                log_warn "$ds did not become healthy within ${max_wait}s"
+            fi
+        done
+
+        # Now start CA containers individually with podman start.
+        # DO NOT use podman-compose up here — it reconciles the entire project
+        # and recreates the DS containers we just started sequentially, re-triggering
+        # the parallel init race condition.
+        log_info "Starting PQ Dogtag CA containers..."
+        for ca in dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-est-ca dogtag-pq-ocsp dogtag-pq-kra; do
+            local ca_state=""
+            if is_running_as_root; then
+                ca_state=$(podman inspect --format '{{.State.Status}}' "$ca" 2>/dev/null || echo "missing")
+            else
+                ca_state=$(sudo podman inspect --format '{{.State.Status}}' "$ca" 2>/dev/null || echo "missing")
+            fi
+            if [ "$ca_state" = "running" ]; then
+                log_success "$ca already running"
+            elif [ "$ca_state" = "created" ] || [ "$ca_state" = "exited" ]; then
+                if is_running_as_root; then
+                    podman start "$ca" 2>/dev/null
+                else
+                    sudo podman start "$ca" 2>/dev/null
+                fi
+            else
+                # Container doesn't exist yet — create it via compose (single service)
+                if is_running_as_root; then
+                    podman-compose -f pki-pq-compose.yml up -d --no-recreate "$ca"
+                else
+                    sudo podman-compose -f pki-pq-compose.yml up -d --no-recreate "$ca"
+                fi
+            fi
+        done
+
+        # Wait for CA containers to be running
+        for ctr in dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-est-ca dogtag-pq-ocsp dogtag-pq-kra; do
             local elapsed=0
             while [ $elapsed -lt 60 ]; do
                 local status=""
@@ -695,27 +772,6 @@ start_pq_pki_hierarchy() {
             if [ $elapsed -ge 60 ]; then
                 log_warn "$ctr did not start within 60s"
             fi
-        done
-
-        # Wait for PQ 389DS to be healthy
-        log_info "Waiting for PQ Directory Servers to be ready..."
-        for ds in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-ocsp; do
-            local elapsed=0
-            while [ $elapsed -lt 120 ]; do
-                if is_running_as_root; then
-                    if podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
-                        log_success "$ds is ready"
-                        break
-                    fi
-                else
-                    if sudo podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
-                        log_success "$ds is ready"
-                        break
-                    fi
-                fi
-                sleep 5
-                ((elapsed += 5)) || true
-            done
         done
     fi
 
