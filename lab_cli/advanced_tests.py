@@ -39,8 +39,8 @@ from .protocols import (
     est_reenroll_certificate,
     est_get_cacerts,
     acme_issue_certificate,
-    EST_ENDPOINTS,
-    ACME_ENDPOINTS,
+    _get_est_url,
+    _get_acme_url,
 )
 from .services import (
     detect_deployed_pkis,
@@ -302,7 +302,7 @@ def test_est_enroll_revoke(
     so the certificate lives in the Intermediate CA's database. Revocation must
     target the Intermediate CA, not the EST RA.
     """
-    if pki_type not in EST_ENDPOINTS:
+    if _get_est_url(pki_type) is None:
         return False, f"SKIP: EST not available for {pki_type.value} PKI"
 
     _, fqdn = _device_fqdn(config, "estenroll")
@@ -349,10 +349,10 @@ def test_est_renewal(
     console: Console,
 ) -> TestOutcome:
     """EST enroll, then re-enroll to renew. Verify new cert has different serial."""
-    if pki_type not in EST_ENDPOINTS:
+    est_url = _get_est_url(pki_type)
+    if est_url is None:
         return False, f"SKIP: EST not available for {pki_type.value} PKI"
 
-    est_url = EST_ENDPOINTS[pki_type]
     _, fqdn = _device_fqdn(config, "estrenew")
 
     # Do initial enrollment manually so we keep the private key for TLS
@@ -474,9 +474,9 @@ def test_est_cacerts(
             pki = PKIType(pki_str)
         except ValueError:
             continue
-        if pki not in EST_ENDPOINTS:
+        est_url = _get_est_url(pki)
+        if est_url is None:
             continue
-        est_url = EST_ENDPOINTS[pki]
         result = est_get_cacerts(est_url)
         results.append((pki.value, result.success, result.message))
 
@@ -500,7 +500,7 @@ def test_acme_issue_revoke(
     console: Console,
 ) -> TestOutcome:
     """Issue cert via ACME, trigger EDR event, poll for revocation on ACME CA."""
-    if pki_type not in ACME_ENDPOINTS:
+    if _get_acme_url(pki_type) is None:
         return False, f"SKIP: ACME not available for {pki_type.value} PKI"
 
     # Check ACME CA health

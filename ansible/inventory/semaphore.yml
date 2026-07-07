@@ -72,27 +72,33 @@ all:
       kmip_server: 8092
       pki_exporter: 9091
 
+    # Enrollment backend: "akamu" (Kipuka EST/ACME) or "dogtag" (Dogtag EST/ACME RAs)
+    # Controls default container names for EST/ACME Registration Authorities.
+    enrollment_backend: "{{ lookup('env', 'ENROLLMENT_BACKEND') | default('akamu', true) }}"
+
     # Container name mappings per PKI type
+    # CA containers (root, intermediate, iot, ocsp, kra) are always Dogtag.
+    # EST/ACME RA containers vary by enrollment_backend.
     container_names:
       rsa:
         root: dogtag-root-ca
         intermediate: dogtag-intermediate-ca
         iot: dogtag-iot-ca
-        est: dogtag-est-ca
-        acme: dogtag-acme-ca
+        est: "{{ (enrollment_backend == 'akamu') | ternary('kipuka-rsa', 'dogtag-est-ca') }}"
+        acme: "{{ (enrollment_backend == 'akamu') | ternary('kipuka-rsa', 'dogtag-acme-ca') }}"
         ocsp: dogtag-ocsp
         kra: dogtag-kra
       ecc:
         root: dogtag-ecc-root-ca
         intermediate: dogtag-ecc-intermediate-ca
         iot: dogtag-ecc-iot-ca
-        est: dogtag-ecc-est-ca
+        est: "{{ (enrollment_backend == 'akamu') | ternary('kipuka-ecc', 'dogtag-ecc-est-ca') }}"
         ocsp: dogtag-ecc-ocsp
         kra: dogtag-ecc-kra
       pq:
         root: dogtag-pq-root-ca
         intermediate: dogtag-pq-intermediate-ca
         iot: dogtag-pq-iot-ca
-        est: dogtag-pq-est-ca
+        est: "{{ (enrollment_backend == 'akamu') | ternary('kipuka-pq', 'dogtag-pq-est-ca') }}"
         ocsp: dogtag-pq-ocsp
         kra: dogtag-pq-kra

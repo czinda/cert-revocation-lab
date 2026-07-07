@@ -35,6 +35,13 @@
     log_file: "{{ lookup('env', 'LAB_LOG_DIR') | default('/opt/cert-lab/logs', true) }}/dogtag-issuance.log"
 
     # RSA PKI configuration
+    # NOTE: EST and ACME are Registration Authorities (lightweight proxies to
+    # Intermediate CA), not full CAs. They have no CA subsystem, no LDAP, and
+    # no NSS database — so `pki ca-cert-request-submit` via podman exec will
+    # not work against them. Certificates issued via EST/ACME are managed by
+    # the Intermediate CA. Use ca_level=intermediate to interact with them.
+    # EST/ACME enrollment is handled via protocol endpoints (RFC 7030/8555),
+    # not via this playbook.
     ca_configs:
       root:
         container: "dogtag-root-ca"
@@ -51,16 +58,6 @@
         url: "https://iot-ca.cert-lab.local:8443"
         instance: "pki-iot-ca"
         nss_db: "/var/lib/pki/pki-iot-ca/alias"
-      est:
-        container: "dogtag-est-ca"
-        url: "https://est-ca.cert-lab.local:8443"
-        instance: "pki-est-ca"
-        nss_db: "/var/lib/pki/pki-est-ca/alias"
-      acme:
-        container: "dogtag-acme-ca"
-        url: "https://acme-ca.cert-lab.local:8443"
-        instance: "pki-acme-ca"
-        nss_db: "/var/lib/pki/pki-acme-ca/alias"
 
   tasks:
     - name: Set CA configuration

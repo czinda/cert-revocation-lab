@@ -20,6 +20,8 @@ if [ "${1:-}" == "--help" ] || [ "${1:-}" == "-h" ]; then
     echo "  --pqc      Stop ML-DSA-87 PKI containers only"
     echo "  --all      Stop all PKI containers (RSA + ECC + PQ)"
     echo "  --clean    Stop and remove all containers, volumes, and data"
+    echo "  --enrollment-backend {akamu|dogtag}"
+    echo "               Override enrollment backend profile (default: from .env or akamu)"
     echo "  --help     Show this help message"
     echo ""
     echo "Examples:"
@@ -34,35 +36,50 @@ STOP_RSA_PKI=true
 STOP_ECC_PKI=true
 STOP_PQ_PKI=true
 STOP_ALL=true
+DO_CLEAN=false
 
-for arg in "$@"; do
-    case "$arg" in
+while [[ $# -gt 0 ]]; do
+    case "$1" in
         --rsa)
             STOP_ALL=false
             STOP_RSA_PKI=true
             STOP_ECC_PKI=false
             STOP_PQ_PKI=false
+            shift
             ;;
         --ecc)
             STOP_ALL=false
             STOP_RSA_PKI=false
             STOP_ECC_PKI=true
             STOP_PQ_PKI=false
+            shift
             ;;
         --pqc|--pq|--ml-dsa)
             STOP_ALL=false
             STOP_RSA_PKI=false
             STOP_ECC_PKI=false
             STOP_PQ_PKI=true
+            shift
             ;;
         --all)
             STOP_ALL=true
             STOP_RSA_PKI=true
             STOP_ECC_PKI=true
             STOP_PQ_PKI=true
+            shift
             ;;
         --clean)
             STOP_ALL=true
+            DO_CLEAN=true
+            shift
+            ;;
+        --enrollment-backend)
+            shift
+            ENROLLMENT_BACKEND="$1"
+            shift
+            ;;
+        *)
+            shift
             ;;
     esac
 done
@@ -75,6 +92,17 @@ echo
 # Get project name (directory name, used by podman-compose)
 PROJECT_NAME=$(basename "$SCRIPT_DIR")
 
+# Resolve enrollment backend from .env or environment (for correct --profile)
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    _env_backend=$(grep -E '^ENROLLMENT_BACKEND=' "$SCRIPT_DIR/.env" 2>/dev/null | cut -d= -f2 | tr -d '"' | tr -d "'")
+fi
+ENROLLMENT_BACKEND="${ENROLLMENT_BACKEND:-${_env_backend:-akamu}}"
+case "$ENROLLMENT_BACKEND" in
+    akamu)   COMPOSE_PROFILE="--profile akamu" ;;
+    dogtag)  COMPOSE_PROFILE="--profile dogtag-ra" ;;
+    *)       COMPOSE_PROFILE="" ;;
+esac
+
 # Stop all containers
 if [ "$STOP_ALL" = true ]; then
     log_info "Stopping all rootless containers..."
@@ -84,19 +112,19 @@ fi
 # Stop RSA PKI containers (rootful)
 if [ "$STOP_RSA_PKI" = true ] && [ -f pki-compose.yml ]; then
     log_info "Stopping RSA-4096 PKI containers (requires sudo)..."
-    sudo podman-compose -f pki-compose.yml down 2>/dev/null || true
+    sudo podman-compose -f pki-compose.yml $COMPOSE_PROFILE down 2>/dev/null || true
 fi
 
 # Stop ECC PKI containers (rootful)
 if [ "$STOP_ECC_PKI" = true ] && [ -f pki-ecc-compose.yml ]; then
     log_info "Stopping ECC P-384 PKI containers (requires sudo)..."
-    sudo podman-compose -f pki-ecc-compose.yml down 2>/dev/null || true
+    sudo podman-compose -f pki-ecc-compose.yml $COMPOSE_PROFILE down 2>/dev/null || true
 fi
 
 # Stop PQ PKI containers (rootful)
 if [ "$STOP_PQ_PKI" = true ] && [ -f pki-pq-compose.yml ]; then
     log_info "Stopping ML-DSA-87 PKI containers (requires sudo)..."
-    sudo podman-compose -f pki-pq-compose.yml down 2>/dev/null || true
+    sudo podman-compose -f pki-pq-compose.yml $COMPOSE_PROFILE down 2>/dev/null || true
 fi
 
 # Stop FreeIPA containers (rootful)
@@ -122,7 +150,7 @@ if [ -n "$REMAINING_ROOT" ]; then
     echo "$REMAINING_ROOT" | xargs -r sudo podman rm -f 2>/dev/null || true
 fi
 
-if [ "$1" == "--clean" ]; then
+if [ "$DO_CLEAN" = true ]; then
     echo
     echo -e "${YELLOW}WARNING: This will remove all data including:${NC}"
     echo "  - PKI certificates and keys"

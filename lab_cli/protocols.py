@@ -1,16 +1,20 @@
 """
 ACME and EST protocol clients for certificate issuance.
+
+Endpoint URLs are built dynamically from CA_CONFIGS, which reflects the
+active ENROLLMENT_BACKEND (akamu or dogtag).  No hardcoded hostnames.
 """
 
 import base64
 import json
+import socket
 import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from .config import LabConfig, PKIType
+from .config import CA_CONFIGS, ENROLLMENT_BACKEND, LabConfig, PKIType
 
 
 @dataclass
@@ -23,17 +27,48 @@ class ProtocolResult:
     details: Optional[dict] = None
 
 
-# ACME CA endpoint configuration (host access via port mappings)
-ACME_ENDPOINTS = {
-    PKIType.RSA: "https://acme-ca.cert-lab.local:8446/acme",
-}
+# ---------------------------------------------------------------------------
+# Dynamic endpoint resolution from CA_CONFIGS
+# ---------------------------------------------------------------------------
 
-# EST endpoint configuration (EST runs on dedicated EST CAs, host access via port mappings)
-EST_ENDPOINTS = {
-    PKIType.RSA: "https://est-ca.cert-lab.local:8447/.well-known/est",
-    PKIType.ECC: "https://ecc-est-ca.cert-lab.local:8466/.well-known/est",
-    PKIType.PQC: "https://pq-est-ca.cert-lab.local:8456/.well-known/est",
-}
+def _resolve_host(hostname: str, port: int) -> str:
+    """Resolve hostname, falling back to localhost if DNS is unavailable."""
+    try:
+        socket.getaddrinfo(hostname, port, socket.AF_INET, socket.SOCK_STREAM)
+        return hostname
+    except socket.gaierror:
+        return "localhost"
+
+
+def _get_acme_url(pki_type: PKIType) -> Optional[str]:
+    """Build the ACME base URL for *pki_type* from CA_CONFIGS.
+
+    Returns ``None`` when no ACME config exists for the requested hierarchy
+    (e.g. ECC and PQ have no ACME RA with the dogtag backend).
+    """
+    pki = pki_type.value
+    if pki not in CA_CONFIGS or "acme" not in CA_CONFIGS[pki]:
+        return None
+    ca = CA_CONFIGS[pki]["acme"]
+    scheme = "http" if ca.url.startswith("http://") else "https"
+    port = ca.http_port or ca.host_port
+    host = _resolve_host(ca.hostname, port)
+    return f"{scheme}://{host}:{port}/acme"
+
+
+def _get_est_url(pki_type: PKIType) -> Optional[str]:
+    """Build the EST base URL for *pki_type* from CA_CONFIGS.
+
+    Returns ``None`` when no EST config exists for the requested hierarchy.
+    """
+    pki = pki_type.value
+    if pki not in CA_CONFIGS or "est" not in CA_CONFIGS[pki]:
+        return None
+    ca = CA_CONFIGS[pki]["est"]
+    scheme = "http" if ca.url.startswith("http://") else "https"
+    port = ca.http_port or ca.host_port
+    host = _resolve_host(ca.hostname, port)
+    return f"{scheme}://{host}:{port}/.well-known/est"
 
 
 def acme_issue_certificate(
@@ -57,13 +92,12 @@ def acme_issue_certificate(
     Returns:
         ProtocolResult with certificate details
     """
-    if pki_type not in ACME_ENDPOINTS:
+    acme_url = _get_acme_url(pki_type)
+    if acme_url is None:
         return ProtocolResult(
             success=False,
-            message=f"ACME not available for {pki_type.value} PKI. Only RSA is supported."
+            message=f"ACME not available for {pki_type.value} PKI (backend={ENROLLMENT_BACKEND})."
         )
-
-    acme_url = ACME_ENDPOINTS[pki_type]
 
     # Use certbot in standalone mode with manual DNS challenge
     # For lab purposes, we'll use HTTP-01 challenge
@@ -184,13 +218,12 @@ def est_enroll_certificate(
     Returns:
         ProtocolResult with certificate details
     """
-    if pki_type not in EST_ENDPOINTS:
+    est_url = _get_est_url(pki_type)
+    if est_url is None:
         return ProtocolResult(
             success=False,
-            message=f"EST not available for {pki_type.value} PKI"
+            message=f"EST not available for {pki_type.value} PKI (backend={ENROLLMENT_BACKEND})"
         )
-
-    est_url = EST_ENDPOINTS[pki_type]
 
     # First, get CA certificates
     cacerts_result = est_get_cacerts(est_url)
@@ -417,13 +450,12 @@ def est_reenroll_certificate(
 
     Requires existing client certificate for authentication.
     """
-    if pki_type not in EST_ENDPOINTS:
+    est_url = _get_est_url(pki_type)
+    if est_url is None:
         return ProtocolResult(
             success=False,
-            message=f"EST not available for {pki_type.value} PKI"
+            message=f"EST not available for {pki_type.value} PKI (backend={ENROLLMENT_BACKEND})"
         )
-
-    est_url = EST_ENDPOINTS[pki_type]
 
     with tempfile.TemporaryDirectory() as tmpdir:
         key_path = Path(tmpdir) / "key.pem"

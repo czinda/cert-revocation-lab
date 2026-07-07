@@ -572,9 +572,9 @@ start_pki_hierarchy() {
 
         # Start PKI containers with rootful podman
         if is_running_as_root; then
-            podman-compose -f pki-compose.yml up -d
+            podman-compose -f pki-compose.yml $COMPOSE_PROFILE up -d
         else
-            sudo podman-compose -f pki-compose.yml up -d
+            sudo podman-compose -f pki-compose.yml $COMPOSE_PROFILE up -d
         fi
 
         # Wait for all containers to be running
@@ -626,11 +626,21 @@ start_pki_hierarchy() {
     # The init script needs to run with rootful podman access
     log_info "Initializing PKI hierarchy..."
     if is_running_as_root; then
-        # Already root, just run the script
         bash scripts/pki/init-pki-hierarchy.sh
     else
-        # Need sudo for rootful podman access
         sudo bash scripts/pki/init-pki-hierarchy.sh
+    fi
+
+    # Initialize enrollment backend (Akamu/Kipuka or Dogtag ACME/EST)
+    if [ "$ENROLLMENT_BACKEND" = "akamu" ]; then
+        log_info "Initializing Akamu ACME + Kipuka EST backend..."
+        if is_running_as_root; then
+            bash scripts/pki/init-akamu-kipuka.sh rsa
+        else
+            sudo bash scripts/pki/init-akamu-kipuka.sh rsa
+        fi
+    else
+        log_info "Dogtag ACME/EST RA initialization handled by init-pki-hierarchy.sh"
     fi
 
     log_success "PKI hierarchy initialized"
@@ -676,9 +686,9 @@ start_pq_pki_hierarchy() {
         for ds in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-ocsp ds-pq-kra; do
             log_info "Starting $ds..."
             if is_running_as_root; then
-                podman-compose -f pki-pq-compose.yml up -d --no-recreate "$ds"
+                podman-compose -f pki-pq-compose.yml $COMPOSE_PROFILE up -d --no-recreate "$ds"
             else
-                sudo podman-compose -f pki-pq-compose.yml up -d --no-recreate "$ds"
+                sudo podman-compose -f pki-pq-compose.yml $COMPOSE_PROFILE up -d --no-recreate "$ds"
             fi
 
             # Wait for this DS to become healthy before starting the next
@@ -707,11 +717,11 @@ start_pq_pki_hierarchy() {
                     if is_running_as_root; then
                         podman rm -f "$ds" 2>/dev/null
                         podman volume rm -f "cert-revocation-lab_${ds}-data" 2>/dev/null
-                        podman-compose -f pki-pq-compose.yml up -d --no-recreate "$ds"
+                        podman-compose -f pki-pq-compose.yml $COMPOSE_PROFILE up -d --no-recreate "$ds"
                     else
                         sudo podman rm -f "$ds" 2>/dev/null
                         sudo podman volume rm -f "cert-revocation-lab_${ds}-data" 2>/dev/null
-                        sudo podman-compose -f pki-pq-compose.yml up -d --no-recreate "$ds"
+                        sudo podman-compose -f pki-pq-compose.yml $COMPOSE_PROFILE up -d --no-recreate "$ds"
                     fi
                 fi
                 sleep 10
@@ -745,9 +755,9 @@ start_pq_pki_hierarchy() {
             else
                 # Container doesn't exist yet — create it via compose (single service)
                 if is_running_as_root; then
-                    podman-compose -f pki-pq-compose.yml up -d --no-recreate "$ca"
+                    podman-compose -f pki-pq-compose.yml $COMPOSE_PROFILE up -d --no-recreate "$ca"
                 else
-                    sudo podman-compose -f pki-pq-compose.yml up -d --no-recreate "$ca"
+                    sudo podman-compose -f pki-pq-compose.yml $COMPOSE_PROFILE up -d --no-recreate "$ca"
                 fi
             fi
         done
@@ -788,6 +798,18 @@ start_pq_pki_hierarchy() {
         sudo bash scripts/pki/init-pq-pki-hierarchy.sh || log_warn "PQ PKI init incomplete (expected — NSS ML-DSA-87 limitation)"
     fi
 
+    # Initialize enrollment backend (Akamu/Kipuka or Dogtag ACME/EST)
+    if [ "$ENROLLMENT_BACKEND" = "akamu" ]; then
+        log_info "Initializing Akamu ACME + Kipuka EST backend (PQ)..."
+        if is_running_as_root; then
+            bash scripts/pki/init-akamu-kipuka.sh pq || log_warn "Akamu/Kipuka PQ init incomplete"
+        else
+            sudo bash scripts/pki/init-akamu-kipuka.sh pq || log_warn "Akamu/Kipuka PQ init incomplete"
+        fi
+    else
+        log_info "Dogtag ACME/EST RA initialization handled by init-pq-pki-hierarchy.sh"
+    fi
+
     log_success "PQ PKI containers started (hierarchy init may be partial)"
 }
 
@@ -818,9 +840,9 @@ start_ecc_pki_hierarchy() {
         log_info "Starting ECC PKI containers (requires sudo for privileged mode)..."
 
         if is_running_as_root; then
-            podman-compose -f pki-ecc-compose.yml up -d
+            podman-compose -f pki-ecc-compose.yml $COMPOSE_PROFILE up -d
         else
-            sudo podman-compose -f pki-ecc-compose.yml up -d
+            sudo podman-compose -f pki-ecc-compose.yml $COMPOSE_PROFILE up -d
         fi
 
         # Wait for all ECC containers to be running
@@ -875,6 +897,18 @@ start_ecc_pki_hierarchy() {
         bash scripts/pki/init-ecc-pki-hierarchy.sh
     else
         sudo bash scripts/pki/init-ecc-pki-hierarchy.sh
+    fi
+
+    # Initialize enrollment backend (Akamu/Kipuka or Dogtag ACME/EST)
+    if [ "$ENROLLMENT_BACKEND" = "akamu" ]; then
+        log_info "Initializing Akamu ACME + Kipuka EST backend (ECC)..."
+        if is_running_as_root; then
+            bash scripts/pki/init-akamu-kipuka.sh ecc
+        else
+            sudo bash scripts/pki/init-akamu-kipuka.sh ecc
+        fi
+    else
+        log_info "Dogtag ACME/EST RA initialization handled by init-ecc-pki-hierarchy.sh"
     fi
 
     log_success "ECC PKI hierarchy initialized"
@@ -1416,12 +1450,12 @@ quick_start() {
         else
             log_info "Starting PKI containers (from pki-compose.yml)..."
             if [ "$RUNNING_AS_ROOT" = true ]; then
-                podman-compose -f pki-compose.yml up -d 2>/dev/null || {
+                podman-compose -f pki-compose.yml $COMPOSE_PROFILE up -d 2>/dev/null || {
                     log_warn "Failed to start PKI containers"
                 }
             else
-                sudo podman-compose -f pki-compose.yml up -d 2>/dev/null || {
-                    log_warn "Failed to start PKI containers. Try: sudo podman-compose -f pki-compose.yml up -d"
+                sudo podman-compose -f pki-compose.yml $COMPOSE_PROFILE up -d 2>/dev/null || {
+                    log_warn "Failed to start PKI containers. Try: sudo podman-compose -f pki-compose.yml $COMPOSE_PROFILE up -d"
                 }
             fi
 
@@ -1582,6 +1616,11 @@ main() {
                 START_PQ_PKI=true
                 shift
                 ;;
+            --enrollment-backend)
+                shift
+                ENROLLMENT_BACKEND="$1"
+                shift
+                ;;
             --help|-h)
                 echo "Usage: $0 [OPTIONS]"
                 echo ""
@@ -1596,6 +1635,10 @@ main() {
                 echo "  --quick    Start existing containers without initialization"
                 echo "  --clean    Remove all containers and volumes before starting"
                 echo "  --yes, -y  Skip confirmation prompts (for CI/CD)"
+                echo "  --enrollment-backend {akamu|dogtag}"
+                echo "               Select ACME/EST enrollment backend (default: akamu)"
+                echo "               akamu  = Akamu ACME reverse proxy + Kipuka EST dashboard"
+                echo "               dogtag = Dogtag native ACME/EST Registration Authorities"
                 echo "  --help     Show this help message"
                 echo ""
                 echo "Examples:"
@@ -1627,6 +1670,15 @@ main() {
         START_RSA_PKI=true
     fi
 
+    # Resolve enrollment backend: CLI flag > env var > default "akamu"
+    ENROLLMENT_BACKEND="${ENROLLMENT_BACKEND:-akamu}"
+    case "$ENROLLMENT_BACKEND" in
+        akamu)   COMPOSE_PROFILE="--profile akamu" ;;
+        dogtag)  COMPOSE_PROFILE="--profile dogtag-ra" ;;
+        *)       log_error "Unknown ENROLLMENT_BACKEND: $ENROLLMENT_BACKEND (use 'akamu' or 'dogtag')"; exit 1 ;;
+    esac
+    export ENROLLMENT_BACKEND
+
     # Handle clean start
     if [ "$do_clean" = true ]; then
         clean_start
@@ -1643,6 +1695,7 @@ main() {
     [ "$START_RSA_PKI" = true ] && echo "  - RSA-4096 (ports 8443-8445)"
     [ "$START_ECC_PKI" = true ] && echo "  - ECC P-384 (ports 8463-8465)"
     [ "$START_PQ_PKI" = true ] && echo "  - ML-DSA-87 (ports 8453-8455)"
+    echo "  Enrollment: ${ENROLLMENT_BACKEND} ($([ "$ENROLLMENT_BACKEND" = "akamu" ] && echo "Akamu ACME + Kipuka EST" || echo "Dogtag ACME/EST RA"))"
     echo ""
 
     # Run startup sequence

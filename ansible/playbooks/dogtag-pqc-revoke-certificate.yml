@@ -18,7 +18,9 @@
     pki_type: "pqc"
     pki_name: "ML-DSA-87"
 
-    # CA selection (root, intermediate, iot, est, acme)
+    # CA selection (root, intermediate, iot)
+    # NOTE: EST is a Registration Authority, not a CA. Certificates issued via
+    # EST are managed by the Intermediate CA — use ca_level=intermediate.
     # Prefer event.ca_level (set by test/caller) so revocation targets the correct CA,
     # fall back to ca_level from rulebook extra_vars, then default to iot
     target_ca: "{{ event.ca_level | default(ca_level | default('iot', true), true) }}"
@@ -50,6 +52,8 @@
     admin_creds_dir: "{{ certs_dir }}/pq/admin"
 
     # PQC PKI configuration
+    # NOTE: EST is a lightweight RA with no CA subsystem or admin P12.
+    # Certs issued via EST are managed by Intermediate CA — use ca_level=intermediate.
     ca_configs:
       root:
         name: "PQ Root CA"
@@ -72,13 +76,6 @@
         admin_cert: "{{ admin_creds_dir }}/pq-iot-admin-cert.pem"
         admin_key: "{{ admin_creds_dir }}/pq-iot-admin-key.pem"
         ca_cert: "{{ certs_dir }}/pq/iot-ca-chain.crt"
-      est:
-        name: "PQ EST CA"
-        container: "dogtag-pq-est-ca"
-        url: "https://pq-est-ca.cert-lab.local:8456"
-        admin_cert: "{{ admin_creds_dir }}/pq-est-admin-cert.pem"
-        admin_key: "{{ admin_creds_dir }}/pq-est-admin-key.pem"
-        ca_cert: "{{ certs_dir }}/pq/est-ca-chain.crt"
 
   tasks:
     - name: Set CA configuration

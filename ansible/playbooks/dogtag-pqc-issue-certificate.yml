@@ -38,6 +38,10 @@
     log_file: "{{ lookup('env', 'LAB_LOG_DIR') | default('/opt/cert-lab/logs', true) }}/dogtag-issuance.log"
 
     # PQC PKI configuration
+    # NOTE: EST is a Registration Authority (lightweight proxy to Intermediate CA),
+    # not a full CA. It has no CA subsystem, no LDAP, and no NSS database.
+    # Certificates issued via EST are managed by the Intermediate CA.
+    # Use ca_level=intermediate to interact with EST-issued certs.
     ca_configs:
       root:
         container: "dogtag-pq-root-ca"
@@ -54,11 +58,6 @@
         url: "https://pq-iot-ca.cert-lab.local:8443"
         instance: "pki-pq-iot-ca"
         nss_db: "/var/lib/pki/pki-pq-iot-ca/alias"
-      est:
-        container: "dogtag-pq-est-ca"
-        url: "https://pq-est-ca.cert-lab.local:8443"
-        instance: "pki-pq-est-ca"
-        nss_db: "/var/lib/pki/pki-pq-est-ca/alias"
 
   tasks:
     - name: Set CA configuration

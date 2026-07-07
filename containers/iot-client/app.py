@@ -52,6 +52,11 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Enrollment backend: "akamu" (Kipuka EST/ACME) or "dogtag" (Dogtag EST/ACME RAs)
+# Controls default hostnames and container names for EST enrollment endpoints.
+# Individual env vars (RSA_EST_CA_HOST, etc.) override these defaults.
+ENROLLMENT_BACKEND = os.getenv("ENROLLMENT_BACKEND", "akamu")
+
 
 class PKIType(str, Enum):
     RSA = "rsa"
@@ -68,7 +73,27 @@ class DeviceStatus(str, Enum):
     ERROR = "error"
 
 
+# EST defaults per enrollment backend
+# Akamu/Kipuka uses single-container names; Dogtag uses pki-server RA containers
+_EST_BACKEND_DEFAULTS = {
+    "akamu": {
+        PKIType.RSA: {"host": "kipuka-rsa.cert-lab.local", "port": 8447, "container": "kipuka-rsa", "instance": "kipuka-rsa"},
+        PKIType.ECC: {"host": "kipuka-ecc.cert-lab.local", "port": 8466, "container": "kipuka-ecc", "instance": "kipuka-ecc"},
+        PKIType.PQC: {"host": "kipuka-pq.cert-lab.local", "port": 8456, "container": "kipuka-pq", "instance": "kipuka-pq"},
+    },
+    "dogtag": {
+        PKIType.RSA: {"host": "est-ca.cert-lab.local", "port": 8447, "container": "dogtag-est-ca", "instance": "pki-est-ca"},
+        PKIType.ECC: {"host": "ecc-est-ca.cert-lab.local", "port": 8466, "container": "dogtag-ecc-est-ca", "instance": "pki-ecc-est-ca"},
+        PKIType.PQC: {"host": "pq-est-ca.cert-lab.local", "port": 8456, "container": "dogtag-pq-est-ca", "instance": "pki-pq-est-ca"},
+    },
+}
+
+# Select EST defaults based on configured backend
+_est_defaults = _EST_BACKEND_DEFAULTS.get(ENROLLMENT_BACKEND, _EST_BACKEND_DEFAULTS["akamu"])
+
+
 # CA Configuration per PKI type (IoT CA - REST API cert issuance)
+# These are the real Dogtag CAs and do not change with enrollment backend.
 CA_CONFIG = {
     PKIType.RSA: {
         "host": os.getenv("RSA_IOT_CA_HOST", "iot-ca.cert-lab.local"),
@@ -99,28 +124,29 @@ CA_CONFIG = {
     },
 }
 
-# EST CA Configuration per PKI type (dedicated EST Sub-CAs)
+# EST Configuration per PKI type (Registration Authorities for EST enrollment)
+# Defaults are set by ENROLLMENT_BACKEND; individual env vars override.
 EST_CA_CONFIG = {
     PKIType.RSA: {
-        "host": os.getenv("RSA_EST_CA_HOST", "est-ca.cert-lab.local"),
-        "port": int(os.getenv("RSA_EST_CA_PORT", "8447")),
+        "host": os.getenv("RSA_EST_CA_HOST", _est_defaults[PKIType.RSA]["host"]),
+        "port": int(os.getenv("RSA_EST_CA_PORT", str(_est_defaults[PKIType.RSA]["port"]))),
         "internal_port": 8443,
-        "container": "dogtag-est-ca",
-        "instance": "pki-est-ca",
+        "container": os.getenv("RSA_EST_CONTAINER", _est_defaults[PKIType.RSA]["container"]),
+        "instance": _est_defaults[PKIType.RSA]["instance"],
     },
     PKIType.ECC: {
-        "host": os.getenv("ECC_EST_CA_HOST", "ecc-est-ca.cert-lab.local"),
-        "port": int(os.getenv("ECC_EST_CA_PORT", "8466")),
+        "host": os.getenv("ECC_EST_CA_HOST", _est_defaults[PKIType.ECC]["host"]),
+        "port": int(os.getenv("ECC_EST_CA_PORT", str(_est_defaults[PKIType.ECC]["port"]))),
         "internal_port": 8443,
-        "container": "dogtag-ecc-est-ca",
-        "instance": "pki-ecc-est-ca",
+        "container": os.getenv("ECC_EST_CONTAINER", _est_defaults[PKIType.ECC]["container"]),
+        "instance": _est_defaults[PKIType.ECC]["instance"],
     },
     PKIType.PQC: {
-        "host": os.getenv("PQC_EST_CA_HOST", "pq-est-ca.cert-lab.local"),
-        "port": int(os.getenv("PQC_EST_CA_PORT", "8456")),
+        "host": os.getenv("PQC_EST_CA_HOST", _est_defaults[PKIType.PQC]["host"]),
+        "port": int(os.getenv("PQC_EST_CA_PORT", str(_est_defaults[PKIType.PQC]["port"]))),
         "internal_port": 8443,
-        "container": "dogtag-pq-est-ca",
-        "instance": "pki-pq-est-ca",
+        "container": os.getenv("PQC_EST_CONTAINER", _est_defaults[PKIType.PQC]["container"]),
+        "instance": _est_defaults[PKIType.PQC]["instance"],
     },
 }
 
@@ -725,6 +751,7 @@ async def get_statistics():
 async def startup_event():
     """Startup event handler"""
     logger.info("IoT Client Simulator starting...")
+    logger.info(f"Enrollment backend: {ENROLLMENT_BACKEND}")
     logger.info("Checking CA and EST availability...")
 
     for pki_type in PKIType:

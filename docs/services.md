@@ -364,9 +364,69 @@ Key Recovery Authority instances providing key archival and recovery services. D
 
 ## PKI Registration Authorities (EST and ACME)
 
-EST and ACME containers are deployed as **standalone Registration Authorities** -- lightweight `pki-server create` instances with no CA subsystem, no signing keys, and no LDAP backend. They proxy enrollment requests to the Intermediate CA via its REST API. This separation means compromising an RA does not compromise any signing keys.
+Enrollment Registration Authorities proxy certificate enrollment to the Intermediate CA. The lab supports two backends, controlled by the `ENROLLMENT_BACKEND` environment variable (default: `akamu`). Both backends keep signing keys on the Intermediate CA -- compromising an RA does not compromise any signing keys.
 
-### EST Registration Authority (RFC 7030)
+### Enrollment Backend Selection
+
+| Backend | `ENROLLMENT_BACKEND` | ACME Server | EST Server | Coverage |
+|---------|---------------------|-------------|------------|----------|
+| **Akamu / Kipuka** (default) | `akamu` | Akamu (Go) | Kipuka (Go) | All 3 PKI types get both ACME + EST |
+| **Dogtag RAs** (legacy) | `dogtag` | Dogtag RA (`pki-server create`) | Dogtag RA (`pki-server create`) | RSA-only ACME; EST for all types |
+
+**Enrollment RA port table (same ports regardless of backend):**
+
+| Service | RSA | ECC | PQ |
+|---------|-----|-----|-----|
+| ACME (Akamu or Dogtag) | 8446 | 8469 | 8459 |
+| EST (Kipuka or Dogtag) | 8447 | 8466 | 8456 |
+
+### Akamu ACME Server (default, RFC 8555)
+
+| PKI | Container | Host Port |
+|-----|-----------|-----------|
+| RSA | `akamu-rsa` | 8446 |
+| ECC | `akamu-ecc` | 8469 |
+| PQ | `akamu-pq` | 8459 |
+
+| | |
+|---|---|
+| **Compose files** | `pki-compose.yml`, `pki-ecc-compose.yml`, `pki-pq-compose.yml` |
+| **Image** | Custom Go-based ACME server |
+| **Podman mode** | Rootful (sudo) |
+| **Depends on** | Intermediate CA (started) |
+
+Standalone Go-based ACME server implementing RFC 8555 (the same protocol used by Let's Encrypt). Proxies certificate issuance to each hierarchy's Intermediate CA REST API. Available for all three PKI types (RSA, ECC, PQ), unlike the legacy Dogtag ACME RA which was RSA-only. Supports HTTP-01 and DNS-01 challenges.
+
+**ACME Endpoint (RSA example):** `http://akamu-rsa.cert-lab.local:8446/acme/directory`
+
+### Kipuka EST Server (default, RFC 7030)
+
+| PKI | Container | Host Port |
+|-----|-----------|-----------|
+| RSA | `kipuka-rsa` | 8447 |
+| ECC | `kipuka-ecc` | 8466 |
+| PQ | `kipuka-pq` | 8456 |
+
+| | |
+|---|---|
+| **Compose files** | `pki-compose.yml`, `pki-ecc-compose.yml`, `pki-pq-compose.yml` |
+| **Image** | Custom Go-based EST server |
+| **Podman mode** | Rootful (sudo) |
+| **Depends on** | Intermediate CA (started) |
+
+Standalone Go-based EST server implementing RFC 7030 (Enrollment over Secure Transport). Proxies certificate enrollment requests to each hierarchy's Intermediate CA REST API. Available for all three PKI types.
+
+**EST Endpoints:**
+
+| Path | Description |
+|------|-------------|
+| `/.well-known/est/cacerts` | Get CA certificate chain |
+| `/.well-known/est/simpleenroll` | Enroll for a new certificate |
+| `/.well-known/est/simplereenroll` | Re-enroll (renew) a certificate |
+
+### Legacy: Dogtag EST Registration Authority (RFC 7030)
+
+> Used when `ENROLLMENT_BACKEND=dogtag`. Not started by default.
 
 | PKI | Container | Host Port |
 |-----|-----------|-----------|
@@ -381,17 +441,11 @@ EST and ACME containers are deployed as **standalone Registration Authorities** 
 | **Podman mode** | Rootful (sudo), privileged |
 | **Depends on** | Intermediate CA (started) |
 
-Enrollment over Secure Transport (RFC 7030) Registration Authority. Initialized via `pki-server create` (not `pkispawn`) and configured with `DogtagRABackend` to proxy certificate enrollment requests to the Intermediate CA's REST API using client certificate authentication. The RA's own TLS certificate is signed by the Intermediate CA using the `caServerCert` profile.
+Lightweight `pki-server create` instances (not `pkispawn`) configured with `DogtagRABackend` to proxy certificate enrollment requests to the Intermediate CA's REST API using client certificate authentication. The RA's own TLS certificate is signed by the Intermediate CA using the `caServerCert` profile.
 
-**EST Endpoints:**
+### Legacy: Dogtag ACME Registration Authority (RSA only, RFC 8555)
 
-| Path | Description |
-|------|-------------|
-| `/.well-known/est/cacerts` | Get CA certificate chain |
-| `/.well-known/est/simpleenroll` | Enroll for a new certificate |
-| `/.well-known/est/simplereenroll` | Re-enroll (renew) a certificate |
-
-### ACME Registration Authority (RSA only, RFC 8555)
+> Used when `ENROLLMENT_BACKEND=dogtag`. Not started by default. RSA hierarchy only.
 
 | | |
 |---|---|
@@ -403,7 +457,7 @@ Enrollment over Secure Transport (RFC 7030) Registration Authority. Initialized 
 | **Podman mode** | Rootful (sudo), privileged |
 | **Depends on** | Intermediate CA (started) |
 
-Automated Certificate Management Environment (RFC 8555) Registration Authority -- the same protocol used by Let's Encrypt. Initialized via `pki-server create` (not `pkispawn`) and configured with `PKIIssuer` to proxy certificate issuance to the RSA Intermediate CA's REST API, and `InMemoryDatabase` for order/challenge state. The RA's TLS certificate is signed by the Intermediate CA. Supports automated certificate issuance with challenge-response validation. Only exists for the RSA hierarchy.
+Lightweight `pki-server create` instance configured with `PKIIssuer` to proxy certificate issuance to the RSA Intermediate CA's REST API, and `InMemoryDatabase` for order/challenge state. Only exists for the RSA hierarchy.
 
 **ACME Endpoint:** `https://acme-ca.cert-lab.local:8446/acme/directory`
 
@@ -839,8 +893,8 @@ Mock EDR/SIEM detects threat ──► Kafka (security-events) ──► EDA rul
 | 8443 | Root CA | HTTPS |
 | 8444 | Intermediate CA | HTTPS |
 | 8445 | IoT Sub-CA | HTTPS |
-| 8446 | ACME RA | HTTPS |
-| 8447 | EST RA | HTTPS |
+| 8446 | Akamu ACME (default) / Dogtag ACME RA (legacy) | HTTP / HTTPS |
+| 8447 | Kipuka EST (default) / Dogtag EST RA (legacy) | HTTPS |
 | 8448 | OCSP Responder | HTTPS |
 | 8449 | KRA | HTTPS |
 
@@ -851,9 +905,10 @@ Mock EDR/SIEM detects threat ──► Kafka (security-events) ──► EDA rul
 | 8463 | ECC Root CA | HTTPS |
 | 8464 | ECC Intermediate CA | HTTPS |
 | 8465 | ECC IoT Sub-CA | HTTPS |
-| 8466 | ECC EST RA | HTTPS |
+| 8466 | Kipuka EST (default) / Dogtag EST RA (legacy) | HTTPS |
 | 8467 | ECC OCSP Responder | HTTPS |
 | 8468 | ECC KRA | HTTPS |
+| 8469 | Akamu ACME (default) | HTTP |
 
 ### ML-DSA-87 PKI (rootful)
 
@@ -862,9 +917,10 @@ Mock EDR/SIEM detects threat ──► Kafka (security-events) ──► EDA rul
 | 8453 | PQ Root CA | HTTPS |
 | 8454 | PQ Intermediate CA | HTTPS |
 | 8455 | PQ IoT Sub-CA | HTTPS |
-| 8456 | PQ EST RA | HTTPS |
+| 8456 | Kipuka EST (default) / Dogtag EST RA (legacy) | HTTPS |
 | 8457 | PQ OCSP Responder | HTTPS |
 | 8458 | PQ KRA | HTTPS |
+| 8459 | Akamu ACME (default) | HTTP |
 
 ### FreeIPA (rootful)
 
@@ -885,7 +941,7 @@ Mock EDR/SIEM detects threat ──► Kafka (security-events) ──► EDA rul
 | LDAP Backends (389DS) | 15 | 5 per PKI hierarchy (rootful) |
 | Dogtag CAs (Root, Intermediate, IoT) | 9 | 3 per PKI hierarchy (rootful) |
 | Dogtag Subsystems (OCSP, KRA) | 6 | 2 per PKI hierarchy (rootful) |
-| Dogtag RAs (EST, ACME) | 4 | 3 EST + 1 ACME (rootful) |
+| Enrollment RAs (EST, ACME) | 6 | 3 EST + 3 ACME per backend (akamu default; dogtag legacy has 3 EST + 1 ACME) |
 | Event Streaming (Kafka/ZK) | 2 | Rootless |
 | Automation (AWX/EDA) | 3 | awx-web, awx-task, eda-server (rootless) |
 | Security Tools (EDR/SIEM) | 2 | Rootless |

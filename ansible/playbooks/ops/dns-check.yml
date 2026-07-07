@@ -17,24 +17,30 @@
     dns_server: "127.0.0.1"
     lab_root_dir: "/home/certlab/cert-revocation-lab"
 
+    # Enrollment backend: "akamu" (Kipuka) or "dogtag" (Dogtag EST/ACME RAs)
+    enrollment_backend: "{{ lookup('env', 'ENROLLMENT_BACKEND') | default('akamu', true) }}"
+
     # Lab hostnames to verify
     lab_hostnames:
-      # RSA PKI
+      # RSA PKI (CAs)
       - { name: "root-ca.cert-lab.local",           expected: "172.26.0.10" }
       - { name: "intermediate-ca.cert-lab.local",    expected: "172.26.0.11" }
       - { name: "iot-ca.cert-lab.local",             expected: "172.26.0.12" }
-      - { name: "acme-ca.cert-lab.local",            expected: "172.26.0.13" }
-      - { name: "est-ca.cert-lab.local",             expected: "172.26.0.14" }
-      # ECC PKI
+      # RSA EST/ACME RA (hostname varies by enrollment backend)
+      - { name: "{{ (enrollment_backend == 'akamu') | ternary('kipuka-rsa.cert-lab.local', 'acme-ca.cert-lab.local') }}", expected: "172.26.0.13" }
+      - { name: "{{ (enrollment_backend == 'akamu') | ternary('kipuka-rsa.cert-lab.local', 'est-ca.cert-lab.local') }}", expected: "172.26.0.14" }
+      # ECC PKI (CAs)
       - { name: "ecc-root-ca.cert-lab.local",        expected: "172.28.0.10" }
       - { name: "ecc-intermediate-ca.cert-lab.local", expected: "172.28.0.11" }
       - { name: "ecc-iot-ca.cert-lab.local",          expected: "172.28.0.12" }
-      - { name: "ecc-est-ca.cert-lab.local",          expected: "172.28.0.13" }
-      # PQ PKI
+      # ECC EST RA
+      - { name: "{{ (enrollment_backend == 'akamu') | ternary('kipuka-ecc.cert-lab.local', 'ecc-est-ca.cert-lab.local') }}", expected: "172.28.0.13" }
+      # PQ PKI (CAs)
       - { name: "pq-root-ca.cert-lab.local",         expected: "172.27.0.10" }
       - { name: "pq-intermediate-ca.cert-lab.local",  expected: "172.27.0.11" }
       - { name: "pq-iot-ca.cert-lab.local",           expected: "172.27.0.12" }
-      - { name: "pq-est-ca.cert-lab.local",           expected: "172.27.0.13" }
+      # PQ EST RA
+      - { name: "{{ (enrollment_backend == 'akamu') | ternary('kipuka-pq.cert-lab.local', 'pq-est-ca.cert-lab.local') }}", expected: "172.27.0.13" }
 
   tasks:
     - name: Display DNS check banner

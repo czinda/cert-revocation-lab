@@ -34,6 +34,7 @@ from .config import (
     EventSource,
     SCENARIOS,
     ADVANCED_SUITES,
+    ENROLLMENT_BACKEND,
     get_all_scenarios,
 )
 from .events import trigger_event, EventResult
@@ -44,8 +45,8 @@ from .protocols import (
     est_get_cacerts,
     est_reenroll_certificate,
     ProtocolResult,
-    ACME_ENDPOINTS,
-    EST_ENDPOINTS,
+    _get_acme_url,
+    _get_est_url,
 )
 from .services import check_all_services, check_http_service, check_container, detect_deployed_pkis, is_freeipa_deployed
 from .validate import run_validation, ValidationReport, TestResult
@@ -408,15 +409,16 @@ def acme_issue(
     """
     config = LabConfig.load()
 
-    if pki_type not in ACME_ENDPOINTS:
-        console.print(f"[red]✗ ACME not available for {pki_type.value} PKI[/red]")
-        console.print("  ACME is only available for RSA PKI")
+    acme_url = _get_acme_url(pki_type)
+    if acme_url is None:
+        console.print(f"[red]✗ ACME not available for {pki_type.value} PKI (backend={ENROLLMENT_BACKEND})[/red]")
         raise typer.Exit(1)
 
     console.print(f"\n[bold cyan]ACME Certificate Issuance[/bold cyan]\n")
     console.print(f"  Domain:   {domain}")
     console.print(f"  PKI:      {pki_type.value.upper()}")
-    console.print(f"  Endpoint: {ACME_ENDPOINTS[pki_type]}/directory")
+    console.print(f"  Backend:  {ENROLLMENT_BACKEND}")
+    console.print(f"  Endpoint: {acme_url}/directory")
     console.print()
 
     with Progress(
@@ -478,8 +480,9 @@ def est_enroll(
     """
     config = LabConfig.load()
 
-    if pki_type not in EST_ENDPOINTS:
-        console.print(f"[red]✗ EST not available for {pki_type.value} PKI[/red]")
+    est_url = _get_est_url(pki_type)
+    if est_url is None:
+        console.print(f"[red]✗ EST not available for {pki_type.value} PKI (backend={ENROLLMENT_BACKEND})[/red]")
         raise typer.Exit(1)
 
     # Generate device name if not provided
@@ -491,7 +494,8 @@ def est_enroll(
     console.print(f"\n[bold cyan]EST Certificate Enrollment[/bold cyan]\n")
     console.print(f"  Device:   {device_fqdn}")
     console.print(f"  PKI:      {pki_type.value.upper()}")
-    console.print(f"  Endpoint: {EST_ENDPOINTS[pki_type]}")
+    console.print(f"  Backend:  {ENROLLMENT_BACKEND}")
+    console.print(f"  Endpoint: {est_url}")
     console.print()
 
     with Progress(
@@ -544,14 +548,14 @@ def est_cacerts(
     Example:
         lab est-cacerts --pki-type rsa
     """
-    if pki_type not in EST_ENDPOINTS:
-        console.print(f"[red]✗ EST not available for {pki_type.value} PKI[/red]")
+    est_url = _get_est_url(pki_type)
+    if est_url is None:
+        console.print(f"[red]✗ EST not available for {pki_type.value} PKI (backend={ENROLLMENT_BACKEND})[/red]")
         raise typer.Exit(1)
-
-    est_url = EST_ENDPOINTS[pki_type]
 
     console.print(f"\n[bold cyan]EST CA Certificates[/bold cyan]\n")
     console.print(f"  PKI:      {pki_type.value.upper()}")
+    console.print(f"  Backend:  {ENROLLMENT_BACKEND}")
     console.print(f"  Endpoint: {est_url}/cacerts")
     console.print()
 
@@ -616,8 +620,9 @@ def est_reenroll(
 
     config = LabConfig.load()
 
-    if pki_type not in EST_ENDPOINTS:
-        console.print(f"[red]EST not available for {pki_type.value} PKI[/red]")
+    est_url = _get_est_url(pki_type)
+    if est_url is None:
+        console.print(f"[red]EST not available for {pki_type.value} PKI (backend={ENROLLMENT_BACKEND})[/red]")
         raise typer.Exit(1)
 
     if not device:
@@ -628,7 +633,8 @@ def est_reenroll(
     console.print(f"\n[bold cyan]EST Certificate Renewal (simplereenroll)[/bold cyan]\n")
     console.print(f"  Device:   {device_fqdn}")
     console.print(f"  PKI:      {pki_type.value.upper()}")
-    console.print(f"  Endpoint: {EST_ENDPOINTS[pki_type]}")
+    console.print(f"  Backend:  {ENROLLMENT_BACKEND}")
+    console.print(f"  Endpoint: {est_url}")
     console.print()
 
     # Determine cert/key paths

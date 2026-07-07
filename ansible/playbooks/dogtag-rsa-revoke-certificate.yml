@@ -18,7 +18,9 @@
     pki_type: "rsa"
     pki_name: "RSA-4096"
 
-    # CA selection (root, intermediate, iot, est, acme)
+    # CA selection (root, intermediate, iot)
+    # NOTE: EST/ACME are Registration Authorities, not CAs. Certificates issued
+    # via EST or ACME are managed by the Intermediate CA — use ca_level=intermediate.
     # Prefer event.ca_level (set by test/caller) so revocation targets the correct CA,
     # fall back to ca_level from rulebook extra_vars, then default to iot
     target_ca: "{{ event.ca_level | default(ca_level | default('iot', true), true) }}"
@@ -63,6 +65,9 @@
     # RSA PKI configuration - REST API URLs
     # Note: Use external host ports since EDA runs on separate network
     #   Root CA: 8443, Intermediate CA: 8444, IoT CA: 8445
+    # NOTE: EST/ACME are lightweight Registration Authorities with no CA
+    # subsystem, no admin P12, and no LDAP. Certs issued via EST/ACME are
+    # managed by the Intermediate CA — use ca_level=intermediate to revoke.
     ca_configs:
       root:
         name: "Root CA"
@@ -82,18 +87,6 @@
         admin_cert: "{{ admin_creds_dir }}/iot-admin-cert.pem"
         admin_key: "{{ admin_creds_dir }}/iot-admin-key.pem"
         ca_cert: "{{ certs_dir }}/iot-ca-chain.crt"
-      est:
-        name: "EST CA"
-        url: "https://est-ca.cert-lab.local:8447"
-        admin_cert: "{{ admin_creds_dir }}/est-admin-cert.pem"
-        admin_key: "{{ admin_creds_dir }}/est-admin-key.pem"
-        ca_cert: "{{ certs_dir }}/est-ca-chain.crt"
-      acme:
-        name: "ACME CA"
-        url: "https://acme-ca.cert-lab.local:8446"
-        admin_cert: "{{ admin_creds_dir }}/acme-admin-cert.pem"
-        admin_key: "{{ admin_creds_dir }}/acme-admin-key.pem"
-        ca_cert: "{{ certs_dir }}/acme-ca-chain.crt"
 
   tasks:
     - name: Set CA configuration

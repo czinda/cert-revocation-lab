@@ -28,8 +28,8 @@ Uses Dogtag PKI and FreeIPA, integrated with Event-Driven Ansible for real-time 
 │ IoT Sub-CA (8445)       │ IoT Sub-CA (8465)       │ IoT Sub-CA (8455)       │
 │ OCSP Responder (8448)   │ OCSP Responder (8467)   │ OCSP Responder (8457)   │
 │ KRA (8449)              │ KRA (8468)              │ KRA (8458)              │
-│ EST RA (8447/EST)       │ EST RA (8466/EST)       │ EST RA (8456/EST)       │
-│ ACME RA (8446)          │                         │                         │
+│ Kipuka EST (8447)       │ Kipuka EST (8466)       │ Kipuka EST (8456)       │
+│ Akamu ACME (8446)       │ Akamu ACME (8469)       │ Akamu ACME (8459)       │
 ├─────────────────────────┼─────────────────────────┼─────────────────────────┤
 │ Network: 172.26.0.0/24  │ Network: 172.28.0.0/24  │ Network: 172.27.0.0/24  │
 │ Security: CERT-LAB      │ Security: CERT-LAB-ECC  │ Security: CERT-LAB-PQ   │
@@ -46,7 +46,7 @@ The hierarchy uses four deployment models:
 - **Full CAs** (Root, Intermediate, IoT): Two-step `pkispawn` deployment with dedicated 389 DS. Generate CSR → parent CA signs → import signed cert. Each has own signing keys and LDAP backend.
 - **OCSP Responders**: Single-step `pkispawn -s OCSP` deployment with dedicated 389 DS. Joins Root CA's security domain, gets OCSP signing cert from Intermediate CA automatically. Validates certificate revocation status independently of the CA's built-in OCSP.
 - **KRA (Key Recovery Authority)**: Single-step `pkispawn -s KRA` deployment with dedicated 389 DS. Provides key archival and recovery services. Gets storage/transport certs from Intermediate CA.
-- **Standalone RAs** (EST, ACME): Lightweight `pki-server create` instances with no CA subsystem and no LDAP. Proxy enrollment requests to the Intermediate CA via REST API (`DogtagRABackend` for EST, `PKIIssuer` for ACME). TLS certs signed by Intermediate CA using `caServerCert` profile.
+- **Enrollment RAs** (EST, ACME): Two backends available, selected via `ENROLLMENT_BACKEND` env var (default: `akamu`). **Akamu/Kipuka** (default): Standalone Go-based ACME (Akamu) and EST (Kipuka) servers — all three PKI types get both ACME and EST. **Dogtag RAs** (legacy): Lightweight `pki-server create` instances using `DogtagRABackend`/`PKIIssuer` — RSA-only ACME, EST for all types. Both proxy enrollment to the Intermediate CA.
 
 ## Common Commands
 
@@ -69,6 +69,9 @@ The hierarchy uses four deployment models:
 
 # Start fresh (remove all data)
 ./start-lab.sh --clean --all
+
+# Use legacy Dogtag RAs instead of Akamu/Kipuka (default: akamu)
+ENROLLMENT_BACKEND=dogtag ./start-lab.sh --rsa
 
 # One-time DNS setup (configures host to resolve *.cert-lab.local)
 ./scripts/setup-dns.sh
@@ -280,23 +283,30 @@ The `ansible/rulebooks/security-events.yml` routes events based on:
 **Revocation:** `dogtag-{rsa,ecc,pqc}-revoke-certificate.yml`, `freeipa-revoke-certificate.yml`
 **Issuance:** `dogtag-{rsa,ecc,pqc}-issue-certificate.yml`
 
-## ACME and EST Registration Authorities
+## Enrollment Backends (ACME and EST)
 
-ACME (RFC 8555) and EST (RFC 7030) are deployed as **standalone Registration Authorities** — lightweight containers that proxy enrollment to the Intermediate CA. They have no local CA subsystem, no signing keys, and no LDAP backend.
+The lab supports two enrollment backends, controlled by `ENROLLMENT_BACKEND` (default: `akamu`):
 
-**Architecture:**
-- EST uses `DogtagRABackend` → Intermediate CA REST API
-- ACME uses `PKIIssuer` → Intermediate CA REST API + `InMemoryDatabase` for orders/challenges
-- TLS certs for RA containers are signed by Intermediate CA (`caServerCert` profile)
-- Certificates issued via EST/ACME are managed by the Intermediate CA (revocation targets Intermediate CA container)
+| Backend | ACME Server | EST Server | Coverage | Notes |
+|---------|------------|------------|----------|-------|
+| **akamu** (default) | Akamu | Kipuka | All 3 PKI types get both ACME + EST | Go-based, lightweight |
+| **dogtag** (legacy) | Dogtag RA | Dogtag RA | RSA-only ACME; EST for all types | `pki-server create` instances |
 
-**Key endpoints:**
-- ACME: `https://acme-ca.cert-lab.local:8446/acme/directory`
-- EST cacerts: `https://est-ca.cert-lab.local:8447/.well-known/est/cacerts`
-- EST enroll: `https://est-ca.cert-lab.local:8447/.well-known/est/simpleenroll`
+**Enrollment RA port table:**
+
+| Service | RSA | ECC | PQ |
+|---------|-----|-----|-----|
+| Akamu (ACME) | 8446 | 8469 | 8459 |
+| Kipuka (EST) | 8447 | 8466 | 8456 |
+
+Both backends proxy enrollment to the Intermediate CA. Certificates issued via EST/ACME are managed by the Intermediate CA (revocation targets the Intermediate CA container). The `lab_cli/config.py` module builds `CA_CONFIGS` dynamically based on `ENROLLMENT_BACKEND`; the `lab_cli/protocols.py` module resolves ACME/EST URLs from `CA_CONFIGS` at runtime — no hardcoded endpoints.
+
+**Key endpoints (akamu backend, RSA example):**
+- ACME: `http://akamu-rsa.cert-lab.local:8446/acme/directory`
+- EST cacerts: `https://kipuka-rsa.cert-lab.local:8447/.well-known/est/cacerts`
 - OCSP: `https://ocsp.cert-lab.local:8448/ocsp/ee/ocsp`
 
-The IoT Client uses EST-first enrollment (falls back to Dogtag REST API if EST unavailable).
+The IoT Client uses EST-first enrollment (falls back to Dogtag REST API if EST unavailable). See `memory/acme-est-guide.md` for detailed manual init steps and backend comparison.
 
 ## Additional Tools
 

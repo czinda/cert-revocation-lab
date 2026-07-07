@@ -8,6 +8,12 @@
 # The admin user created by pkispawn is automatically added to the
 # "Certificate Manager Agents" group, giving it revocation privileges.
 #
+# NOTE: Only full CAs (Root, Intermediate, IoT) have admin P12 credentials.
+# EST and ACME are lightweight Registration Authorities with no CA subsystem,
+# no LDAP, and no admin P12 — they are intentionally excluded here.
+# This script works identically regardless of ENROLLMENT_BACKEND (akamu/dogtag)
+# because it only targets Dogtag CA containers.
+#
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -29,12 +35,13 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 PKI_PASSWORD="${PKI_ADMIN_PASSWORD:-${ADMIN_PASSWORD:-RedHat123}}"
 
 # CA configurations: container -> (instance, output_prefix, certs_subdir)
+# Only full CAs with pkispawn-generated admin P12 are listed here.
+# EST/ACME Registration Authorities are excluded — they have no admin certs.
 declare -A CA_CONFIGS=(
     # RSA PKI
     ["dogtag-root-ca"]="pki-root-ca:root:."
     ["dogtag-intermediate-ca"]="pki-intermediate-ca:intermediate:."
     ["dogtag-iot-ca"]="pki-iot-ca:iot:."
-    ["dogtag-acme-ca"]="pki-acme-ca:acme:."
     # ECC PKI
     ["dogtag-ecc-root-ca"]="pki-ecc-root-ca:ecc-root:ecc"
     ["dogtag-ecc-intermediate-ca"]="pki-ecc-intermediate-ca:ecc-intermediate:ecc"

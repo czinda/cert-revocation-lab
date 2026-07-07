@@ -718,6 +718,8 @@ services:
     container_name: iot-client
     hostname: iot-client.${LAB_DOMAIN:-cert-lab.local}
     environment:
+      # Enrollment backend: "akamu" (Kipuka EST/ACME) or "dogtag" (Dogtag EST/ACME RAs)
+      ENROLLMENT_BACKEND: ${ENROLLMENT_BACKEND:-akamu}
       # RSA IoT CA (port 8445 from host, 8443 internal)
       RSA_IOT_CA_HOST: iot-ca.cert-lab.local
       RSA_IOT_CA_PORT: 8445
@@ -727,12 +729,23 @@ services:
       # PQC IoT CA (port 8455 from host, 8443 internal)
       PQC_IOT_CA_HOST: pq-iot-ca.cert-lab.local
       PQC_IOT_CA_PORT: 8455
+      # EST RA hosts — defaults set by ENROLLMENT_BACKEND in app.py;
+      # override here only if using non-standard hostnames
+      # RSA_EST_CA_HOST: kipuka-rsa.cert-lab.local
+      # ECC_EST_CA_HOST: kipuka-ecc.cert-lab.local
+      # PQC_EST_CA_HOST: kipuka-pq.cert-lab.local
       LAB_DOMAIN: ${LAB_DOMAIN:-cert-lab.local}
     extra_hosts:
-      # Allow connecting to PKI CAs via localhost ports
+      # Allow connecting to PKI CAs and EST RAs via localhost ports
       - "iot-ca.cert-lab.local:host-gateway"
       - "ecc-iot-ca.cert-lab.local:host-gateway"
       - "pq-iot-ca.cert-lab.local:host-gateway"
+      - "kipuka-rsa.cert-lab.local:host-gateway"
+      - "kipuka-ecc.cert-lab.local:host-gateway"
+      - "kipuka-pq.cert-lab.local:host-gateway"
+      - "est-ca.cert-lab.local:host-gateway"
+      - "ecc-est-ca.cert-lab.local:host-gateway"
+      - "pq-est-ca.cert-lab.local:host-gateway"
     networks:
       lab-network:
         ipv4_address: ${IP_IOT_CLIENT:-172.20.0.52}
