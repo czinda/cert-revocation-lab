@@ -266,14 +266,13 @@ def _default_profile(pki_type: PKIType) -> str:
     """Return the default certificate profile for the given PKI type.
 
     Dogtag ships type-specific profiles with the correct key constraints:
-    - caServerCert: RSA keys only (default)
+    - caServerCert: RSA keys (default) — also used for PQ CAs since OpenSSL < 3.5
+      can't generate ML-DSA CSRs. The CA signs with ML-DSA-87 regardless.
     - caECServerCert: EC keys (nistp256, nistp384, nistp521)
-    - caMLDSAServerCert: ML-DSA keys (post-quantum)
+    - caMLDSAServerCert: ML-DSA keys only (requires ML-DSA CSR)
     """
     if pki_type == PKIType.ECC:
         return "caECServerCert"
-    elif pki_type == PKIType.PQC:
-        return "caMLDSAServerCert"
     return "caServerCert"
 
 
@@ -321,8 +320,20 @@ def issue_certificate(
     # Setup client NSS database with admin cert and submit + approve request
     # We use the admin cert for both submit and approve. Dogtag may auto-approve
     # requests from authenticated agents, so we handle that case gracefully.
+    #
+    # PQ mode: NSS can't validate ML-DSA-87 chains in TLS client auth, so use
+    # HTTP + basic auth (no NSS db needed).
 
-    setup_submit_approve = f"""
+    is_pq = pki_type == PKIType.PQC or getattr(pki_type, 'value', str(pki_type)).lower() == "pqc"
+
+    if is_pq:
+        setup_submit_approve = f"""
+set -e
+pki -U http://localhost:8080 -u caadmin -w '{config.pki_admin_password}' \
+    ca-cert-request-submit --profile {profile} --csr-file /tmp/request-{op_id}.csr
+"""
+    else:
+        setup_submit_approve = f"""
 set -e
 CLIENT_DB=/tmp/pki-issue-nssdb-{op_id}
 INSTANCE={ca_config.instance}
@@ -387,7 +398,13 @@ pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \
     request_id = request_id_match.group(1)
 
     # Check if request was auto-approved (common when submitting as admin/agent)
-    check_cmd = f"""
+    if is_pq:
+        check_cmd = f"""
+pki -U http://localhost:8080 -u caadmin -w '{config.pki_admin_password}' \
+    ca-cert-request-show {request_id}
+"""
+    else:
+        check_cmd = f"""
 CLIENT_DB=/tmp/pki-issue-nssdb-{op_id}
 CA_URL=https://{ca_config.hostname}:8443
 ADMIN_NICK=$(certutil -L -d $CLIENT_DB 2>/dev/null | grep -iE "admin|caadmin" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
@@ -405,7 +422,13 @@ pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \
 
     if request_status == "pending":
         # Need explicit approval
-        approve_cmd = f"""
+        if is_pq:
+            approve_cmd = f"""
+pki -U http://localhost:8080 -u caadmin -w '{config.pki_admin_password}' \
+    ca-cert-request-approve --force {request_id}
+"""
+        else:
+            approve_cmd = f"""
 CLIENT_DB=/tmp/pki-issue-nssdb-{op_id}
 CA_URL=https://{ca_config.hostname}:8443
 ADMIN_NICK=$(certutil -L -d $CLIENT_DB 2>/dev/null | grep -iE "admin|caadmin" | head -1 | sed 's/[[:space:]]*[uCTcPp,]*$//')
@@ -448,7 +471,14 @@ pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \
     cert_id = cert_id_match.group(1)
 
     # Retrieve the certificate and clean up
-    retrieve_cmd = f"""
+    if is_pq:
+        retrieve_cmd = f"""
+pki -U http://localhost:8080 ca-cert-show {cert_id} --output /tmp/issued-cert-{op_id}.pem
+cat /tmp/issued-cert-{op_id}.pem
+rm -f /tmp/request-{op_id}.csr /tmp/issued-cert-{op_id}.pem
+"""
+    else:
+        retrieve_cmd = f"""
 CLIENT_DB=/tmp/pki-issue-nssdb-{op_id}
 CA_URL=https://{ca_config.hostname}:8443
 pki -d $CLIENT_DB -U "$CA_URL" ca-cert-show {cert_id} --output /tmp/issued-cert-{op_id}.pem

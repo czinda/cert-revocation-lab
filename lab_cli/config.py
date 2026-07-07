@@ -38,21 +38,28 @@ class CAConfig:
     instance: str
     url: str           # Internal URL (inside container, always port 8443)
     nss_db: str
-    host_port: int     # Port mapped to host machine
+    host_port: int     # HTTPS port mapped to host machine
+    http_port: int = 0 # HTTP port mapped to host (PQ only — OpenSSL can't do ML-DSA-87 TLS)
 
     @property
     def hostname(self) -> str:
         """Extract hostname from URL."""
-        return self.url.replace("https://", "").split(":")[0]
+        return self.url.replace("https://", "").replace("http://", "").split(":")[0]
 
     @property
     def host_url(self) -> str:
         """URL for accessing this CA from the host machine.
 
-        Uses the CA hostname if it resolves, otherwise falls back to
-        localhost (needed for Lima VM or other port-forwarding setups).
+        PQ CAs use HTTP because OpenSSL < 3.5 cannot process ML-DSA-87 TLS certs.
+        RSA/ECC CAs use HTTPS with verify=False.
         """
         import socket
+        if self.http_port:
+            try:
+                socket.getaddrinfo(self.hostname, self.http_port, socket.AF_INET, socket.SOCK_STREAM)
+                return f"http://{self.hostname}:{self.http_port}"
+            except socket.gaierror:
+                return f"http://localhost:{self.http_port}"
         try:
             socket.getaddrinfo(self.hostname, self.host_port, socket.AF_INET, socket.SOCK_STREAM)
             return f"https://{self.hostname}:{self.host_port}"
@@ -133,30 +140,34 @@ CA_CONFIGS: dict[str, dict[str, CAConfig]] = {
         "root": CAConfig(
             container="dogtag-pq-root-ca",
             instance="pki-pq-root-ca",
-            url="https://pq-root-ca.cert-lab.local:8443",
+            url="http://pq-root-ca.cert-lab.local:8080",
             nss_db="/var/lib/pki/pki-pq-root-ca/alias",
             host_port=8453,
+            http_port=8490,
         ),
         "intermediate": CAConfig(
             container="dogtag-pq-intermediate-ca",
             instance="pki-pq-intermediate-ca",
-            url="https://pq-intermediate-ca.cert-lab.local:8443",
+            url="http://pq-intermediate-ca.cert-lab.local:8080",
             nss_db="/var/lib/pki/pki-pq-intermediate-ca/alias",
             host_port=8454,
+            http_port=8484,
         ),
         "iot": CAConfig(
             container="dogtag-pq-iot-ca",
             instance="pki-pq-iot-ca",
-            url="https://pq-iot-ca.cert-lab.local:8443",
+            url="http://pq-iot-ca.cert-lab.local:8080",
             nss_db="/var/lib/pki/pki-pq-iot-ca/alias",
             host_port=8455,
+            http_port=8485,
         ),
         "est": CAConfig(
             container="dogtag-pq-intermediate-ca",
             instance="pki-pq-intermediate-ca",
-            url="https://pq-intermediate-ca.cert-lab.local:8443",
+            url="http://pq-intermediate-ca.cert-lab.local:8080",
             nss_db="/var/lib/pki/pki-pq-intermediate-ca/alias",
             host_port=8456,
+            http_port=8484,
         ),
     },
 }

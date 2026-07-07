@@ -78,10 +78,12 @@ def check_ca_available(pki_type: str) -> bool:
     if result.returncode != 0 or "running" not in result.stdout:
         return False
 
-    host, port = HOST_MAP[pki_type]
+    # PQ CAs use ML-DSA-87 TLS certs — host OpenSSL < 3.5 can't connect via HTTPS.
+    # Check from inside the container where OpenSSL 3.5+ is available.
     result = run_cmd(
-        ["curl", "-sk", f"https://{host}:{port}/ca/admin/ca/getStatus"],
-        timeout=10,
+        ["sudo", "podman", "exec", container,
+         "curl", "-sk", "https://localhost:8443/ca/admin/ca/getStatus"],
+        timeout=15,
     )
     return result.returncode == 0 and "running" in result.stdout.lower()
 
@@ -105,8 +107,10 @@ def generate_batch_script(
     password = os.getenv("PKI_ADMIN_PASSWORD", "RedHat123")
     ca_hostname = CA_HOSTNAME_MAP[pki_type]
 
-    # Use same pattern as pki-cli.py: pk12util for import, --ignore-cert-status
-    # for SSL trust, certutil -N --empty-password for NSS db init
+    # PQ CAs need HTTP + basic auth (NSS can't validate ML-DSA-87 cert chains
+    # in the TLS client auth path). RSA/ECC use HTTPS + client cert.
+    is_pq = pki_type == "pqc"
+
     script = f"""#!/bin/bash
 # PKI Performance Test Batch Script - {pki_type.upper()}
 # Issue: {issue_count} certificates, Revoke: {revoke_count}
@@ -115,43 +119,63 @@ set -o pipefail
 INSTANCE="{instance}"
 NSS_DB="{nss_db}"
 PASSWORD="{password}"
-CA_URL="https://{ca_hostname}:8443"
 PROFILE="caServerCert"
-IGNORE_SSL="--ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER"
+IS_PQ={'true' if is_pq else 'false'}
 
-# Setup client NSS database using pk12util (proven pattern from pki-cli.py)
+if [ "$IS_PQ" = "true" ]; then
+    # PQ: HTTP + basic auth (NSS can't do ML-DSA-87 TLS client auth)
+    CA_URL="http://{ca_hostname}:8080"
+    PKI_AUTH="-U $CA_URL -u caadmin -w $PASSWORD"
+else
+    CA_URL="https://{ca_hostname}:8443"
+    IGNORE_SSL="--ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER"
+fi
+
+# PQ uses HTTP + basic auth — no NSS client db needed.
+# RSA/ECC need NSS db with admin cert for HTTPS client cert auth.
 CLIENT_DB="/tmp/perf-client-{pki_type}"
-rm -rf "$CLIENT_DB"
-mkdir -p "$CLIENT_DB"
-certutil -N -d "$CLIENT_DB" --empty-password 2>/dev/null
+ADMIN_NICK=""
 
-# Import admin P12 via pk12util
-ADMIN_P12="/root/.dogtag/$INSTANCE/ca_admin_cert.p12"
-IMPORTED=false
-for PWD in "$PASSWORD" "RedHat123" ""; do
-    if pk12util -i "$ADMIN_P12" -d "$CLIENT_DB" -W "$PWD" -K "" 2>/dev/null; then
-        IMPORTED=true
-        break
+if [ "$IS_PQ" != "true" ]; then
+    rm -rf "$CLIENT_DB"
+    mkdir -p "$CLIENT_DB"
+    certutil -N -d "$CLIENT_DB" --empty-password 2>/dev/null
+
+    ADMIN_P12="/root/.dogtag/$INSTANCE/ca_admin_cert.p12"
+    [ ! -f "$ADMIN_P12" ] && ADMIN_P12="/root/.dogtag/$INSTANCE/kra_admin_cert.p12"
+    IMPORTED=false
+    for PWD in "$PASSWORD" "RedHat123" ""; do
+        if pk12util -i "$ADMIN_P12" -d "$CLIENT_DB" -W "$PWD" -K "" 2>/dev/null; then
+            IMPORTED=true
+            break
+        fi
+    done
+    if [ "$IMPORTED" != "true" ]; then
+        echo "ERROR|Could not import admin P12"
+        exit 1
     fi
-done
-if [ "$IMPORTED" != "true" ]; then
-    echo "ERROR|Could not import admin P12"
-    exit 1
-fi
 
-# Import CA signing cert for SSL trust
-CA_CERT="/var/lib/pki/$INSTANCE/conf/certs/ca_signing.crt"
-if [ -f "$CA_CERT" ]; then
-    certutil -A -d "$CLIENT_DB" -n "CA Signing Cert" -t "CT,C,C" -a -i "$CA_CERT" 2>/dev/null || true
-fi
+    CA_CERT="/var/lib/pki/$INSTANCE/conf/certs/ca_signing.crt"
+    if [ -f "$CA_CERT" ]; then
+        certutil -A -d "$CLIENT_DB" -n "CA Signing Cert" -t "CT,C,C" -a -i "$CA_CERT" 2>/dev/null || true
+    fi
 
-# Discover admin cert nickname dynamically
-ADMIN_NICK=$(certutil -L -d "$CLIENT_DB" 2>/dev/null | grep -i "PKI Administrator" | head -1 | awk '{{for(i=1;i<=NF-1;i++) printf $i" "; print ""}}' | sed 's/ *$//')
-if [ -z "$ADMIN_NICK" ]; then
-    ADMIN_NICK="PKI Administrator for $INSTANCE"
-    echo "WARN|Could not discover admin cert nickname, using default: $ADMIN_NICK"
+    ADMIN_NICK=$(certutil -L -d "$CLIENT_DB" 2>/dev/null | grep -i "PKI Administrator" | head -1 | awk '{{for(i=1;i<=NF-1;i++) printf $i" "; print ""}}' | sed 's/ *$//')
+    if [ -z "$ADMIN_NICK" ]; then
+        ADMIN_NICK="PKI Administrator for $INSTANCE"
+        echo "WARN|Could not discover admin cert nickname, using default: $ADMIN_NICK"
+    fi
 fi
 echo "ADMIN_NICK|$ADMIN_NICK"
+
+# Wrapper function: handles PQ (HTTP + basic auth) vs RSA/ECC (HTTPS + client cert)
+run_pki() {{
+    if [ "$IS_PQ" = "true" ]; then
+        pki -U "$CA_URL" -u caadmin -w "$PASSWORD" "$@"
+    else
+        pki -d "$CLIENT_DB" -c "" -n "$ADMIN_NICK" -U "$CA_URL" $IGNORE_SSL "$@"
+    fi
+}}
 
 echo "PERF_START|$(date +%s%N)"
 
@@ -174,8 +198,7 @@ for i in $(seq 1 {issue_count}); do
         -out "$CSRFILE" -subj "/CN=$CN/O=Cert-Lab/C=US" 2>/dev/null
 
     # Submit CSR via pki CLI
-    OUTPUT=$(pki -d "$CLIENT_DB" -c "" -n "$ADMIN_NICK" \\
-        -U "$CA_URL" $IGNORE_SSL \\
+    OUTPUT=$(run_pki \\
         ca-cert-request-submit --profile "$PROFILE" \\
         --csr-file "$CSRFILE" 2>/dev/null)
 
@@ -183,8 +206,7 @@ for i in $(seq 1 {issue_count}); do
 
     if [ -n "$REQUEST_ID" ]; then
         # Approve the request
-        APPROVE_OUT=$(pki -d "$CLIENT_DB" -c "" -n "$ADMIN_NICK" \\
-            -U "$CA_URL" $IGNORE_SSL \\
+        APPROVE_OUT=$(run_pki \\
             ca-cert-request-approve "$REQUEST_ID" --force 2>/dev/null)
 
         SERIAL=$(echo "$APPROVE_OUT" | grep -oP 'Certificate ID:\\s+\\K0x[0-9a-fA-F]+' | head -1)
@@ -238,8 +260,7 @@ for i in $(seq 0 $((REVOKE_COUNT - 1))); do
     SERIAL="${{SERIALS[$i]}}"
     START_NS=$(date +%s%N)
 
-    pki -d "$CLIENT_DB" -c "" -n "$ADMIN_NICK" \\
-        -U "$CA_URL" $IGNORE_SSL \\
+    run_pki \\
         ca-cert-revoke "$SERIAL" --reason Key_Compromise --force 2>/dev/null
 
     END_NS=$(date +%s%N)
@@ -259,8 +280,7 @@ echo "PHASE|REVOKE|END|$(date +%s%N)|$REVOKED"
 # === CRL GENERATION ===
 echo "PHASE|CRL|START|$(date +%s%N)"
 
-pki -d "$CLIENT_DB" -c "" -n "$ADMIN_NICK" \\
-    -U "$CA_URL" $IGNORE_SSL \\
+run_pki \\
     ca-crl-issue --force 2>/dev/null && echo "CRL_ISSUED|OK" || echo "CRL_ISSUED|FAIL"
 
 echo "PHASE|CRL|END|$(date +%s%N)"

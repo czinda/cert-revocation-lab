@@ -272,11 +272,11 @@ services:
       - "8486:8080"
     command: ["/bin/bash", "-c", "sleep infinity"]
     healthcheck:
-      test: ["CMD-SHELL", "curl -sk https://localhost:8443/.well-known/est/cacerts 2>/dev/null | head -1 | grep -qE 'BEGIN|MII' || exit 1"]
-      interval: 10s
-      timeout: 10s
+      test: ["CMD-SHELL", "curl -sk https://localhost:8443/.well-known/est/cacerts 2>/dev/null | head -1 | grep -qE 'BEGIN|MII' || curl -s http://localhost:8080/.well-known/est/cacerts 2>/dev/null | head -1 | grep -qE 'BEGIN|MII' || exit 1"]
+      interval: 15s
+      timeout: 15s
       retries: 5
-      start_period: 120s
+      start_period: 180s
 
   # 389 Directory Server for PQ OCSP Responder
   ds-pq-ocsp:

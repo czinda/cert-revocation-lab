@@ -31,16 +31,20 @@ case "$PKI_TYPE" in
         INTERMEDIATE_CA_LABEL="ECC Intermediate CA"
         EST_PROFILE="caECServerCert"
         ADMIN_P12_PREFIX="ecc-intermediate"
+        IS_PQ=false
         ;;
     pq)
         CA_NAME="PQ-EST-RA"
         PKI_INSTANCE="${PKI_INSTANCE_NAME:-pki-pq-est-ca}"
-        INTERMEDIATE_CA_URL="https://pq-intermediate-ca.cert-lab.local:8443"
+        # HTTP: NSS can't validate ML-DSA-87 cert chains in TLS client auth path
+        INTERMEDIATE_CA_URL="http://pq-intermediate-ca.cert-lab.local:8080"
         ALGO_DESC="ML-DSA-87 (NIST FIPS 204 Level 5)"
         CA_HOSTNAME="pq-est-ca.cert-lab.local"
         INTERMEDIATE_CA_LABEL="PQ Intermediate CA"
-        EST_PROFILE="caMLDSAServerCert"
+        # caServerCert (not caMLDSAServerCert) — OpenSSL can't generate ML-DSA CSRs
+        EST_PROFILE="caServerCert"
         ADMIN_P12_PREFIX="pq-intermediate"
+        IS_PQ=true
         ;;
     *)
         CA_NAME="EST-RA"
@@ -51,6 +55,7 @@ case "$PKI_TYPE" in
         INTERMEDIATE_CA_LABEL="Intermediate CA"
         EST_PROFILE="caServerCert"
         ADMIN_P12_PREFIX="intermediate"
+        IS_PQ=false
         ;;
 esac
 
@@ -62,6 +67,7 @@ source "$(dirname "$0")/lib-pki-common.sh"
 [ -n "$PKI_PASSWORD" ] || { log_error "PKI_ADMIN_PASSWORD not set"; exit 1; }
 
 CSR_FILE="${CERTS_DIR}/est-ra.csr"
+TLS_KEY_FILE="${CERTS_DIR}/est-ra.key"
 SIGNED_CERT="${CERTS_DIR}/est-ra-signed.crt"
 TLS_CERT="${CERTS_DIR}/est-ra-tls.crt"
 CA_CHAIN="${CERTS_DIR}/ca-chain.crt"
@@ -95,22 +101,10 @@ phase1_create_instance() {
     # Generate TLS keypair and CSR using openssl (certutil key generation
     # is extremely slow on some systems due to NSS entropy handling)
     log_info "Generating TLS certificate CSR..."
-    local KEY_FILE="${CSR_FILE%.csr}.key"
     openssl req -new -newkey rsa:2048 -nodes \
-        -keyout "$KEY_FILE" \
+        -keyout "$TLS_KEY_FILE" \
         -out "$CSR_FILE" \
-        -subj "/C=US/O=Cert-Lab/OU=EST RA/CN=${CA_HOSTNAME}" 2>/dev/null
-
-    # Create a self-signed cert for PKCS#12 import (will be replaced in phase 2)
-    openssl x509 -req -in "$CSR_FILE" -signkey "$KEY_FILE" \
-        -out /tmp/est-selfsigned.crt -days 1 2>/dev/null
-
-    # Import the private key into NSS database via PKCS#12
-    openssl pkcs12 -export -out /tmp/est-tls.p12 \
-        -inkey "$KEY_FILE" -in /tmp/est-selfsigned.crt \
-        -name "sslserver" -passout pass: 2>/dev/null
-    pk12util -i /tmp/est-tls.p12 -d "$NSS_DB" -W "" -K "" 2>/dev/null || true
-    rm -f /tmp/est-tls.p12 /tmp/est-selfsigned.crt
+        -subj "/C=US/O=Cert-Lab/OU=PQ EST RA/CN=${CA_HOSTNAME}" 2>/dev/null
 
     log_info "TLS CSR generated: $CSR_FILE"
     echo ""
@@ -147,11 +141,16 @@ phase2_deploy_est() {
         log_warn "Admin PKCS#12 not found: $admin_p12 — EST enrollment will fail"
     fi
 
-    # Import signed TLS certificate
-    log_info "Importing signed TLS certificate..."
-    # Delete the self-signed cert if it exists
+    # Import signed TLS certificate + key via PKCS#12 so JSS can find the
+    # private key (certutil -A alone creates a key ID mismatch with JSS's
+    # findPrivKeyByCert native lookup)
+    log_info "Importing signed TLS certificate via PKCS#12..."
+    certutil -F -d "$NSS_DB" -n "sslserver" 2>/dev/null || true
     certutil -D -d "$NSS_DB" -n "sslserver" 2>/dev/null || true
-    certutil -A -d "$NSS_DB" -n "sslserver" -t ",," -a -i "$SIGNED_CERT" 2>/dev/null
+    openssl pkcs12 -export -in "$SIGNED_CERT" -inkey "$TLS_KEY_FILE" \
+        -out /tmp/est-tls.p12 -name "sslserver" -passout pass:"$PKI_PASSWORD" 2>/dev/null
+    pk12util -i /tmp/est-tls.p12 -d "$NSS_DB" -W "$PKI_PASSWORD" -K "" 2>/dev/null
+    rm -f /tmp/est-tls.p12
 
     # Save TLS cert for reference
     cp "$SIGNED_CERT" "$TLS_CERT"
@@ -186,11 +185,17 @@ EOF
     chown pkiuser:pkiuser "${INSTANCE_DIR}/conf/serverCertNick.conf"
 
     # Write proper tomcat.conf with JAVA_OPTS for JSS
+    # PQ mode needs maxHandshakeMessageSize for ML-DSA-87 certs (~7KB each,
+    # default 16KB TLS handshake buffer overflows with a 3-cert chain)
+    local JDK_OPTS="-Dcom.redhat.fips=false -Dredhat.crypto-policies=false"
+    if [ "${IS_PQ:-false}" = "true" ]; then
+        JDK_OPTS="$JDK_OPTS -Djdk.tls.maxHandshakeMessageSize=64000"
+    fi
     cat > "${INSTANCE_DIR}/conf/tomcat.conf" << EOF
 JAVA_HOME="/usr/lib/jvm/jre-25-openjdk"
 CATALINA_BASE="${INSTANCE_DIR}"
 CATALINA_TMPDIR="${INSTANCE_DIR}/temp"
-JAVA_OPTS="-Dcom.redhat.fips=false -Dredhat.crypto-policies=false"
+JAVA_OPTS="$JDK_OPTS"
 TOMCAT_USER="pkiuser"
 SECURITY_MANAGER="false"
 CATALINA_PID="/var/run/pki/tomcat/${PKI_INSTANCE}.pid"
@@ -331,8 +336,10 @@ init_ra() {
 
     # Check if already initialized
     if [ -f "$TLS_CERT" ] && [ -d "${INSTANCE_DIR}/conf/est" ]; then
-        # Check if server is running
-        if curl -sk "https://localhost:8443/.well-known/est/cacerts" 2>/dev/null | head -1 | grep -qE "BEGIN|MII"; then
+        # Check if server is running (use HTTP for startup check — HTTPS may
+        # not work until the JDK TLS fix is loaded for PQ mode)
+        if curl -sk "http://localhost:8080/.well-known/est/cacerts" 2>/dev/null | head -1 | grep -qE "BEGIN|MII" || \
+           curl -sk "https://localhost:8443/.well-known/est/cacerts" 2>/dev/null | head -1 | grep -qE "BEGIN|MII"; then
             log_info "${CA_NAME} already initialized and responding"
             return 0
         fi
