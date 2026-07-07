@@ -1,0 +1,61 @@
+# ── Kipuka EST Server — RSA-4096 PKI Hierarchy ─────────────────────────
+#
+# Configuration for the RSA-4096 certificate revocation lab.
+# Proxies EST enrollment requests to the Dogtag Intermediate CA
+# (intermediate-ca.cert-lab.local) using the caServerCert profile.
+#
+# Network: 172.26.0.0/24 (CERT-LAB)
+# Certificates: data/certs/rsa/
+# ────────────────────────────────────────────────────────────────────────
+
+# ── Server ───────────────────────────────────────────────────────────────
+[server]
+listen_addr = "0.0.0.0:9443"
+
+# ── TLS ──────────────────────────────────────────────────────────────────
+[tls]
+enabled   = true
+cert_file = "/etc/kipuka/certs/kipuka-rsa.cert.pem"
+key_file  = "/etc/kipuka/certs/kipuka-rsa.key.pem"
+ca_file   = "/etc/kipuka/certs/ca-chain.crt"
+
+# Accept but don't require client certificates — enrollment can fall
+# back to OTP authentication via HTTP Basic.
+client_auth = "optional"
+
+# ── Database ─────────────────────────────────────────────────────────────
+[database]
+url = "sqlite:///var/lib/kipuka/kipuka.db?mode=rwc"
+
+# ── Dogtag PKI Backend ──────────────────────────────────────────────────
+# Proxy enrollment to the RSA Intermediate CA via Dogtag REST API.
+# The kipuka-dogtag crate connects to Dogtag CA for certificate issuance,
+# renewal, and revocation instead of using a local signing key.
+[dogtag]
+ca_url         = "https://intermediate-ca.cert-lab.local:8443"
+agent_cert_file = "/etc/kipuka/dogtag/agent.pem"
+agent_key_file  = "/etc/kipuka/dogtag/agent-key.pem"
+ca_cert_file    = "/etc/kipuka/dogtag/ca-chain.pem"
+profile_id      = "caServerCert"
+
+# ── EST Protocol ─────────────────────────────────────────────────────────
+[est]
+simpleenroll   = true
+simplereenroll = true
+csrattrs       = true
+fullcmc        = false
+serverkeygen   = false
+
+# ── OTP Enrollment Authentication ────────────────────────────────────────
+[otp]
+enabled         = true
+storage_backend = "db"
+entropy_bits    = 128
+ttl_seconds     = 3600
+max_usage       = 1
+
+# ── Audit ────────────────────────────────────────────────────────────────
+[audit]
+enabled    = true
+log_path   = "/dev/stdout"
+log_to_db  = true

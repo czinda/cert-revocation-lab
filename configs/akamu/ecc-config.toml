@@ -1,0 +1,23 @@
+# ecc-config.toml — Akamu ACME CA for the ECC P-384 PKI hierarchy.
+#
+# Part of the cert-revocation-lab triple PKI infrastructure.
+# This instance serves the ECC P-384 hierarchy (ECDSA with SHA-384 signatures),
+# using Dogtag PKI profiles from the filesystem.
+
+listen_addr = "0.0.0.0:8080"
+base_url    = "https://akamu-ecc.cert-lab.local:8443"
+
+[database]
+url = "sqlite:///app/data/akamu.db"
+
+[ca]
+key_file  = "/certs/akamu-ecc.key.pem"
+cert_file = "/certs/akamu-ecc.cert.pem"
+
+[profiles]
+refresh_interval_secs = 3600
+
+[profiles.providers.dogtag]
+type        = "dogtag"
+profile_dir = "/certs/profiles"
+profiles    = []

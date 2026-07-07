@@ -110,7 +110,8 @@ services:
       - "ecc-root-ca.cert-lab.local:172.28.0.12"
       - "ecc-intermediate-ca.cert-lab.local:172.28.0.11"
       - "ecc-iot-ca.cert-lab.local:172.28.0.13"
-      - "ecc-est-ca.cert-lab.local:172.28.0.18"
+      - "akamu-ecc.cert-lab.local:172.28.0.18"
+      - "kipuka-ecc.cert-lab.local:172.28.0.19"
       - "ecc-ocsp.cert-lab.local:172.28.0.22"
       - "ds-ecc-ocsp.cert-lab.local:172.28.0.21"
     networks:
@@ -164,7 +165,8 @@ services:
       - "ecc-root-ca.cert-lab.local:172.28.0.12"
       - "ecc-intermediate-ca.cert-lab.local:172.28.0.11"
       - "ecc-iot-ca.cert-lab.local:172.28.0.13"
-      - "ecc-est-ca.cert-lab.local:172.28.0.18"
+      - "akamu-ecc.cert-lab.local:172.28.0.18"
+      - "kipuka-ecc.cert-lab.local:172.28.0.19"
       - "ecc-ocsp.cert-lab.local:172.28.0.22"
       - "ds-ecc-ocsp.cert-lab.local:172.28.0.21"
     networks:
@@ -218,7 +220,8 @@ services:
       - "ecc-root-ca.cert-lab.local:172.28.0.12"
       - "ecc-intermediate-ca.cert-lab.local:172.28.0.11"
       - "ecc-iot-ca.cert-lab.local:172.28.0.13"
-      - "ecc-est-ca.cert-lab.local:172.28.0.18"
+      - "akamu-ecc.cert-lab.local:172.28.0.18"
+      - "kipuka-ecc.cert-lab.local:172.28.0.19"
       - "ecc-ocsp.cert-lab.local:172.28.0.22"
       - "ds-ecc-ocsp.cert-lab.local:172.28.0.21"
     networks:
@@ -235,44 +238,78 @@ services:
       retries: 5
       start_period: 120s
 
-  # ECC EST Registration Authority - Standalone RA proxying to ECC Intermediate CA
-  # No local CA subsystem, no LDAP — lightweight EST (RFC 7030) gateway
-  dogtag-ecc-est-ca:
-    image: ${PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
-    container_name: dogtag-ecc-est-ca
-    hostname: ecc-est-ca.${LAB_DOMAIN:-cert-lab.local}
-    privileged: true
+  # Akamu ACME CA (ECC) — Rust ACME server delegating to ECC Intermediate CA
+  akamu-ecc:
+    image: ${AKAMU_IMAGE:-localhost/akamu:latest}
+    container_name: akamu-ecc
+    hostname: akamu-ecc.${LAB_DOMAIN:-cert-lab.local}
     depends_on:
       dogtag-ecc-intermediate-ca:
-        condition: service_started
-    environment:
-      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
-      PKI_INSTANCE_NAME: pki-ecc-est-ca
+        condition: service_healthy
     volumes:
-      - ./scripts/pki:/scripts:ro
-      - ./data/certs/ecc:/certs
-      - pki-ecc-est-data:/var/lib/pki
-      - pki-ecc-est-logs:/var/log/pki
+      - ./configs/akamu/ecc-config.toml:/app/conf/config.toml:ro
+      - ./data/certs/ecc:/certs:ro
+      - akamu-ecc-data:/app/data
     extra_hosts:
       - "ecc-root-ca.cert-lab.local:172.28.0.12"
       - "ecc-intermediate-ca.cert-lab.local:172.28.0.11"
       - "ecc-iot-ca.cert-lab.local:172.28.0.13"
-      - "ecc-est-ca.cert-lab.local:172.28.0.18"
+      - "akamu-ecc.cert-lab.local:172.28.0.18"
+      - "kipuka-ecc.cert-lab.local:172.28.0.19"
       - "ecc-ocsp.cert-lab.local:172.28.0.22"
-      - "ds-ecc-ocsp.cert-lab.local:172.28.0.21"
     networks:
       pki-ecc-net:
         ipv4_address: 172.28.0.18
     ports:
-      - "8466:8443"
+      - "8469:8443"
       - "8496:8080"
-    command: ["/bin/bash", "-c", "sleep infinity"]
+    user: "1001:1001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M,noexec,nosuid
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     healthcheck:
-      test: ["CMD-SHELL", "curl -sk https://localhost:8443/.well-known/est/cacerts 2>/dev/null | head -1 | grep -qE 'BEGIN|MII' || exit 1"]
-      interval: 10s
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/directory > /dev/null || exit 1"]
+      interval: 15s
       timeout: 10s
       retries: 5
-      start_period: 120s
+      start_period: 30s
+
+  # Kipuka EST Server (ECC) — Rust EST/CMP server with Dogtag backend
+  kipuka-ecc:
+    image: ${KIPUKA_IMAGE:-registry.kipuka.dev/heebus/kipuka:latest-amd64}
+    container_name: kipuka-ecc
+    hostname: kipuka-ecc.${LAB_DOMAIN:-cert-lab.local}
+    depends_on:
+      dogtag-ecc-intermediate-ca:
+        condition: service_healthy
+    volumes:
+      - ./configs/kipuka/ecc-config.toml:/etc/kipuka/kipuka.toml:ro
+      - ./data/certs/ecc:/etc/kipuka/certs:ro
+      - kipuka-ecc-data:/var/lib/kipuka
+    extra_hosts:
+      - "ecc-root-ca.cert-lab.local:172.28.0.12"
+      - "ecc-intermediate-ca.cert-lab.local:172.28.0.11"
+      - "ecc-iot-ca.cert-lab.local:172.28.0.13"
+      - "akamu-ecc.cert-lab.local:172.28.0.18"
+      - "kipuka-ecc.cert-lab.local:172.28.0.19"
+      - "ecc-ocsp.cert-lab.local:172.28.0.22"
+    networks:
+      pki-ecc-net:
+        ipv4_address: 172.28.0.19
+    ports:
+      - "8466:9443"
+    environment:
+      - RUST_LOG=info
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk https://localhost:9443/.well-known/est/cacerts 2>/dev/null | head -1 | grep -qE 'BEGIN|MII' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   # 389 Directory Server for ECC OCSP Responder
   ds-ecc-ocsp:
@@ -426,8 +463,8 @@ volumes:
   pki-ecc-intermediate-logs:
   pki-ecc-iot-data:
   pki-ecc-iot-logs:
-  pki-ecc-est-data:
-  pki-ecc-est-logs:
+  akamu-ecc-data:
+  kipuka-ecc-data:
   ds-ecc-ocsp-data:
   pki-ecc-ocsp-data:
   pki-ecc-ocsp-logs:

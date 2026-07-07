@@ -101,8 +101,8 @@ services:
       - "root-ca.cert-lab.local:172.26.0.12"
       - "intermediate-ca.cert-lab.local:172.26.0.11"
       - "iot-ca.cert-lab.local:172.26.0.13"
-      - "acme-ca.cert-lab.local:172.26.0.18"
-      - "est-ca.cert-lab.local:172.26.0.20"
+      - "akamu-rsa.cert-lab.local:172.26.0.18"
+      - "kipuka-rsa.cert-lab.local:172.26.0.20"
       - "ocsp.cert-lab.local:172.26.0.22"
       - "ds-ocsp.cert-lab.local:172.26.0.21"
     networks:
@@ -152,8 +152,8 @@ services:
       - "root-ca.cert-lab.local:172.26.0.12"
       - "intermediate-ca.cert-lab.local:172.26.0.11"
       - "iot-ca.cert-lab.local:172.26.0.13"
-      - "acme-ca.cert-lab.local:172.26.0.18"
-      - "est-ca.cert-lab.local:172.26.0.20"
+      - "akamu-rsa.cert-lab.local:172.26.0.18"
+      - "kipuka-rsa.cert-lab.local:172.26.0.20"
       - "ocsp.cert-lab.local:172.26.0.22"
       - "ds-ocsp.cert-lab.local:172.26.0.21"
     networks:
@@ -203,8 +203,8 @@ services:
       - "root-ca.cert-lab.local:172.26.0.12"
       - "intermediate-ca.cert-lab.local:172.26.0.11"
       - "iot-ca.cert-lab.local:172.26.0.13"
-      - "acme-ca.cert-lab.local:172.26.0.18"
-      - "est-ca.cert-lab.local:172.26.0.20"
+      - "akamu-rsa.cert-lab.local:172.26.0.18"
+      - "kipuka-rsa.cert-lab.local:172.26.0.20"
       - "ocsp.cert-lab.local:172.26.0.22"
       - "ds-ocsp.cert-lab.local:172.26.0.21"
     networks:
@@ -221,85 +221,82 @@ services:
       retries: 5
       start_period: 120s
 
-  # ACME Registration Authority - Standalone RA proxying to Intermediate CA
-  # No local CA subsystem, no LDAP — lightweight protocol gateway
-  dogtag-acme-ca:
-    image: ${PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
-    container_name: dogtag-acme-ca
-    hostname: acme-ca.${LAB_DOMAIN:-cert-lab.local}
-    privileged: true
+  # Akamu ACME CA — Rust ACME server (RFC 8555) delegating to Intermediate CA
+  # Replaces the lightweight Dogtag ACME RA with a full-featured ACME CA
+  # supporting PQ (ML-DSA), MTC transparency, and Dogtag profile integration.
+  akamu-rsa:
+    image: ${AKAMU_IMAGE:-localhost/akamu:latest}
+    container_name: akamu-rsa
+    hostname: akamu-rsa.${LAB_DOMAIN:-cert-lab.local}
     depends_on:
       dogtag-intermediate-ca:
-        condition: service_started
-    environment:
-      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
-      PKI_INSTANCE_NAME: pki-acme-ca
+        condition: service_healthy
     volumes:
-      - ./scripts/pki:/scripts:ro
-      - ./data/certs:/certs
-      - pki-acme-data:/var/lib/pki
-      - pki-acme-logs:/var/log/pki
+      - ./configs/akamu/rsa-config.toml:/app/conf/config.toml:ro
+      - ./data/certs/rsa:/certs:ro
+      - akamu-rsa-data:/app/data
     extra_hosts:
       - "root-ca.cert-lab.local:172.26.0.12"
       - "intermediate-ca.cert-lab.local:172.26.0.11"
       - "iot-ca.cert-lab.local:172.26.0.13"
-      - "acme-ca.cert-lab.local:172.26.0.18"
-      - "est-ca.cert-lab.local:172.26.0.20"
+      - "akamu-rsa.cert-lab.local:172.26.0.18"
+      - "kipuka-rsa.cert-lab.local:172.26.0.20"
       - "ocsp.cert-lab.local:172.26.0.22"
-      - "ds-ocsp.cert-lab.local:172.26.0.21"
     networks:
       pki-net:
         ipv4_address: 172.26.0.18
     ports:
       - "8446:8443"
       - "8483:8080"
-    command: ["/bin/bash", "-c", "sleep infinity"]
+    user: "1001:1001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M,noexec,nosuid
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     healthcheck:
-      test: ["CMD-SHELL", "curl -sk https://localhost:8443/acme/directory 2>/dev/null | grep -q newNonce || exit 1"]
-      interval: 10s
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/directory > /dev/null || exit 1"]
+      interval: 15s
       timeout: 10s
       retries: 5
-      start_period: 120s
+      start_period: 30s
 
-  # EST Registration Authority - Standalone RA proxying to Intermediate CA
-  # No local CA subsystem, no LDAP — lightweight EST (RFC 7030) gateway
-  dogtag-est-ca:
-    image: ${PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
-    container_name: dogtag-est-ca
-    hostname: est-ca.${LAB_DOMAIN:-cert-lab.local}
-    privileged: true
+  # Kipuka EST Server — Rust EST/CMP server (RFC 7030) with Dogtag backend
+  # Replaces the lightweight Dogtag EST RA with a full-featured enrollment
+  # server supporting EST, CMP, CMC, OTP, mTLS, and server-side keygen.
+  kipuka-rsa:
+    image: ${KIPUKA_IMAGE:-registry.kipuka.dev/heebus/kipuka:latest-amd64}
+    container_name: kipuka-rsa
+    hostname: kipuka-rsa.${LAB_DOMAIN:-cert-lab.local}
     depends_on:
       dogtag-intermediate-ca:
-        condition: service_started
-    environment:
-      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
-      PKI_INSTANCE_NAME: pki-est-ca
+        condition: service_healthy
     volumes:
-      - ./scripts/pki:/scripts:ro
-      - ./data/certs:/certs
-      - pki-est-data:/var/lib/pki
-      - pki-est-logs:/var/log/pki
+      - ./configs/kipuka/rsa-config.toml:/etc/kipuka/kipuka.toml:ro
+      - ./data/certs/rsa:/etc/kipuka/certs:ro
+      - kipuka-rsa-data:/var/lib/kipuka
     extra_hosts:
       - "root-ca.cert-lab.local:172.26.0.12"
       - "intermediate-ca.cert-lab.local:172.26.0.11"
       - "iot-ca.cert-lab.local:172.26.0.13"
-      - "acme-ca.cert-lab.local:172.26.0.18"
-      - "est-ca.cert-lab.local:172.26.0.20"
+      - "akamu-rsa.cert-lab.local:172.26.0.18"
+      - "kipuka-rsa.cert-lab.local:172.26.0.20"
       - "ocsp.cert-lab.local:172.26.0.22"
-      - "ds-ocsp.cert-lab.local:172.26.0.21"
     networks:
       pki-net:
         ipv4_address: 172.26.0.20
     ports:
-      - "8447:8443"
-      - "8487:8080"
-    command: ["/bin/bash", "-c", "sleep infinity"]
+      - "8447:9443"
+    environment:
+      - RUST_LOG=info
     healthcheck:
-      test: ["CMD-SHELL", "curl -sk https://localhost:8443/.well-known/est/cacerts 2>/dev/null | head -1 | grep -qE 'BEGIN|MII' || exit 1"]
-      interval: 10s
+      test: ["CMD-SHELL", "curl -sk https://localhost:9443/.well-known/est/cacerts 2>/dev/null | head -1 | grep -qE 'BEGIN|MII' || exit 1"]
+      interval: 15s
       timeout: 10s
       retries: 5
-      start_period: 120s
+      start_period: 30s
 
   # 389 Directory Server for OCSP Responder
   ds-ocsp:
@@ -455,10 +452,8 @@ volumes:
   pki-intermediate-logs:
   pki-iot-data:
   pki-iot-logs:
-  pki-acme-data:
-  pki-acme-logs:
-  pki-est-data:
-  pki-est-logs:
+  akamu-rsa-data:
+  kipuka-rsa-data:
   ds-ocsp-data:
   pki-ocsp-data:
   pki-ocsp-logs:

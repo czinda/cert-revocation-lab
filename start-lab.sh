@@ -286,10 +286,10 @@ setup_volumes() {
         "pki-intermediate-logs"
         "pki-iot-data"
         "pki-iot-logs"
-        "pki-acme-data"
-        "pki-acme-logs"
-        "pki-est-data"
-        "pki-est-logs"
+        "akamu-rsa-data"
+        "akamu-rsa-logs"
+        "kipuka-rsa-data"
+        "kipuka-rsa-logs"
         "ds-ocsp-data"
         "pki-ocsp-data"
         "pki-ocsp-logs"
@@ -556,7 +556,7 @@ start_pki_hierarchy() {
 
     # Check if all PKI containers are already running
     local all_running=true
-    for ctr in ds-root ds-intermediate ds-iot ds-ocsp ds-kra dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-kra dogtag-acme-ca dogtag-est-ca; do
+    for ctr in ds-root ds-intermediate ds-iot ds-ocsp ds-kra dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-kra akamu-rsa kipuka-rsa; do
         if is_rootful_running "$ctr"; then
             log_success "$ctr is already running"
         else
@@ -579,7 +579,7 @@ start_pki_hierarchy() {
 
         # Wait for all containers to be running
         log_info "Waiting for PKI containers to start..."
-        for ctr in ds-root ds-intermediate ds-iot ds-ocsp ds-kra dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-kra dogtag-acme-ca dogtag-est-ca; do
+        for ctr in ds-root ds-intermediate ds-iot ds-ocsp ds-kra dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-kra akamu-rsa kipuka-rsa; do
             local elapsed=0
             while [ $elapsed -lt 60 ]; do
                 local status=""
@@ -655,7 +655,7 @@ start_pq_pki_hierarchy() {
 
     # Check if all PQ PKI containers are already running
     local all_running=true
-    for ctr in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-ocsp ds-pq-kra dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-ocsp dogtag-pq-kra dogtag-pq-est-ca; do
+    for ctr in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-ocsp ds-pq-kra dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-ocsp dogtag-pq-kra akamu-pq kipuka-pq; do
         if is_rootful_running "$ctr"; then
             log_success "$ctr is already running"
         else
@@ -727,7 +727,7 @@ start_pq_pki_hierarchy() {
         # and recreates the DS containers we just started sequentially, re-triggering
         # the parallel init race condition.
         log_info "Starting PQ Dogtag CA containers..."
-        for ca in dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-est-ca dogtag-pq-ocsp dogtag-pq-kra; do
+        for ca in dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca akamu-pq kipuka-pq dogtag-pq-ocsp dogtag-pq-kra; do
             local ca_state=""
             if is_running_as_root; then
                 ca_state=$(podman inspect --format '{{.State.Status}}' "$ca" 2>/dev/null || echo "missing")
@@ -753,7 +753,7 @@ start_pq_pki_hierarchy() {
         done
 
         # Wait for CA containers to be running
-        for ctr in dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-est-ca dogtag-pq-ocsp dogtag-pq-kra; do
+        for ctr in dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca akamu-pq kipuka-pq dogtag-pq-ocsp dogtag-pq-kra; do
             local elapsed=0
             while [ $elapsed -lt 60 ]; do
                 local status=""
@@ -802,7 +802,7 @@ start_ecc_pki_hierarchy() {
 
     # Check if all ECC PKI containers are already running
     local all_running=true
-    for ctr in ds-ecc-root ds-ecc-intermediate ds-ecc-iot ds-ecc-ocsp ds-ecc-kra dogtag-ecc-root-ca dogtag-ecc-intermediate-ca dogtag-ecc-iot-ca dogtag-ecc-ocsp dogtag-ecc-kra dogtag-ecc-est-ca; do
+    for ctr in ds-ecc-root ds-ecc-intermediate ds-ecc-iot ds-ecc-ocsp ds-ecc-kra dogtag-ecc-root-ca dogtag-ecc-intermediate-ca dogtag-ecc-iot-ca dogtag-ecc-ocsp dogtag-ecc-kra akamu-ecc kipuka-ecc; do
         if is_rootful_running "$ctr"; then
             log_success "$ctr is already running"
         else
@@ -825,7 +825,7 @@ start_ecc_pki_hierarchy() {
 
         # Wait for all ECC containers to be running
         log_info "Waiting for ECC PKI containers to start..."
-        for ctr in ds-ecc-root ds-ecc-intermediate ds-ecc-iot ds-ecc-ocsp ds-ecc-kra dogtag-ecc-root-ca dogtag-ecc-intermediate-ca dogtag-ecc-iot-ca dogtag-ecc-ocsp dogtag-ecc-kra dogtag-ecc-est-ca; do
+        for ctr in ds-ecc-root ds-ecc-intermediate ds-ecc-iot ds-ecc-ocsp ds-ecc-kra dogtag-ecc-root-ca dogtag-ecc-intermediate-ca dogtag-ecc-iot-ca dogtag-ecc-ocsp dogtag-ecc-kra akamu-ecc kipuka-ecc; do
             local elapsed=0
             while [ $elapsed -lt 60 ]; do
                 local status=""
@@ -1309,22 +1309,22 @@ print_summary() {
         echo "    Root CA:         https://root-ca.cert-lab.local:8443/ca"
         echo "    Intermediate CA: https://intermediate-ca.cert-lab.local:8444/ca"
         echo "    IoT CA:          https://iot-ca.cert-lab.local:8445/ca"
-        echo "    EST CA:          https://est-ca.cert-lab.local:8447/ca"
-        echo "    ACME CA:         https://acme-ca.cert-lab.local:8446/ca"
+        echo "    Akamu ACME:      https://akamu-rsa.cert-lab.local:8446/ca"
+        echo "    Kipuka EST:      https://kipuka-rsa.cert-lab.local:8447/ca"
     fi
     if [ "$START_ECC_PKI" = true ]; then
         echo "  ECC P-384 PKI:"
         echo "    Root CA:         https://ecc-root-ca.cert-lab.local:8463/ca"
         echo "    Intermediate CA: https://ecc-intermediate-ca.cert-lab.local:8464/ca"
         echo "    IoT CA:          https://ecc-iot-ca.cert-lab.local:8465/ca"
-        echo "    EST CA:          https://ecc-est-ca.cert-lab.local:8466/ca"
+        echo "    Kipuka EST:      https://kipuka-ecc.cert-lab.local:8466/ca"
     fi
     if [ "$START_PQ_PKI" = true ]; then
         echo "  ML-DSA-87 (Post-Quantum) PKI:"
         echo "    Root CA:         https://pq-root-ca.cert-lab.local:8453/ca"
         echo "    Intermediate CA: https://pq-intermediate-ca.cert-lab.local:8454/ca"
         echo "    IoT CA:          https://pq-iot-ca.cert-lab.local:8455/ca"
-        echo "    EST CA:          https://pq-est-ca.cert-lab.local:8456/ca"
+        echo "    Kipuka EST:      https://kipuka-pq.cert-lab.local:8456/ca"
     fi
     echo ""
 
@@ -1403,7 +1403,7 @@ quick_start() {
     # Start PKI containers from pki-compose.yml (rootful - has initialized data)
     if [ -f pki-compose.yml ]; then
         local pki_all_running=true
-        for ctr in ds-root ds-intermediate ds-iot ds-ocsp ds-kra dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-kra dogtag-acme-ca dogtag-est-ca; do
+        for ctr in ds-root ds-intermediate ds-iot ds-ocsp ds-kra dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-kra akamu-rsa kipuka-rsa; do
             if is_rootful_running "$ctr"; then
                 log_success "$ctr is already running"
             else
@@ -1450,7 +1450,7 @@ quick_start() {
             done
 
             # Start the PKI servers inside containers
-            for ca in dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-acme-ca dogtag-est-ca; do
+            for ca in dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca akamu-rsa kipuka-rsa; do
                 instance=$(echo $ca | sed 's/dogtag-/pki-/')
                 log_info "Starting PKI server in $ca..."
                 if [ "$RUNNING_AS_ROOT" = true ]; then
