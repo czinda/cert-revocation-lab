@@ -267,7 +267,7 @@ services:
 
   kipuka-rsa:
     profiles: [akamu]
-    image: ${KIPUKA_IMAGE:-registry.kipuka.dev/heebus/kipuka:latest-amd64}
+    image: ${KIPUKA_IMAGE:-quay.io/czinda/kipuka:latest-amd64}
     container_name: kipuka-rsa
     hostname: kipuka-rsa.${LAB_DOMAIN:-cert-lab.local}
     depends_on:
