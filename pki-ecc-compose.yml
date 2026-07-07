@@ -238,8 +238,12 @@ services:
       retries: 5
       start_period: 120s
 
-  # Akamu ACME CA (ECC) — Rust ACME server delegating to ECC Intermediate CA
+  # ── Enrollment Backend: Akamu + Kipuka (--profile akamu) ──────────────────
+  # Activate with: ENROLLMENT_BACKEND=akamu (default)
+  # Rust-based ACME CA + EST server, delegating to Dogtag ECC Intermediate CA.
+
   akamu-ecc:
+    profiles: [akamu]
     image: ${AKAMU_IMAGE:-localhost/akamu:latest}
     container_name: akamu-ecc
     hostname: akamu-ecc.${LAB_DOMAIN:-cert-lab.local}
@@ -278,8 +282,8 @@ services:
       retries: 5
       start_period: 30s
 
-  # Kipuka EST Server (ECC) — Rust EST/CMP server with Dogtag backend
   kipuka-ecc:
+    profiles: [akamu]
     image: ${KIPUKA_IMAGE:-registry.kipuka.dev/heebus/kipuka:latest-amd64}
     container_name: kipuka-ecc
     hostname: kipuka-ecc.${LAB_DOMAIN:-cert-lab.local}
@@ -310,6 +314,48 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+
+  # ── Enrollment Backend: Dogtag EST RA (--profile dogtag-ra) ─────────────────
+  # Activate with: ENROLLMENT_BACKEND=dogtag
+  # Lightweight Dogtag pki-server instance proxying to ECC Intermediate CA.
+
+  dogtag-ecc-est-ca:
+    profiles: [dogtag-ra]
+    image: ${PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
+    container_name: dogtag-ecc-est-ca
+    hostname: ecc-est-ca.${LAB_DOMAIN:-cert-lab.local}
+    privileged: true
+    depends_on:
+      dogtag-ecc-intermediate-ca:
+        condition: service_started
+    environment:
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_INSTANCE_NAME: pki-ecc-est-ca
+    volumes:
+      - ./scripts/pki:/scripts:ro
+      - ./data/certs/ecc:/certs
+      - pki-ecc-est-data:/var/lib/pki
+      - pki-ecc-est-logs:/var/log/pki
+    extra_hosts:
+      - "ecc-root-ca.cert-lab.local:172.28.0.12"
+      - "ecc-intermediate-ca.cert-lab.local:172.28.0.11"
+      - "ecc-iot-ca.cert-lab.local:172.28.0.13"
+      - "ecc-est-ca.cert-lab.local:172.28.0.18"
+      - "ecc-ocsp.cert-lab.local:172.28.0.22"
+      - "ds-ecc-ocsp.cert-lab.local:172.28.0.21"
+    networks:
+      pki-ecc-net:
+        ipv4_address: 172.28.0.18
+    ports:
+      - "8466:8443"
+      - "8496:8080"
+    command: ["/bin/bash", "-c", "sleep infinity"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk https://localhost:8443/.well-known/est/cacerts 2>/dev/null | head -1 | grep -qE 'BEGIN|MII' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
 
   # 389 Directory Server for ECC OCSP Responder
   ds-ecc-ocsp:
@@ -465,6 +511,8 @@ volumes:
   pki-ecc-iot-logs:
   akamu-ecc-data:
   kipuka-ecc-data:
+  pki-ecc-est-data:
+  pki-ecc-est-logs:
   ds-ecc-ocsp-data:
   pki-ecc-ocsp-data:
   pki-ecc-ocsp-logs:

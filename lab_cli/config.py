@@ -67,123 +67,99 @@ class CAConfig:
             return f"https://localhost:{self.host_port}"
 
 
-# CA configurations by PKI type and level
-CA_CONFIGS: dict[str, dict[str, CAConfig]] = {
-    "rsa": {
-        "root": CAConfig(
-            container="dogtag-root-ca",
-            instance="pki-root-ca",
-            url="https://root-ca.cert-lab.local:8443",
-            nss_db="/var/lib/pki/pki-root-ca/alias",
-            host_port=8443,
-        ),
-        "intermediate": CAConfig(
-            container="dogtag-intermediate-ca",
-            instance="pki-intermediate-ca",
-            url="https://intermediate-ca.cert-lab.local:8443",
-            nss_db="/var/lib/pki/pki-intermediate-ca/alias",
-            host_port=8444,
-        ),
-        "iot": CAConfig(
-            container="dogtag-iot-ca",
-            instance="pki-iot-ca",
-            url="https://iot-ca.cert-lab.local:8443",
-            nss_db="/var/lib/pki/pki-iot-ca/alias",
-            host_port=8445,
-        ),
-        "est": CAConfig(
-            container="kipuka-rsa",
-            instance="kipuka",
-            url="https://kipuka-rsa.cert-lab.local:9443",
-            nss_db="",
-            host_port=8447,
-        ),
-        "acme": CAConfig(
-            container="akamu-rsa",
-            instance="akamu",
-            url="http://akamu-rsa.cert-lab.local:8080",
-            nss_db="",
-            host_port=8446,
-        ),
+# Enrollment backend: "akamu" (Akamu ACME + Kipuka EST) or "dogtag" (Dogtag RAs)
+ENROLLMENT_BACKEND = os.getenv("ENROLLMENT_BACKEND", "akamu")
+
+# EST/ACME configs for each backend, keyed by PKI type
+_ENROLLMENT_CONFIGS: dict[str, dict[str, dict[str, CAConfig]]] = {
+    "akamu": {
+        "rsa": {
+            "est": CAConfig(container="kipuka-rsa", instance="kipuka",
+                            url="https://kipuka-rsa.cert-lab.local:9443", nss_db="", host_port=8447),
+            "acme": CAConfig(container="akamu-rsa", instance="akamu",
+                             url="http://akamu-rsa.cert-lab.local:8080", nss_db="", host_port=8446),
+        },
+        "ecc": {
+            "est": CAConfig(container="kipuka-ecc", instance="kipuka",
+                            url="https://kipuka-ecc.cert-lab.local:9443", nss_db="", host_port=8466),
+            "acme": CAConfig(container="akamu-ecc", instance="akamu",
+                             url="http://akamu-ecc.cert-lab.local:8080", nss_db="", host_port=8469),
+        },
+        "pqc": {
+            "est": CAConfig(container="kipuka-pq", instance="kipuka",
+                            url="https://kipuka-pq.cert-lab.local:9443", nss_db="", host_port=8456),
+            "acme": CAConfig(container="akamu-pq", instance="akamu",
+                             url="http://akamu-pq.cert-lab.local:8080", nss_db="", host_port=8459),
+        },
     },
-    "ecc": {
-        "root": CAConfig(
-            container="dogtag-ecc-root-ca",
-            instance="pki-ecc-root-ca",
-            url="https://ecc-root-ca.cert-lab.local:8443",
-            nss_db="/var/lib/pki/pki-ecc-root-ca/alias",
-            host_port=8463,
-        ),
-        "intermediate": CAConfig(
-            container="dogtag-ecc-intermediate-ca",
-            instance="pki-ecc-intermediate-ca",
-            url="https://ecc-intermediate-ca.cert-lab.local:8443",
-            nss_db="/var/lib/pki/pki-ecc-intermediate-ca/alias",
-            host_port=8464,
-        ),
-        "iot": CAConfig(
-            container="dogtag-ecc-iot-ca",
-            instance="pki-ecc-iot-ca",
-            url="https://ecc-iot-ca.cert-lab.local:8443",
-            nss_db="/var/lib/pki/pki-ecc-iot-ca/alias",
-            host_port=8465,
-        ),
-        "est": CAConfig(
-            container="kipuka-ecc",
-            instance="kipuka",
-            url="https://kipuka-ecc.cert-lab.local:9443",
-            nss_db="",
-            host_port=8466,
-        ),
-        "acme": CAConfig(
-            container="akamu-ecc",
-            instance="akamu",
-            url="http://akamu-ecc.cert-lab.local:8080",
-            nss_db="",
-            host_port=8469,
-        ),
-    },
-    "pqc": {
-        "root": CAConfig(
-            container="dogtag-pq-root-ca",
-            instance="pki-pq-root-ca",
-            url="http://pq-root-ca.cert-lab.local:8080",
-            nss_db="/var/lib/pki/pki-pq-root-ca/alias",
-            host_port=8453,
-            http_port=8490,
-        ),
-        "intermediate": CAConfig(
-            container="dogtag-pq-intermediate-ca",
-            instance="pki-pq-intermediate-ca",
-            url="http://pq-intermediate-ca.cert-lab.local:8080",
-            nss_db="/var/lib/pki/pki-pq-intermediate-ca/alias",
-            host_port=8454,
-            http_port=8484,
-        ),
-        "iot": CAConfig(
-            container="dogtag-pq-iot-ca",
-            instance="pki-pq-iot-ca",
-            url="http://pq-iot-ca.cert-lab.local:8080",
-            nss_db="/var/lib/pki/pki-pq-iot-ca/alias",
-            host_port=8455,
-            http_port=8485,
-        ),
-        "est": CAConfig(
-            container="kipuka-pq",
-            instance="kipuka",
-            url="https://kipuka-pq.cert-lab.local:9443",
-            nss_db="",
-            host_port=8456,
-        ),
-        "acme": CAConfig(
-            container="akamu-pq",
-            instance="akamu",
-            url="http://akamu-pq.cert-lab.local:8080",
-            nss_db="",
-            host_port=8459,
-        ),
+    "dogtag": {
+        "rsa": {
+            "est": CAConfig(container="dogtag-est-ca", instance="pki-est-ca",
+                            url="https://est-ca.cert-lab.local:8443", nss_db="/var/lib/pki/pki-est-ca/alias", host_port=8447),
+            "acme": CAConfig(container="dogtag-acme-ca", instance="pki-acme-ca",
+                             url="https://acme-ca.cert-lab.local:8443", nss_db="/var/lib/pki/pki-acme-ca/alias", host_port=8446),
+        },
+        "ecc": {
+            "est": CAConfig(container="dogtag-ecc-est-ca", instance="pki-ecc-est-ca",
+                            url="https://ecc-est-ca.cert-lab.local:8443", nss_db="/var/lib/pki/pki-ecc-est-ca/alias", host_port=8466),
+        },
+        "pqc": {
+            "est": CAConfig(container="dogtag-pq-est-ca", instance="pki-pq-est-ca",
+                            url="https://pq-est-ca.cert-lab.local:8443", nss_db="/var/lib/pki/pki-pq-est-ca/alias",
+                            host_port=8456, http_port=8486),
+        },
     },
 }
+
+# CA configurations by PKI type and level — core CAs are always the same,
+# EST/ACME entries come from the selected enrollment backend.
+def _build_ca_configs() -> dict[str, dict[str, CAConfig]]:
+    backend = ENROLLMENT_BACKEND
+    enrollment = _ENROLLMENT_CONFIGS.get(backend, _ENROLLMENT_CONFIGS["akamu"])
+
+    configs: dict[str, dict[str, CAConfig]] = {
+        "rsa": {
+            "root": CAConfig(container="dogtag-root-ca", instance="pki-root-ca",
+                             url="https://root-ca.cert-lab.local:8443",
+                             nss_db="/var/lib/pki/pki-root-ca/alias", host_port=8443),
+            "intermediate": CAConfig(container="dogtag-intermediate-ca", instance="pki-intermediate-ca",
+                                     url="https://intermediate-ca.cert-lab.local:8443",
+                                     nss_db="/var/lib/pki/pki-intermediate-ca/alias", host_port=8444),
+            "iot": CAConfig(container="dogtag-iot-ca", instance="pki-iot-ca",
+                            url="https://iot-ca.cert-lab.local:8443",
+                            nss_db="/var/lib/pki/pki-iot-ca/alias", host_port=8445),
+        },
+        "ecc": {
+            "root": CAConfig(container="dogtag-ecc-root-ca", instance="pki-ecc-root-ca",
+                             url="https://ecc-root-ca.cert-lab.local:8443",
+                             nss_db="/var/lib/pki/pki-ecc-root-ca/alias", host_port=8463),
+            "intermediate": CAConfig(container="dogtag-ecc-intermediate-ca", instance="pki-ecc-intermediate-ca",
+                                     url="https://ecc-intermediate-ca.cert-lab.local:8443",
+                                     nss_db="/var/lib/pki/pki-ecc-intermediate-ca/alias", host_port=8464),
+            "iot": CAConfig(container="dogtag-ecc-iot-ca", instance="pki-ecc-iot-ca",
+                            url="https://ecc-iot-ca.cert-lab.local:8443",
+                            nss_db="/var/lib/pki/pki-ecc-iot-ca/alias", host_port=8465),
+        },
+        "pqc": {
+            "root": CAConfig(container="dogtag-pq-root-ca", instance="pki-pq-root-ca",
+                             url="http://pq-root-ca.cert-lab.local:8080",
+                             nss_db="/var/lib/pki/pki-pq-root-ca/alias", host_port=8453, http_port=8490),
+            "intermediate": CAConfig(container="dogtag-pq-intermediate-ca", instance="pki-pq-intermediate-ca",
+                                     url="http://pq-intermediate-ca.cert-lab.local:8080",
+                                     nss_db="/var/lib/pki/pki-pq-intermediate-ca/alias", host_port=8454, http_port=8484),
+            "iot": CAConfig(container="dogtag-pq-iot-ca", instance="pki-pq-iot-ca",
+                            url="http://pq-iot-ca.cert-lab.local:8080",
+                            nss_db="/var/lib/pki/pki-pq-iot-ca/alias", host_port=8455, http_port=8485),
+        },
+    }
+
+    for pki_type in configs:
+        if pki_type in enrollment:
+            configs[pki_type].update(enrollment[pki_type])
+
+    return configs
+
+CA_CONFIGS: dict[str, dict[str, CAConfig]] = _build_ca_configs()
 
 
 # Security scenarios by category

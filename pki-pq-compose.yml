@@ -242,9 +242,12 @@ services:
       retries: 5
       start_period: 120s
 
-  # Akamu ACME CA (PQ) — Rust ACME server delegating to PQ Intermediate CA
-  # ML-DSA-87 (FIPS 204) CA signing with Dogtag profile integration
+  # ── Enrollment Backend: Akamu + Kipuka (--profile akamu) ──────────────────
+  # Activate with: ENROLLMENT_BACKEND=akamu (default)
+  # Rust-based ACME CA + EST server, delegating to Dogtag PQ Intermediate CA.
+
   akamu-pq:
+    profiles: [akamu]
     image: ${AKAMU_IMAGE:-localhost/akamu:latest}
     container_name: akamu-pq
     hostname: akamu-pq.${LAB_DOMAIN:-cert-lab.local}
@@ -283,9 +286,8 @@ services:
       retries: 5
       start_period: 30s
 
-  # Kipuka EST Server (PQ) — Rust EST/CMP server with Dogtag backend
-  # Uses HTTP backend (NSS can't validate ML-DSA-87 cert chains in TLS)
   kipuka-pq:
+    profiles: [akamu]
     image: ${KIPUKA_IMAGE:-registry.kipuka.dev/heebus/kipuka:latest-amd64}
     container_name: kipuka-pq
     hostname: kipuka-pq.${LAB_DOMAIN:-cert-lab.local}
@@ -316,6 +318,48 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+
+  # ── Enrollment Backend: Dogtag EST RA (--profile dogtag-ra) ─────────────────
+  # Activate with: ENROLLMENT_BACKEND=dogtag
+  # Lightweight Dogtag pki-server instance proxying to PQ Intermediate CA.
+
+  dogtag-pq-est-ca:
+    profiles: [dogtag-ra]
+    image: ${PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
+    container_name: dogtag-pq-est-ca
+    hostname: pq-est-ca.${LAB_DOMAIN:-cert-lab.local}
+    privileged: true
+    depends_on:
+      dogtag-pq-intermediate-ca:
+        condition: service_started
+    environment:
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_INSTANCE_NAME: pki-pq-est-ca
+    volumes:
+      - ./scripts/pki:/scripts:ro
+      - ./data/certs/pq:/certs
+      - pki-pq-est-data:/var/lib/pki
+      - pki-pq-est-logs:/var/log/pki
+    extra_hosts:
+      - "pq-root-ca.cert-lab.local:172.27.0.12"
+      - "pq-intermediate-ca.cert-lab.local:172.27.0.11"
+      - "pq-iot-ca.cert-lab.local:172.27.0.13"
+      - "pq-est-ca.cert-lab.local:172.27.0.18"
+      - "pq-ocsp.cert-lab.local:172.27.0.22"
+      - "ds-pq-ocsp.cert-lab.local:172.27.0.21"
+    networks:
+      pki-pq-net:
+        ipv4_address: 172.27.0.18
+    ports:
+      - "8456:8443"
+      - "8486:8080"
+    command: ["/bin/bash", "-c", "sleep infinity"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk https://localhost:8443/.well-known/est/cacerts 2>/dev/null | head -1 | grep -qE 'BEGIN|MII' || curl -s http://localhost:8080/.well-known/est/cacerts 2>/dev/null | head -1 | grep -qE 'BEGIN|MII' || exit 1"]
+      interval: 15s
+      timeout: 15s
+      retries: 5
+      start_period: 180s
 
   # 389 Directory Server for PQ OCSP Responder
   ds-pq-ocsp:
@@ -471,6 +515,8 @@ volumes:
   pki-pq-iot-logs:
   akamu-pq-data:
   kipuka-pq-data:
+  pki-pq-est-data:
+  pki-pq-est-logs:
   ds-pq-ocsp-data:
   pki-pq-ocsp-data:
   pki-pq-ocsp-logs:
