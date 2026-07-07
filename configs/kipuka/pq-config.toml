@@ -1,8 +1,8 @@
 # ── Kipuka EST Server — ML-DSA-87 Post-Quantum PKI Hierarchy ───────────
 #
 # Configuration for the ML-DSA-87 (NIST FIPS 204) certificate revocation lab.
-# Proxies EST enrollment requests to the Dogtag PQ Intermediate CA
-# (pq-intermediate-ca.cert-lab.local) using the caServerCert profile.
+# Proxies EST enrollment requests to the Dogtag PQ IoT Sub-CA (issuing CA)
+# (pq-iot-ca.cert-lab.local) using the caServerCert profile.
 #
 # IMPORTANT: Uses HTTP (port 8080), not HTTPS. NSS 3.123.1 cannot validate
 # ML-DSA-87 certificate chains in the client TLS authentication path.
@@ -37,16 +37,15 @@ client_auth = "optional"
 url = "sqlite:///var/lib/kipuka/kipuka.db?mode=rwc"
 
 # ── Dogtag PKI Backend ──────────────────────────────────────────────────
-# Proxy enrollment to the PQ Intermediate CA via Dogtag REST API.
-# The kipuka-dogtag crate connects to Dogtag CA for certificate issuance,
-# renewal, and revocation instead of using a local signing key.
+# Proxy enrollment to the PQ IoT Sub-CA (issuing CA) via Dogtag REST API.
+# The IoT Sub-CA is the leaf-issuing tier — the Intermediate CA only signs
+# sub-CA certificates.
 #
 # NOTE: HTTP on port 8080 is required for the PQ hierarchy. NSS cannot
 # validate ML-DSA-87 cert chains in TLS client auth, so the Dogtag REST
-# API must be accessed over plaintext HTTP. The web.xml CONFIDENTIAL
-# transport-guarantee is patched to NONE during PQ CA initialization.
+# API must be accessed over plaintext HTTP.
 [dogtag]
-ca_url         = "http://pq-intermediate-ca.cert-lab.local:8080"
+ca_url         = "http://pq-iot-ca.cert-lab.local:8080"
 agent_cert_file = "/etc/kipuka/dogtag/agent.pem"
 agent_key_file  = "/etc/kipuka/dogtag/agent-key.pem"
 ca_cert_file    = "/etc/kipuka/dogtag/ca-chain.pem"
