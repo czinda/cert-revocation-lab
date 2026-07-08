@@ -1,18 +1,34 @@
-# ecc-config.toml — Akamu ACME CA for the ECC P-384 PKI hierarchy.
+# ecc-config.toml — Akamu ACME RA for the ECC P-384 PKI hierarchy.
 #
 # Part of the cert-revocation-lab triple PKI infrastructure.
-# This instance serves the ECC P-384 hierarchy (ECDSA with SHA-384 signatures),
-# using Dogtag PKI profiles from the filesystem.
+# Delegates certificate signing to the Dogtag ECC IoT Sub-CA.
+#
+# Network: 172.28.0.0/24 (CERT-LAB-ECC)
 
 listen_addr = "0.0.0.0:8080"
-base_url    = "https://akamu-ecc.cert-lab.local:8443"
+base_url    = "http://akamu-ecc.cert-lab.local:8080"
 
 [database]
 url = "sqlite:///app/data/akamu.db"
 
 [ca]
-key_file  = "/certs/akamu-ecc.key.pem"
-cert_file = "/certs/akamu-ecc.cert.pem"
+cert_file = "/certs/iot-ca-chain.crt"
+crl_url   = "https://ecc-iot-ca.cert-lab.local:8443/ca/ee/ca/getCRL?op=getCRL&crlIssuingPoint=MasterCRL"
+ocsp_url  = "https://ecc-ocsp.cert-lab.local:8443/ocsp/ee/ocsp"
+
+[ca.signer]
+type         = "dogtag"
+url          = "https://ecc-iot-ca.cert-lab.local:8443"
+ra_cert_file = "/certs/dogtag/agent.pem"
+ra_key_file  = "/certs/dogtag/agent-rsa.key.pem"
+ca_cert_file = "/certs/dogtag/ca-chain.pem"
+profile_id   = "caECServerCert"
+timeout_secs = 30
+
+[server]
+http_validation_allow_private_ips = true
+http_validation_port = 80
+validate_dnssec = false
 
 [profiles]
 refresh_interval_secs = 3600
