@@ -1,0 +1,5 @@
+{"version": 2, "width": 120, "height": 35, "timestamp": 1782422257, "env": {"SHELL": "/bin/bash", "TERM": null}, "title": "ML-DSA-87 Certificate Inspection — OIDs, Keys, Signatures"}
+[0.005571, "o", "=== Root CA Certificate (ML-DSA-87) ===\r\n\r\n"]
+[0.314975, "o", "\r\nCertificate Nickname                                         Trust Attributes\r\n                                                             SSL,S/MIME,JAR/XPI\r\n\r\n"]
+[0.317924, "o", "caSigningCert cert-pki-pq-root-ca CA                         CTu,Cu,Cu\r\nocspSigningCert cert-pki-pq-root-ca CA                       u,u,u\r\nServer-Cert cert-pki-pq-root-ca                              u,u,u\r\nsubsystemCert cert-pki-pq-root-ca                            u,u,u\r\n"]
+[0.45208, "o", "\r\n=== Certificate Details ===\r\n\r\n"]

@@ -1,0 +1,10 @@
+{"version": 2, "width": 100, "height": 30, "timestamp": 1782360084, "env": {"SHELL": "/bin/bash", "TERM": null}, "title": "ML-KEM-1024 Key Archival and Recovery"}
+[0.00603, "o", "TERM environment variable not set.\r\n"]
+[0.006841, "o", "\r\n  ML-KEM-1024 Key Archival and Recovery (FIPS 203)\r\n  ================================================\r\n\r\n"]
+[1.007827, "o", "  Step 1: Generate AES-256 key in KRA (ML-KEM-1024 wrapping)...\r\n"]
+[2.53548, "o", "      Key ID: 0x00bb6f365e3952d11e37190e499ece9c06\r\n      Type: symkeyGenRequest\r\n      Status: complete\r\n"]
+[3.538404, "o", "\r\n  Step 2: List archived keys...\r\n"]
+[4.893938, "o", "      Key ID: 0x00bb6f365e3952d11e37190e499ece9c06\r\n      Client Key ID: demo-aes-key\r\n      Status: active\r\n      Algorithm: AES\r\n      Size: 256\r\n"]
+[7.249895, "o", "\r\n  Step 3: Recover archived key (ML-KEM-1024 decapsulation)...\r\n"]
+[8.380462, "o", "\r\n"]
+[8.380605, "o", "  Key recovered via ML-KEM-1024 encapsulation + AES-256 KeyWrap\r\n\r\n"]

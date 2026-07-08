@@ -1,0 +1,13 @@
+{"version": 2, "width": 100, "height": 30, "timestamp": 1782360069, "env": {"SHELL": "/bin/bash", "TERM": null}, "title": "ML-DSA-87 Certificate Lifecycle"}
+[0.004298, "o", "TERM environment variable not set.\r\n"]
+[0.004921, "o", "\r\n  ML-DSA-87 Certificate Lifecycle: Issue + Revoke\r\n  ================================================\r\n\r\n"]
+[1.006054, "o", "  Step 1: Generate ML-DSA-87 key + CSR (OpenSSL 3.5.7)...\r\n"]
+[1.081882, "o", "Done\r\n"]
+[2.091305, "o", "\r\n  Step 2: Submit CSR to IoT CA...\r\n"]
+[3.3551, "o", "  Request ID: 0x7cf537693f7ff2f0046286a092cb4f02\r\n"]
+[4.356631, "o", "\r\n  Step 3: Approve and export certificate...\r\n"]
+[7.242117, "o", "  Certificate ID: 0xea2b58dfcae9a81a1c7983a9492ba4e6\r\n\r\n  Certificate details:\r\n"]
+[8.668093, "o", "            Signature Algorithm: ML-DSA-87\r\n            Issuer: C=US, O=Cert-Lab, CN=IoT Sub-CA (ML-DSA-87)\r\n            Subject: CN=demo-device.cert-lab.local, O=Cert-Lab, C=US\r\n                Public Key Algorithm: ML-DSA-87\r\n        Signature Algorithm: ML-DSA-87\r\n"]
+[10.670125, "o", "\r\n  Step 4: Revoke certificate (key_compromise)...\r\n"]
+[11.87963, "o", "    Revoked certificate \"0xea2b58dfcae9a81a1c7983a9492ba4e6\"\r\n      Serial Number: 0xea2b58dfcae9a81a1c7983a9492ba4e6\r\n      Status: REVOKED\r\n      Revoked On: Thu Jun 25 04:01:21 UTC 2026\r\n      Revoked By: caadmin\r\n"]
+[11.879939, "o", "\r\n"]

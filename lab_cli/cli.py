@@ -417,7 +417,7 @@ def acme_issue(
     console.print(f"\n[bold cyan]ACME Certificate Issuance[/bold cyan]\n")
     console.print(f"  Domain:   {domain}")
     console.print(f"  PKI:      {pki_type.value.upper()}")
-    console.print(f"  Backend:  {ENROLLMENT_BACKEND}")
+    console.print(f"  Backend:  {'kipuka' if ENROLLMENT_BACKEND == 'akamu' and 'est' in str(locals().get('est_url', '')) else 'akamu' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag'}")
     console.print(f"  Endpoint: {acme_url}/directory")
     console.print()
 
@@ -494,7 +494,7 @@ def est_enroll(
     console.print(f"\n[bold cyan]EST Certificate Enrollment[/bold cyan]\n")
     console.print(f"  Device:   {device_fqdn}")
     console.print(f"  PKI:      {pki_type.value.upper()}")
-    console.print(f"  Backend:  {ENROLLMENT_BACKEND}")
+    console.print(f"  Backend:  {'kipuka' if ENROLLMENT_BACKEND == 'akamu' and 'est' in str(locals().get('est_url', '')) else 'akamu' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag'}")
     console.print(f"  Endpoint: {est_url}")
     console.print()
 
@@ -555,7 +555,7 @@ def est_cacerts(
 
     console.print(f"\n[bold cyan]EST CA Certificates[/bold cyan]\n")
     console.print(f"  PKI:      {pki_type.value.upper()}")
-    console.print(f"  Backend:  {ENROLLMENT_BACKEND}")
+    console.print(f"  Backend:  {'kipuka' if ENROLLMENT_BACKEND == 'akamu' and 'est' in str(locals().get('est_url', '')) else 'akamu' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag'}")
     console.print(f"  Endpoint: {est_url}/cacerts")
     console.print()
 
@@ -633,7 +633,7 @@ def est_reenroll(
     console.print(f"\n[bold cyan]EST Certificate Renewal (simplereenroll)[/bold cyan]\n")
     console.print(f"  Device:   {device_fqdn}")
     console.print(f"  PKI:      {pki_type.value.upper()}")
-    console.print(f"  Backend:  {ENROLLMENT_BACKEND}")
+    console.print(f"  Backend:  {'kipuka' if ENROLLMENT_BACKEND == 'akamu' and 'est' in str(locals().get('est_url', '')) else 'akamu' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag'}")
     console.print(f"  Endpoint: {est_url}")
     console.print()
 

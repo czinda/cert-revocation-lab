@@ -77,19 +77,19 @@ _ENROLLMENT_CONFIGS: dict[str, dict[str, dict[str, CAConfig]]] = {
             "est": CAConfig(container="kipuka-rsa", instance="kipuka",
                             url="https://kipuka-rsa.cert-lab.local:9443", nss_db="", host_port=8447),
             "acme": CAConfig(container="akamu-rsa", instance="akamu",
-                             url="http://akamu-rsa.cert-lab.local:8080", nss_db="", host_port=8446),
+                             url="http://akamu-rsa.cert-lab.local:8080", nss_db="", host_port=8446, http_port=8483),
         },
         "ecc": {
             "est": CAConfig(container="kipuka-ecc", instance="kipuka",
                             url="https://kipuka-ecc.cert-lab.local:9443", nss_db="", host_port=8466),
             "acme": CAConfig(container="akamu-ecc", instance="akamu",
-                             url="http://akamu-ecc.cert-lab.local:8080", nss_db="", host_port=8469),
+                             url="http://akamu-ecc.cert-lab.local:8080", nss_db="", host_port=8469, http_port=8496),
         },
         "pqc": {
             "est": CAConfig(container="kipuka-pq", instance="kipuka",
                             url="https://kipuka-pq.cert-lab.local:9443", nss_db="", host_port=8456),
             "acme": CAConfig(container="akamu-pq", instance="akamu",
-                             url="http://akamu-pq.cert-lab.local:8080", nss_db="", host_port=8459),
+                             url="http://akamu-pq.cert-lab.local:8080", nss_db="", host_port=8459, http_port=8486),
         },
     },
     "dogtag": {

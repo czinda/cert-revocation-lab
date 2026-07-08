@@ -1,0 +1,7 @@
+{"version": 2, "width": 120, "height": 35, "timestamp": 1782422259, "env": {"SHELL": "/bin/bash", "TERM": null}, "title": "ML-KEM-1024 Key Archival & Recovery"}
+[0.006496, "o", "=== ML-KEM-1024 Key Archival & Recovery ===\r\n\r\nIssuing certificate with key archival...\r\n"]
+[0.300645, "o", "\u001b[33mUsage: \u001b[0m\u001b[1;32m-c\u001b[0m issue [OPTIONS]\r\n"]
+[0.301134, "o", "\u001b[2mTry \u001b[0m\u001b[2;34m'\u001b[0m\u001b[1;2;34m-c\u001b[0m\u001b[2;34m issue \u001b[0m\u001b[1;2;34m-\u001b[0m\u001b[1;2;34m-help\u001b[0m\u001b[2;34m'\u001b[0m\u001b[2m for help.\u001b[0m\r\n"]
+[0.301804, "o", "\u001b[31m╭─\u001b[0m\u001b[31m Error \u001b[0m\u001b[31m─────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[0m\u001b[31m─╮\u001b[0m\r\n\u001b[31m│\u001b[0m No such option: \u001b[1;36m-\u001b[0m\u001b[1;36m-cn\u001b[0m                                                                                                 \u001b[31m│\u001b[0m\r\n\u001b[31m╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯\u001b[0m\r\n"]
+[0.33743, "o", "\r\n=== KRA Status ===\r\n"]
+[0.95081, "o", "  Instance ID: pki-tomcat\r\n  Active: False\r\n  Nuxwdog Enabled: False\r\n  Unsecure Port: 8080\r\n  Secure Port: 8443\r\n  Tomcat Port: 8005\r\n\r\n  CA Subsystem:\r\n    SD Manager:          False\r\n"]
