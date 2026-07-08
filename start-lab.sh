@@ -600,11 +600,40 @@ start_pki_hierarchy() {
             fi
         done
 
-        # Wait for 389DS to be healthy (able to respond to LDAP queries)
+        # Wait for 389DS to be healthy (able to respond to LDAP queries).
+        # Auto-restart crashed DS containers — the 389ds image frequently fails
+        # on first boot when multiple instances initialize simultaneously.
         log_info "Waiting for Directory Servers to be ready..."
-        for ds in ds-root ds-intermediate ds-iot ds-ocsp; do
+        for ds in ds-root ds-intermediate ds-iot ds-ocsp ds-kra; do
             local elapsed=0
-            while [ $elapsed -lt 120 ]; do
+            local restarts=0
+            while [ $elapsed -lt 300 ]; do
+                # Check if container exited (crashed) and restart it
+                local ds_state
+                if is_running_as_root; then
+                    ds_state=$(podman inspect "$ds" --format '{{.State.Status}}' 2>/dev/null || echo "missing")
+                else
+                    ds_state=$(sudo podman inspect "$ds" --format '{{.State.Status}}' 2>/dev/null || echo "missing")
+                fi
+                if [ "$ds_state" = "exited" ] || [ "$ds_state" = "stopped" ]; then
+                    if [ $restarts -lt 3 ]; then
+                        ((restarts++)) || true
+                        log_warn "$ds crashed (attempt $restarts/3), restarting..."
+                        if is_running_as_root; then
+                            podman restart "$ds" &>/dev/null || true
+                        else
+                            sudo podman restart "$ds" &>/dev/null || true
+                        fi
+                        sleep 10
+                        ((elapsed += 10)) || true
+                        continue
+                    else
+                        log_error "$ds failed after $restarts restart attempts"
+                        break
+                    fi
+                fi
+
+                # Check LDAP readiness
                 if is_running_as_root; then
                     if podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
                         log_success "$ds is ready"
@@ -619,6 +648,9 @@ start_pki_hierarchy() {
                 sleep 5
                 ((elapsed += 5)) || true
             done
+            if [ $elapsed -ge 300 ]; then
+                log_warn "$ds not ready after 300s — continuing anyway"
+            fi
         done
     fi
 
@@ -868,11 +900,35 @@ start_ecc_pki_hierarchy() {
             fi
         done
 
-        # Wait for ECC 389DS to be healthy
+        # Wait for ECC 389DS to be healthy — with auto-restart on crash
         log_info "Waiting for ECC Directory Servers to be ready..."
-        for ds in ds-ecc-root ds-ecc-intermediate ds-ecc-iot ds-ecc-ocsp; do
+        for ds in ds-ecc-root ds-ecc-intermediate ds-ecc-iot ds-ecc-ocsp ds-ecc-kra; do
             local elapsed=0
-            while [ $elapsed -lt 120 ]; do
+            local restarts=0
+            while [ $elapsed -lt 300 ]; do
+                local ds_state
+                if is_running_as_root; then
+                    ds_state=$(podman inspect "$ds" --format '{{.State.Status}}' 2>/dev/null || echo "missing")
+                else
+                    ds_state=$(sudo podman inspect "$ds" --format '{{.State.Status}}' 2>/dev/null || echo "missing")
+                fi
+                if [ "$ds_state" = "exited" ] || [ "$ds_state" = "stopped" ]; then
+                    if [ $restarts -lt 3 ]; then
+                        ((restarts++)) || true
+                        log_warn "$ds crashed (attempt $restarts/3), restarting..."
+                        if is_running_as_root; then
+                            podman restart "$ds" &>/dev/null || true
+                        else
+                            sudo podman restart "$ds" &>/dev/null || true
+                        fi
+                        sleep 10
+                        ((elapsed += 10)) || true
+                        continue
+                    else
+                        log_error "$ds failed after $restarts restart attempts"
+                        break
+                    fi
+                fi
                 if is_running_as_root; then
                     if podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
                         log_success "$ds is ready"
@@ -887,6 +943,9 @@ start_ecc_pki_hierarchy() {
                 sleep 5
                 ((elapsed += 5)) || true
             done
+            if [ $elapsed -ge 300 ]; then
+                log_warn "$ds not ready after 300s — continuing anyway"
+            fi
         done
     fi
 
