@@ -458,6 +458,7 @@ The `agnosticd/configs/cert-revocation-lab/` directory deploys the lab onto a si
 - **PQ image**: Uses upstream `quay.io/dogtagpki/pki-ca:latest` (Dogtag 11.10.0, JSS 5.10.0, NSS 3.123.1). ML-DSA-87 and ML-KEM support are included — no need to build from main
 - **certutil key generation**: `certutil -R` is extremely slow on some systems due to NSS entropy. EST/ACME RA init scripts use `openssl req` + PKCS#12 import instead
 - **EST simplereenroll (RFC 7030 §4.2.2)**: Returns 401 Unauthorized. `PKIInMemoryRealm` only supports password auth but `simplereenroll` requires TLS client cert authentication to identify the cert being renewed. `SSLAuthenticatorWithFallback` tries cert auth first and doesn't fall back to Basic when the realm can't map the cert. Would require switching to an LDAP-backed realm (`PKILDAPRealm`) which needs a 389 DS instance the lightweight EST RA doesn't have
+- **Akamu trust chain is independent**: Akamu signs certificates with its own CA key — certs are NOT in the Dogtag trust chain (Root → Intermediate → IoT Sub-CA). Event-driven revocation (EDA → Ansible → Dogtag) does not work for akamu-issued certs. Akamu has its own CRL (`/ca/crl`) and OCSP (`/ca/ocsp`) endpoints. Kipuka (EST) proxies to Dogtag and integrates fully with the lab's revocation pipeline. To unify, akamu would need a Dogtag RA backend (like kipuka-dogtag) or cross-signing
 
 ## EDA SSH Setup
 
