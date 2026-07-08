@@ -79,7 +79,7 @@ max_usage       = 1
 # Bearer token auth — simple shared secret for lab use.
 [admin]
 enabled      = true
-auth_method  = "bearer"
+auth_method  = "basic"
 bearer_token = "cert-lab-kipuka-admin-token"
 
 # ── Audit ────────────────────────────────────────────────────────────────
