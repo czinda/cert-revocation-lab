@@ -13,8 +13,12 @@ url = "sqlite:///app/data/akamu.db"
 
 [ca]
 # PQ uses ML-DSA-87 for CA signing (all certs in this hierarchy are ML-DSA-87).
+# When Kryoptic HSM is available, key_file can be a PKCS#11 URI to keep
+# the private key non-extractable in the HSM. Falls back to PEM on disk.
 key_file  = "/certs/akamu-pq.key.pem"
 cert_file = "/certs/akamu-pq.cert.pem"
+# Uncomment to use Kryoptic HSM (requires p11-kit socket at /var/run/kryoptic):
+# key_file = "pkcs11:token=pq-akamu-ca;object=pq-akamu-ca-signing;type=private"
 
 [profiles]
 refresh_interval_secs = 3600
