@@ -4,11 +4,9 @@
 # Proxies EST enrollment requests to the Dogtag PQ IoT Sub-CA (issuing CA)
 # (pq-iot-ca.cert-lab.local) using the caServerCert profile.
 #
-# IMPORTANT: Uses HTTP (port 8080), not HTTPS. NSS 3.123.1 cannot validate
-# ML-DSA-87 certificate chains in the client TLS authentication path.
-# Server-side TLS works with the JDK handshake size fix
-# (-Djdk.tls.maxHandshakeMessageSize=64000) but the pki CLI and REST
-# clients must use HTTP with basic auth for CSR signing and approval.
+# Kipuka uses native-tls (OpenSSL 3.5+) which CAN validate ML-DSA-87 cert
+# chains, so HTTPS to Dogtag works. The pki CLI (NSS-based) still needs
+# HTTP, but kipuka's Dogtag client uses OpenSSL via reqwest::native-tls.
 #
 # The profile is caServerCert (not caMLDSAServerCert) because OpenSSL
 # cannot generate ML-DSA CSRs — the CA generates ML-DSA keys server-side.
@@ -48,11 +46,10 @@ url = "sqlite:///var/lib/kipuka/kipuka.db?mode=rwc"
 # The IoT Sub-CA is the leaf-issuing tier — the Intermediate CA only signs
 # sub-CA certificates.
 #
-# NOTE: HTTP on port 8080 is required for the PQ hierarchy. NSS cannot
-# validate ML-DSA-87 cert chains in TLS client auth, so the Dogtag REST
-# API must be accessed over plaintext HTTP.
+# NOTE: Kipuka uses native-tls (OpenSSL 3.5+) which handles ML-DSA-87
+# cert chains — HTTPS to Dogtag works here unlike NSS-based clients.
 [dogtag]
-ca_url         = "http://pq-iot-ca.cert-lab.local:8080"
+ca_url         = "https://pq-iot-ca.cert-lab.local:8443"
 agent_cert_file = "/etc/kipuka/dogtag/agent.pem"
 agent_key_file  = "/etc/kipuka/dogtag/agent-key.pem"
 ca_cert_file    = "/etc/kipuka/dogtag/ca-chain.pem"
