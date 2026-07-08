@@ -23,6 +23,13 @@ ca_file   = "/etc/kipuka/certs/ca-chain.crt"
 # back to OTP authentication via HTTP Basic.
 client_auth = "optional"
 
+# ── CA Key Material ──────────────────────────────────────────────────────
+# Required by the config parser even in Dogtag proxy mode. Points to the
+# kipuka TLS cert/key — actual certificate signing is done by Dogtag.
+[ca]
+key_file  = "/etc/kipuka/certs/kipuka-ecc.key.pem"
+cert_file = "/etc/kipuka/certs/kipuka-ecc.cert.pem"
+
 # ── Database ─────────────────────────────────────────────────────────────
 [database]
 url = "sqlite:///var/lib/kipuka/kipuka.db?mode=rwc"
