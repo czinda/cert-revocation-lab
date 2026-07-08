@@ -54,6 +54,13 @@ entropy_bits    = 128
 ttl_seconds     = 3600
 max_usage       = 1
 
+# ── Admin API ────────────────────────────────────────────────────────────
+# Enables OTP management, health checks, and certificate listing.
+# Bearer token auth — simple shared secret for lab use.
+[admin]
+enabled      = true
+bearer_token = "cert-lab-kipuka-admin-token"
+
 # ── Audit ────────────────────────────────────────────────────────────────
 [audit]
 enabled    = true

@@ -17,6 +17,8 @@ from typing import Optional
 
 from .config import CA_CONFIGS, ENROLLMENT_BACKEND, LabConfig, PKIType
 
+KIPUKA_ADMIN_TOKEN = os.getenv("KIPUKA_ADMIN_TOKEN", "cert-lab-kipuka-admin-token")
+
 
 @dataclass
 class ProtocolResult:
@@ -817,7 +819,9 @@ def est_get_status(pki_type: PKIType) -> ProtocolResult:
     if base is None:
         return ProtocolResult(success=False, message=f"EST not available for {pki_type.value}")
 
-    cmd = ["curl", "-sk", "--connect-timeout", "5", f"{base}/admin/health"]
+    cmd = ["curl", "-sk", "--connect-timeout", "5",
+           "-H", f"Authorization: Bearer {KIPUKA_ADMIN_TOKEN}",
+           f"{base}/admin/health"]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
     except subprocess.TimeoutExpired:
@@ -865,6 +869,7 @@ def est_generate_otp(pki_type: PKIType, entity_id: str) -> ProtocolResult:
         "curl", "-sk", "--connect-timeout", "5",
         "-X", "POST",
         "-H", "Content-Type: application/json",
+        "-H", f"Authorization: Bearer {KIPUKA_ADMIN_TOKEN}",
         "--data", payload,
         f"{base}/admin/otp/generate",
     ]
@@ -904,7 +909,9 @@ def est_list_otps(pki_type: PKIType) -> ProtocolResult:
     if base is None:
         return ProtocolResult(success=False, message=f"EST not available for {pki_type.value}")
 
-    cmd = ["curl", "-sk", "--connect-timeout", "5", f"{base}/admin/otp"]
+    cmd = ["curl", "-sk", "--connect-timeout", "5",
+           "-H", f"Authorization: Bearer {KIPUKA_ADMIN_TOKEN}",
+           f"{base}/admin/otp"]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
     except subprocess.TimeoutExpired:
