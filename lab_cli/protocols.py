@@ -7,6 +7,7 @@ active ENROLLMENT_BACKEND (akamu or dogtag).  No hardcoded hostnames.
 
 import base64
 import json
+import os
 import socket
 import subprocess
 import tempfile
@@ -523,3 +524,538 @@ def est_reenroll_certificate(
             success=False,
             message=f"EST re-enrollment failed: {response[:200]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# ACME extended operations (Akamu-specific)
+# ---------------------------------------------------------------------------
+
+def _get_acme_base_url(pki_type: PKIType) -> Optional[str]:
+    """Base URL for akamu (without /acme path)."""
+    pki = pki_type.value
+    if pki not in CA_CONFIGS or "acme" not in CA_CONFIGS[pki]:
+        return None
+    ca = CA_CONFIGS[pki]["acme"]
+    scheme = "http" if ca.url.startswith("http://") else "https"
+    port = ca.http_port or ca.host_port
+    host = _resolve_host(ca.hostname, port)
+    return f"{scheme}://{host}:{port}"
+
+
+def acme_get_directory(pki_type: PKIType) -> ProtocolResult:
+    """Fetch and parse the ACME directory (RFC 8555 §7.1.1)."""
+    acme_url = _get_acme_url(pki_type)
+    if acme_url is None:
+        return ProtocolResult(
+            success=False,
+            message=f"ACME not available for {pki_type.value} PKI (backend={ENROLLMENT_BACKEND})"
+        )
+
+    cmd = ["curl", "-sk", "--connect-timeout", "5", f"{acme_url}/directory"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except subprocess.TimeoutExpired:
+        return ProtocolResult(success=False, message="Timeout fetching ACME directory")
+
+    if result.returncode != 0:
+        return ProtocolResult(success=False, message=f"Connection failed: {result.stderr.strip()}")
+
+    try:
+        directory = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return ProtocolResult(success=False, message=f"Invalid JSON: {result.stdout[:200]}")
+
+    return ProtocolResult(
+        success=True,
+        message="ACME directory retrieved",
+        details={"directory": directory, "acme_url": acme_url}
+    )
+
+
+def acme_get_crl(pki_type: PKIType) -> ProtocolResult:
+    """Fetch CRL from akamu's built-in CRL endpoint and parse with openssl."""
+    base = _get_acme_base_url(pki_type)
+    if base is None:
+        return ProtocolResult(success=False, message=f"ACME not available for {pki_type.value}")
+
+    with tempfile.NamedTemporaryFile(suffix=".der", delete=False) as tf:
+        crl_path = tf.name
+
+    try:
+        cmd = ["curl", "-sk", "--connect-timeout", "5", "-o", crl_path, f"{base}/ca/crl"]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if result.returncode != 0:
+            return ProtocolResult(success=False, message=f"Failed to fetch CRL: {result.stderr.strip()}")
+
+        if os.path.getsize(crl_path) == 0:
+            return ProtocolResult(success=False, message="CRL endpoint returned empty response")
+
+        parse = subprocess.run(
+            ["openssl", "crl", "-inform", "DER", "-in", crl_path, "-noout", "-text"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if parse.returncode != 0:
+            parse = subprocess.run(
+                ["openssl", "crl", "-inform", "PEM", "-in", crl_path, "-noout", "-text"],
+                capture_output=True, text=True, timeout=10,
+            )
+
+        if parse.returncode != 0:
+            return ProtocolResult(success=False, message=f"Failed to parse CRL: {parse.stderr.strip()}")
+
+        text = parse.stdout
+        revoked_count = text.count("Serial Number:")
+        issuer = ""
+        last_update = ""
+        next_update = ""
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("Issuer:"):
+                issuer = stripped.split("Issuer:", 1)[1].strip()
+            elif stripped.startswith("Last Update:"):
+                last_update = stripped.split(":", 1)[1].strip()
+            elif stripped.startswith("Next Update:"):
+                next_update = stripped.split(":", 1)[1].strip()
+
+        return ProtocolResult(
+            success=True,
+            message=f"CRL retrieved — {revoked_count} revoked certificate(s)",
+            details={
+                "issuer": issuer,
+                "last_update": last_update,
+                "next_update": next_update,
+                "revoked_count": revoked_count,
+                "crl_url": f"{base}/ca/crl",
+                "raw_text": text,
+            },
+        )
+    finally:
+        Path(crl_path).unlink(missing_ok=True)
+
+
+def acme_query_ocsp(
+    pki_type: PKIType,
+    cert_path: str,
+    issuer_path: Optional[str] = None,
+) -> ProtocolResult:
+    """Query akamu's built-in OCSP responder for a certificate."""
+    base = _get_acme_base_url(pki_type)
+    if base is None:
+        return ProtocolResult(success=False, message=f"ACME not available for {pki_type.value}")
+
+    ocsp_url = f"{base}/ca/ocsp"
+
+    if issuer_path is None:
+        lab_root = os.getenv("LAB_ROOT_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        pki_dir = {"rsa": "rsa", "ecc": "ecc", "pqc": "pq"}.get(pki_type.value, "rsa")
+        issuer_path = os.path.join(lab_root, "data", "certs", pki_dir, "iot-ca-chain.crt")
+
+    cmd = [
+        "openssl", "ocsp",
+        "-issuer", issuer_path,
+        "-cert", cert_path,
+        "-url", ocsp_url,
+        "-no_nonce",
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except subprocess.TimeoutExpired:
+        return ProtocolResult(success=False, message="OCSP query timed out")
+
+    output = result.stdout + result.stderr
+    status = "unknown"
+    for line in output.splitlines():
+        low = line.strip().lower()
+        if ": good" in low:
+            status = "good"
+        elif ": revoked" in low:
+            status = "revoked"
+
+    return ProtocolResult(
+        success=result.returncode == 0,
+        message=f"OCSP status: {status}",
+        details={"ocsp_url": ocsp_url, "status": status, "raw": output},
+    )
+
+
+def acme_get_profiles(pki_type: PKIType) -> ProtocolResult:
+    """List certificate profiles from ACME directory meta."""
+    dir_result = acme_get_directory(pki_type)
+    if not dir_result.success:
+        return dir_result
+
+    directory = dir_result.details.get("directory", {})
+    meta = directory.get("meta", {})
+    profiles = meta.get("profiles", {})
+
+    return ProtocolResult(
+        success=True,
+        message=f"{len(profiles)} profile(s) available",
+        details={"profiles": profiles, "meta": meta},
+    )
+
+
+def acme_get_status(pki_type: PKIType) -> ProtocolResult:
+    """Check akamu health by fetching the ACME directory."""
+    dir_result = acme_get_directory(pki_type)
+    if not dir_result.success:
+        return ProtocolResult(
+            success=False,
+            message=f"Akamu unreachable: {dir_result.message}",
+            details={"pki_type": pki_type.value},
+        )
+
+    directory = dir_result.details.get("directory", {})
+    meta = directory.get("meta", {})
+    endpoints = [k for k in directory if k != "meta"]
+
+    return ProtocolResult(
+        success=True,
+        message="Akamu ACME server is healthy",
+        details={
+            "endpoints": endpoints,
+            "profiles": list(meta.get("profiles", {}).keys()),
+            "eab_required": meta.get("externalAccountRequired", False),
+            "star_enabled": "auto-renewal" in meta,
+            "delegation_enabled": meta.get("delegation-enabled", False),
+            "pki_type": pki_type.value,
+        },
+    )
+
+
+def acme_list_certs(pki_type: PKIType) -> ProtocolResult:
+    """List certificates from akamu admin API (if available)."""
+    base = _get_acme_base_url(pki_type)
+    if base is None:
+        return ProtocolResult(success=False, message=f"ACME not available for {pki_type.value}")
+
+    cmd = ["curl", "-sk", "--connect-timeout", "5", f"{base}/admin/certs"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except subprocess.TimeoutExpired:
+        return ProtocolResult(success=False, message="Timeout querying admin API")
+
+    if result.returncode != 0 or not result.stdout.strip():
+        return ProtocolResult(
+            success=False,
+            message="Admin API not available (not configured or requires auth)",
+            details={"hint": "Admin API requires [admin] section in akamu config"},
+        )
+
+    try:
+        certs = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return ProtocolResult(success=False, message=f"Invalid response: {result.stdout[:200]}")
+
+    cert_list = certs if isinstance(certs, list) else certs.get("certificates", certs.get("items", []))
+    return ProtocolResult(
+        success=True,
+        message=f"{len(cert_list)} certificate(s) found",
+        details={"certificates": cert_list},
+    )
+
+
+def acme_revoke_cert(pki_type: PKIType, cert_pem: str, reason: int = 1) -> ProtocolResult:
+    """Revoke a certificate via ACME protocol (RFC 8555 §7.6)."""
+    acme_url = _get_acme_url(pki_type)
+    if acme_url is None:
+        return ProtocolResult(success=False, message=f"ACME not available for {pki_type.value}")
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False) as pf:
+        pf.write(cert_pem)
+        cert_file = pf.name
+
+    try:
+        der_cmd = ["openssl", "x509", "-in", cert_file, "-outform", "DER"]
+        result = subprocess.run(der_cmd, capture_output=True, timeout=10)
+        if result.returncode != 0:
+            return ProtocolResult(success=False, message="Failed to convert cert to DER")
+
+        cert_b64 = base64.urlsafe_b64encode(result.stdout).decode("ascii").rstrip("=")
+
+        payload = json.dumps({"certificate": cert_b64, "reason": reason})
+        cmd = [
+            "curl", "-sk", "-X", "POST",
+            "-H", "Content-Type: application/jose+json",
+            "--data", payload,
+            f"{acme_url}/revoke-cert",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            return ProtocolResult(success=False, message=f"Revocation request failed: {result.stderr}")
+
+        if result.stdout.strip() == "" or "200" in str(result):
+            return ProtocolResult(success=True, message="Certificate revoked via ACME")
+
+        return ProtocolResult(
+            success=False,
+            message=f"Revocation response: {result.stdout[:200]}",
+        )
+    finally:
+        Path(cert_file).unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# EST extended operations (Kipuka-specific)
+# ---------------------------------------------------------------------------
+
+def _get_est_base_url(pki_type: PKIType) -> Optional[str]:
+    """Base URL for kipuka (without /.well-known/est path)."""
+    pki = pki_type.value
+    if pki not in CA_CONFIGS or "est" not in CA_CONFIGS[pki]:
+        return None
+    ca = CA_CONFIGS[pki]["est"]
+    scheme = "http" if ca.url.startswith("http://") else "https"
+    port = ca.http_port or ca.host_port
+    host = _resolve_host(ca.hostname, port)
+    return f"{scheme}://{host}:{port}"
+
+
+def est_get_status(pki_type: PKIType) -> ProtocolResult:
+    """Check kipuka health via admin health endpoint."""
+    base = _get_est_base_url(pki_type)
+    if base is None:
+        return ProtocolResult(success=False, message=f"EST not available for {pki_type.value}")
+
+    cmd = ["curl", "-sk", "--connect-timeout", "5", f"{base}/admin/health"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except subprocess.TimeoutExpired:
+        return ProtocolResult(success=False, message="Timeout querying kipuka health")
+
+    if result.returncode != 0 or not result.stdout.strip():
+        est_url = _get_est_url(pki_type)
+        cacerts = est_get_cacerts(est_url) if est_url else None
+        if cacerts and cacerts.success:
+            return ProtocolResult(
+                success=True,
+                message="Kipuka EST is responding (admin API not available)",
+                details={"cacerts": True, "admin_health": False},
+            )
+        return ProtocolResult(success=False, message="Kipuka not responding")
+
+    try:
+        health = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        if "401" in result.stdout or "Unauthorized" in result.stdout:
+            est_url = _get_est_url(pki_type)
+            cacerts = est_get_cacerts(est_url) if est_url else None
+            return ProtocolResult(
+                success=cacerts.success if cacerts else False,
+                message="Kipuka running (admin auth required)",
+                details={"admin_auth_required": True, "cacerts": cacerts.success if cacerts else False},
+            )
+        return ProtocolResult(success=False, message=f"Invalid health response: {result.stdout[:200]}")
+
+    return ProtocolResult(
+        success=health.get("status") == "healthy",
+        message=f"Kipuka status: {health.get('status', 'unknown')}",
+        details=health,
+    )
+
+
+def est_generate_otp(pki_type: PKIType, entity_id: str) -> ProtocolResult:
+    """Generate a one-time password for EST enrollment."""
+    base = _get_est_base_url(pki_type)
+    if base is None:
+        return ProtocolResult(success=False, message=f"EST not available for {pki_type.value}")
+
+    payload = json.dumps({"entity_id": entity_id})
+    cmd = [
+        "curl", "-sk", "--connect-timeout", "5",
+        "-X", "POST",
+        "-H", "Content-Type: application/json",
+        "--data", payload,
+        f"{base}/admin/otp/generate",
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except subprocess.TimeoutExpired:
+        return ProtocolResult(success=False, message="Timeout generating OTP")
+
+    if result.returncode != 0 or not result.stdout.strip():
+        return ProtocolResult(
+            success=False,
+            message="OTP generation failed (admin API not available or requires auth)",
+            details={"hint": "Kipuka admin API may require Bearer token authentication"},
+        )
+
+    try:
+        otp_data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return ProtocolResult(success=False, message=f"Invalid response: {result.stdout[:200]}")
+
+    token = otp_data.get("token") or otp_data.get("otp") or otp_data.get("password", "")
+    return ProtocolResult(
+        success=bool(token),
+        message="OTP generated" if token else "OTP generation returned no token",
+        details={
+            "entity_id": entity_id,
+            "token": token,
+            "expires": otp_data.get("expires_at", ""),
+            "max_uses": otp_data.get("max_uses", 1),
+        },
+    )
+
+
+def est_list_otps(pki_type: PKIType) -> ProtocolResult:
+    """List active OTPs from kipuka admin API."""
+    base = _get_est_base_url(pki_type)
+    if base is None:
+        return ProtocolResult(success=False, message=f"EST not available for {pki_type.value}")
+
+    cmd = ["curl", "-sk", "--connect-timeout", "5", f"{base}/admin/otp"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except subprocess.TimeoutExpired:
+        return ProtocolResult(success=False, message="Timeout listing OTPs")
+
+    if result.returncode != 0 or not result.stdout.strip():
+        return ProtocolResult(
+            success=False,
+            message="OTP listing failed (admin API not available or requires auth)",
+        )
+
+    try:
+        otps = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return ProtocolResult(success=False, message=f"Invalid response: {result.stdout[:200]}")
+
+    otp_list = otps if isinstance(otps, list) else otps.get("otps", otps.get("items", []))
+    return ProtocolResult(
+        success=True,
+        message=f"{len(otp_list)} active OTP(s)",
+        details={"otps": otp_list},
+    )
+
+
+def est_serverkeygen(
+    pki_type: PKIType,
+    device_fqdn: str,
+) -> ProtocolResult:
+    """Request server-side key generation via EST (RFC 7030 §4.4)."""
+    est_url = _get_est_url(pki_type)
+    if est_url is None:
+        return ProtocolResult(success=False, message=f"EST not available for {pki_type.value}")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        key_path = Path(tmpdir) / "key.pem"
+        csr_path = Path(tmpdir) / "request.csr"
+
+        if pki_type == PKIType.ECC:
+            key_cmd = ["openssl", "ecparam", "-genkey", "-name", "secp384r1", "-out", str(key_path)]
+        else:
+            key_cmd = ["openssl", "genrsa", "-out", str(key_path), "2048"]
+        subprocess.run(key_cmd, capture_output=True, timeout=30)
+
+        csr_cmd = [
+            "openssl", "req", "-new",
+            "-key", str(key_path),
+            "-out", str(csr_path),
+            "-subj", f"/CN={device_fqdn}/O=Cert-Lab/C=US",
+        ]
+        subprocess.run(csr_cmd, capture_output=True, timeout=30)
+
+        der_cmd = ["openssl", "req", "-in", str(csr_path), "-outform", "DER"]
+        result = subprocess.run(der_cmd, capture_output=True, timeout=30)
+        if result.returncode != 0:
+            return ProtocolResult(success=False, message="CSR generation failed")
+
+        csr_base64 = base64.b64encode(result.stdout).decode("ascii")
+
+        est_password = "RedHat123"
+        cmd = [
+            "curl", "-sk", "-X", "POST",
+            "-u", f"est-client:{est_password}",
+            "-H", "Content-Type: application/pkcs10",
+            "-H", "Content-Transfer-Encoding: base64",
+            "--data", csr_base64,
+            f"{est_url}/serverkeygen",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+        if result.returncode != 0:
+            return ProtocolResult(success=False, message=f"Server keygen failed: {result.stderr}")
+
+        response = result.stdout.strip()
+        if "BEGIN" in response or response.startswith("MII"):
+            return ProtocolResult(
+                success=True,
+                message="Server-side key generation completed",
+                details={"device": device_fqdn, "response_preview": response[:300]},
+            )
+
+        return ProtocolResult(
+            success=False,
+            message=f"Unexpected response: {response[:200]}",
+            details={"hint": "Server keygen may not be enabled in kipuka config"},
+        )
+
+
+def est_get_csrattrs(pki_type: PKIType) -> ProtocolResult:
+    """Get CSR attributes from EST endpoint (RFC 7030 §4.5)."""
+    est_url = _get_est_url(pki_type)
+    if est_url is None:
+        return ProtocolResult(success=False, message=f"EST not available for {pki_type.value}")
+
+    cmd = ["curl", "-sk", "--connect-timeout", "5", f"{est_url}/csrattrs"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except subprocess.TimeoutExpired:
+        return ProtocolResult(success=False, message="Timeout fetching CSR attributes")
+
+    if result.returncode != 0:
+        return ProtocolResult(success=False, message=f"Failed: {result.stderr.strip()}")
+
+    response = result.stdout.strip()
+    if not response:
+        return ProtocolResult(
+            success=True,
+            message="No CSR attributes required (empty response is valid per RFC 7030)",
+            details={"est_url": est_url},
+        )
+
+    attrs = {}
+    if response.startswith("MII") or response.startswith("MIG"):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".b64", delete=False) as af:
+            af.write(response)
+            attr_file = af.name
+        try:
+            parse = subprocess.run(
+                ["openssl", "asn1parse", "-in", attr_file, "-inform", "B64"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if parse.returncode == 0:
+                attrs["asn1"] = parse.stdout
+        finally:
+            Path(attr_file).unlink(missing_ok=True)
+
+    return ProtocolResult(
+        success=True,
+        message="CSR attributes retrieved",
+        details={"raw": response, "parsed": attrs, "est_url": est_url},
+    )
+
+
+def enrollment_check_all() -> dict[str, dict[str, ProtocolResult]]:
+    """Check health of all enrollment endpoints across all PKI types."""
+    results: dict[str, dict[str, ProtocolResult]] = {}
+    for pki_type in PKIType:
+        pki = pki_type.value
+        results[pki] = {}
+
+        acme_url = _get_acme_url(pki_type)
+        if acme_url:
+            dir_result = acme_get_directory(pki_type)
+            results[pki]["acme"] = dir_result
+        else:
+            results[pki]["acme"] = ProtocolResult(success=False, message="Not configured")
+
+        est_url = _get_est_url(pki_type)
+        if est_url:
+            cacerts = est_get_cacerts(est_url)
+            results[pki]["est"] = cacerts
+        else:
+            results[pki]["est"] = ProtocolResult(success=False, message="Not configured")
+
+    return results

@@ -140,6 +140,19 @@ pip install -e .
 - `lab ct-verify` - Verify a certificate against the CT log
 - `lab ct-stats` - Show CT log statistics
 - `lab mtls-test` - Test mTLS connectivity with the reverse proxy
+- `lab acme-directory` - Show ACME directory metadata (profiles, STAR, ARI, EAB)
+- `lab acme-status` - Show akamu ACME server health and capabilities
+- `lab acme-certs` - List certificates issued by akamu (admin API)
+- `lab acme-revoke CERT_FILE` - Revoke certificate via ACME protocol (RFC 8555 §7.6)
+- `lab acme-crl` - Fetch and inspect CRL from akamu's built-in endpoint
+- `lab acme-ocsp CERT_FILE` - Query akamu's built-in OCSP responder
+- `lab acme-profiles` - List certificate profiles available from akamu
+- `lab est-status` - Show kipuka EST server health (DB, HSM, CA backends)
+- `lab est-otp-generate ENTITY` - Generate one-time password for EST enrollment
+- `lab est-otp-list` - List active (non-expired, non-consumed) OTPs
+- `lab est-serverkeygen` - Request server-side key generation via EST (RFC 7030 §4.4)
+- `lab est-csrattrs` - Get CSR attributes from EST server (RFC 7030 §4.5)
+- `lab enrollment-status` - Dashboard of all ACME/EST endpoints across PKI types
 
 ## Architecture
 

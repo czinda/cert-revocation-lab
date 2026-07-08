@@ -41,9 +41,22 @@ from .events import trigger_event, EventResult
 from .pki import issue_certificate, verify_certificate_status, check_ca_health, CertificateResult
 from .protocols import (
     acme_issue_certificate,
+    acme_get_directory,
+    acme_get_crl,
+    acme_query_ocsp,
+    acme_get_profiles,
+    acme_get_status,
+    acme_list_certs,
+    acme_revoke_cert,
     est_enroll_certificate,
     est_get_cacerts,
+    est_get_csrattrs,
+    est_get_status,
+    est_generate_otp,
+    est_list_otps,
+    est_serverkeygen,
     est_reenroll_certificate,
+    enrollment_check_all,
     ProtocolResult,
     _get_acme_url,
     _get_est_url,
@@ -2034,6 +2047,422 @@ def incident_response(
     except FileNotFoundError:
         console.print("[red]ansible-playbook not found. Install ansible first.[/red]")
         raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Akamu (ACME) extended commands
+# ---------------------------------------------------------------------------
+
+@app.command("acme-directory")
+def acme_directory(
+    pki_type: PKIType = typer.Option(PKIType.RSA, "--pki-type", "-p", help="PKI type"),
+):
+    """Show ACME directory metadata (profiles, capabilities, STAR, ARI)."""
+    result = acme_get_directory(pki_type)
+    if not result.success:
+        console.print(f"[red]✗ {result.message}[/red]")
+        raise typer.Exit(1)
+
+    directory = result.details["directory"]
+    meta = directory.get("meta", {})
+
+    console.print(f"\n[bold cyan]ACME Directory — {pki_type.value.upper()} PKI[/bold cyan]\n")
+
+    table = Table(title="Endpoints", show_header=True, header_style="bold")
+    table.add_column("Resource", style="cyan")
+    table.add_column("URL")
+    for key in ["newNonce", "newAccount", "newOrder", "newAuthz", "revokeCert", "keyChange", "renewalInfo"]:
+        if key in directory:
+            table.add_row(key, directory[key])
+    console.print(table)
+
+    if meta:
+        console.print(f"\n[bold]Metadata[/bold]")
+        for key, value in meta.items():
+            if key == "profiles":
+                console.print(f"  profiles: {', '.join(value.keys()) if isinstance(value, dict) else value}")
+            else:
+                console.print(f"  {key}: {value}")
+
+
+@app.command("acme-status")
+def acme_status_cmd(
+    pki_type: PKIType = typer.Option(PKIType.RSA, "--pki-type", "-p", help="PKI type"),
+):
+    """Show akamu ACME server health and capabilities."""
+    result = acme_get_status(pki_type)
+    if not result.success:
+        console.print(f"[red]✗ {result.message}[/red]")
+        raise typer.Exit(1)
+
+    d = result.details
+    console.print(f"\n[bold cyan]Akamu ACME Status — {pki_type.value.upper()} PKI[/bold cyan]\n")
+    console.print(f"  [green]✓ Healthy[/green]")
+    console.print(f"  Endpoints:  {', '.join(d.get('endpoints', []))}")
+    console.print(f"  Profiles:   {', '.join(d.get('profiles', [])) or 'default'}")
+    console.print(f"  EAB:        {'required' if d.get('eab_required') else 'not required'}")
+    console.print(f"  STAR:       {'enabled' if d.get('star_enabled') else 'disabled'}")
+    console.print(f"  Delegation: {'enabled' if d.get('delegation_enabled') else 'disabled'}")
+
+
+@app.command("acme-certs")
+def acme_certs(
+    pki_type: PKIType = typer.Option(PKIType.RSA, "--pki-type", "-p", help="PKI type"),
+):
+    """List certificates issued by akamu (admin API)."""
+    result = acme_list_certs(pki_type)
+    if not result.success:
+        console.print(f"[yellow]⚠ {result.message}[/yellow]")
+        if result.details and result.details.get("hint"):
+            console.print(f"  [dim]{result.details['hint']}[/dim]")
+        raise typer.Exit(1)
+
+    certs = result.details.get("certificates", [])
+    console.print(f"\n[bold cyan]Akamu Certificates — {pki_type.value.upper()} PKI[/bold cyan]\n")
+
+    if not certs:
+        console.print("  No certificates found.")
+        return
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("ID", style="cyan")
+    table.add_column("Subject")
+    table.add_column("Status")
+    table.add_column("Expires")
+    for cert in certs[:50]:
+        cert_id = str(cert.get("id", cert.get("serial", "?")))
+        subject = cert.get("subject", cert.get("common_name", "?"))
+        status = cert.get("status", "active")
+        expires = cert.get("not_after", cert.get("expires", "?"))
+        color = "green" if status == "active" else "red"
+        table.add_row(cert_id, subject, f"[{color}]{status}[/{color}]", expires)
+    console.print(table)
+
+
+@app.command("acme-revoke")
+def acme_revoke(
+    cert_file: str = typer.Argument(..., help="Path to PEM certificate file to revoke"),
+    pki_type: PKIType = typer.Option(PKIType.RSA, "--pki-type", "-p", help="PKI type"),
+    reason: int = typer.Option(1, "--reason", "-r", help="Revocation reason code (1=keyCompromise)"),
+):
+    """Revoke a certificate via ACME protocol (RFC 8555 §7.6)."""
+    cert_path = Path(cert_file)
+    if not cert_path.exists():
+        console.print(f"[red]✗ Certificate file not found: {cert_file}[/red]")
+        raise typer.Exit(1)
+
+    cert_pem = cert_path.read_text()
+    console.print(f"\n[bold cyan]ACME Certificate Revocation[/bold cyan]\n")
+    console.print(f"  Certificate: {cert_file}")
+    console.print(f"  PKI:         {pki_type.value.upper()}")
+    console.print(f"  Reason:      {reason}")
+    console.print()
+
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+        task = progress.add_task("Revoking certificate via ACME...", total=None)
+        result = acme_revoke_cert(pki_type, cert_pem, reason)
+        progress.update(task, completed=1)
+
+    if result.success:
+        console.print(f"[green]✓ {result.message}[/green]")
+    else:
+        console.print(f"[red]✗ {result.message}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("acme-crl")
+def acme_crl_cmd(
+    pki_type: PKIType = typer.Option(PKIType.RSA, "--pki-type", "-p", help="PKI type"),
+    full: bool = typer.Option(False, "--full", help="Show full CRL text"),
+):
+    """Fetch and inspect CRL from akamu's built-in CRL endpoint."""
+    console.print(f"\n[bold cyan]Akamu CRL — {pki_type.value.upper()} PKI[/bold cyan]\n")
+
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+        task = progress.add_task("Fetching CRL...", total=None)
+        result = acme_get_crl(pki_type)
+        progress.update(task, completed=1)
+
+    if not result.success:
+        console.print(f"[red]✗ {result.message}[/red]")
+        raise typer.Exit(1)
+
+    d = result.details
+    console.print(f"  [green]✓ {result.message}[/green]")
+    console.print(f"  Issuer:       {d.get('issuer', '?')}")
+    console.print(f"  Last Update:  {d.get('last_update', '?')}")
+    console.print(f"  Next Update:  {d.get('next_update', '?')}")
+    console.print(f"  Revoked:      {d.get('revoked_count', 0)}")
+    console.print(f"  CRL URL:      {d.get('crl_url', '?')}")
+
+    if full and d.get("raw_text"):
+        console.print(f"\n[dim]{d['raw_text']}[/dim]")
+
+
+@app.command("acme-ocsp")
+def acme_ocsp_cmd(
+    cert_file: str = typer.Argument(..., help="Path to PEM certificate file to check"),
+    pki_type: PKIType = typer.Option(PKIType.RSA, "--pki-type", "-p", help="PKI type"),
+    issuer: Optional[str] = typer.Option(None, "--issuer", "-i", help="Path to issuer cert (auto-detected if omitted)"),
+):
+    """Query akamu's built-in OCSP responder for certificate status."""
+    if not Path(cert_file).exists():
+        console.print(f"[red]✗ Certificate file not found: {cert_file}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold cyan]Akamu OCSP Query — {pki_type.value.upper()} PKI[/bold cyan]\n")
+
+    result = acme_query_ocsp(pki_type, cert_file, issuer)
+    status = result.details.get("status", "unknown") if result.details else "unknown"
+    color = {"good": "green", "revoked": "red"}.get(status, "yellow")
+    console.print(f"  Status: [{color}]{status}[/{color}]")
+
+    if result.details and result.details.get("raw"):
+        for line in result.details["raw"].splitlines():
+            if any(k in line.lower() for k in ["this update", "next update", "reason", "revocation"]):
+                console.print(f"  {line.strip()}")
+
+
+@app.command("acme-profiles")
+def acme_profiles_cmd(
+    pki_type: PKIType = typer.Option(PKIType.RSA, "--pki-type", "-p", help="PKI type"),
+):
+    """List certificate profiles available from akamu."""
+    result = acme_get_profiles(pki_type)
+    if not result.success:
+        console.print(f"[red]✗ {result.message}[/red]")
+        raise typer.Exit(1)
+
+    profiles = result.details.get("profiles", {})
+    meta = result.details.get("meta", {})
+
+    console.print(f"\n[bold cyan]Akamu Certificate Profiles — {pki_type.value.upper()} PKI[/bold cyan]\n")
+
+    if not profiles:
+        console.print("  No profiles advertised (using default issuance parameters).")
+        if meta:
+            console.print(f"\n[bold]Directory Meta[/bold]")
+            for k, v in meta.items():
+                console.print(f"  {k}: {v}")
+        return
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Profile ID", style="cyan")
+    table.add_column("Description")
+    for pid, pinfo in profiles.items():
+        desc = pinfo if isinstance(pinfo, str) else pinfo.get("description", str(pinfo))
+        table.add_row(pid, desc)
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------
+# Kipuka (EST) extended commands
+# ---------------------------------------------------------------------------
+
+@app.command("est-status")
+def est_status_cmd(
+    pki_type: PKIType = typer.Option(PKIType.RSA, "--pki-type", "-p", help="PKI type"),
+):
+    """Show kipuka EST server health (DB, HSM, CA backends, uptime)."""
+    result = est_get_status(pki_type)
+
+    console.print(f"\n[bold cyan]Kipuka EST Status — {pki_type.value.upper()} PKI[/bold cyan]\n")
+
+    if not result.success:
+        console.print(f"  [red]✗ {result.message}[/red]")
+        raise typer.Exit(1)
+
+    d = result.details or {}
+    console.print(f"  [green]✓ {result.message}[/green]")
+
+    if d.get("admin_auth_required"):
+        console.print(f"  [dim]Admin API requires authentication — showing EST cacerts probe only[/dim]")
+        return
+
+    for key in ["status", "uptime", "version"]:
+        if key in d:
+            console.print(f"  {key}: {d[key]}")
+
+    for subsys in ["db", "hsm", "ca"]:
+        if subsys in d:
+            sub = d[subsys]
+            sub_status = sub.get("status", "?") if isinstance(sub, dict) else sub
+            color = "green" if sub_status == "healthy" else "yellow"
+            console.print(f"  {subsys}: [{color}]{sub_status}[/{color}]")
+
+
+@app.command("est-otp-generate")
+def est_otp_generate_cmd(
+    entity: str = typer.Argument(..., help="Entity ID for the OTP (e.g. device FQDN)"),
+    pki_type: PKIType = typer.Option(PKIType.RSA, "--pki-type", "-p", help="PKI type"),
+):
+    """Generate a one-time password for EST enrollment.
+
+    The OTP is shown once and cannot be recovered. Use it with:
+        lab est-enroll -d DEVICE -p PKI  (with HTTP Basic: entity:otp)
+    """
+    result = est_generate_otp(pki_type, entity)
+
+    console.print(f"\n[bold cyan]EST OTP Generation — {pki_type.value.upper()} PKI[/bold cyan]\n")
+
+    if not result.success:
+        console.print(f"[red]✗ {result.message}[/red]")
+        if result.details and result.details.get("hint"):
+            console.print(f"  [dim]{result.details['hint']}[/dim]")
+        raise typer.Exit(1)
+
+    d = result.details
+    console.print(f"  [green]✓ OTP generated[/green]")
+    console.print(f"  Entity:   {d.get('entity_id', entity)}")
+    console.print(f"  Token:    [bold yellow]{d.get('token', '?')}[/bold yellow]")
+    if d.get("expires"):
+        console.print(f"  Expires:  {d['expires']}")
+    console.print(f"  Max uses: {d.get('max_uses', 1)}")
+    console.print()
+    console.print(f"[dim]  Usage: curl -u {entity}:<token> -X POST ... /.well-known/est/simpleenroll[/dim]")
+
+
+@app.command("est-otp-list")
+def est_otp_list_cmd(
+    pki_type: PKIType = typer.Option(PKIType.RSA, "--pki-type", "-p", help="PKI type"),
+):
+    """List active (non-expired, non-consumed) OTPs."""
+    result = est_list_otps(pki_type)
+
+    console.print(f"\n[bold cyan]Active OTPs — {pki_type.value.upper()} PKI[/bold cyan]\n")
+
+    if not result.success:
+        console.print(f"[yellow]⚠ {result.message}[/yellow]")
+        raise typer.Exit(1)
+
+    otps = result.details.get("otps", [])
+    if not otps:
+        console.print("  No active OTPs.")
+        return
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("ID", style="cyan")
+    table.add_column("Entity")
+    table.add_column("Expires")
+    table.add_column("Uses Left")
+    for otp in otps:
+        otp_id = str(otp.get("id", "?"))
+        entity = otp.get("entity_id", "?")
+        expires = otp.get("expires_at", "?")
+        uses = str(otp.get("remaining_uses", otp.get("max_uses", "?")))
+        table.add_row(otp_id, entity, expires, uses)
+    console.print(table)
+
+
+@app.command("est-serverkeygen")
+def est_serverkeygen_cmd(
+    device: str = typer.Option(None, "--device", "-d", help="Device FQDN"),
+    pki_type: PKIType = typer.Option(PKIType.RSA, "--pki-type", "-p", help="PKI type"),
+):
+    """Request server-side key generation via EST (RFC 7030 §4.4).
+
+    The EST server generates the key pair and returns both the certificate
+    and the private key. Requires KRA backend for key archival.
+    """
+    if device is None:
+        device = f"serverkeygen-{random.randint(1000,9999)}.cert-lab.local"
+
+    console.print(f"\n[bold cyan]EST Server Key Generation — {pki_type.value.upper()} PKI[/bold cyan]\n")
+    console.print(f"  Device: {device}")
+    console.print()
+
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+        task = progress.add_task("Requesting server-side key generation...", total=None)
+        result = est_serverkeygen(pki_type, device)
+        progress.update(task, completed=1)
+
+    if result.success:
+        console.print(f"[green]✓ {result.message}[/green]")
+        if result.details:
+            console.print(f"  Device: {result.details.get('device', device)}")
+            preview = result.details.get("response_preview", "")
+            if preview:
+                console.print(f"\n[dim]{preview}[/dim]")
+    else:
+        console.print(f"[red]✗ {result.message}[/red]")
+        if result.details and result.details.get("hint"):
+            console.print(f"  [dim]{result.details['hint']}[/dim]")
+        raise typer.Exit(1)
+
+
+@app.command("est-csrattrs")
+def est_csrattrs_cmd(
+    pki_type: PKIType = typer.Option(PKIType.RSA, "--pki-type", "-p", help="PKI type"),
+):
+    """Get CSR attributes from the EST server (RFC 7030 §4.5)."""
+    result = est_get_csrattrs(pki_type)
+
+    console.print(f"\n[bold cyan]EST CSR Attributes — {pki_type.value.upper()} PKI[/bold cyan]\n")
+
+    if not result.success:
+        console.print(f"[red]✗ {result.message}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"  [green]✓ {result.message}[/green]")
+    d = result.details or {}
+    if d.get("raw"):
+        console.print(f"  Raw (base64): {d['raw'][:120]}{'...' if len(d.get('raw','')) > 120 else ''}")
+    if d.get("parsed", {}).get("asn1"):
+        console.print(f"\n  [bold]ASN.1 Parse:[/bold]")
+        for line in d["parsed"]["asn1"].splitlines()[:20]:
+            console.print(f"    {line}")
+
+
+# ---------------------------------------------------------------------------
+# Cross-cutting enrollment dashboard
+# ---------------------------------------------------------------------------
+
+@app.command("enrollment-status")
+def enrollment_status_cmd():
+    """Dashboard showing health of all ACME and EST enrollment endpoints.
+
+    Checks every deployed PKI type's akamu (ACME) and kipuka (EST) instances
+    and displays a summary table.
+    """
+    console.print(f"\n[bold cyan]Enrollment Backend Status[/bold cyan]")
+    console.print(f"  Backend: [bold]{ENROLLMENT_BACKEND}[/bold]\n")
+
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+        task = progress.add_task("Checking all enrollment endpoints...", total=None)
+        results = enrollment_check_all()
+        progress.update(task, completed=1)
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("PKI", style="cyan", width=5)
+    table.add_column("Service", width=8)
+    table.add_column("Backend", width=10)
+    table.add_column("Status", width=12)
+    table.add_column("Endpoint")
+
+    for pki in ["rsa", "ecc", "pqc"]:
+        if pki not in results:
+            continue
+
+        for svc in ["acme", "est"]:
+            r = results[pki].get(svc)
+            if r is None:
+                continue
+
+            backend = {"acme": "akamu", "est": "kipuka"}.get(svc, svc) if ENROLLMENT_BACKEND == "akamu" else "dogtag"
+            if r.success:
+                status = "[green]✓ healthy[/green]"
+            elif r.message == "Not configured":
+                status = "[dim]— n/a[/dim]"
+            else:
+                status = "[red]✗ down[/red]"
+
+            url = ""
+            if r.details:
+                url = r.details.get("acme_url", r.details.get("est_url", ""))
+
+            table.add_row(pki.upper(), svc.upper(), backend, status, url)
+
+    console.print(table)
 
 
 def cli():
