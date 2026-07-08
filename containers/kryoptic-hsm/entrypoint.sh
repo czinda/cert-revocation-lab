@@ -29,6 +29,11 @@ SLOT_LABELS=(
     "pq-root"
     "pq-intermediate"
     "pq-iot"
+    "pq-kipuka-ca"
+    "pq-kipuka-tls"
+    "pq-akamu-ca"
+    "pq-akamu-tls"
+    "pq-agent"
 )
 
 log() {
@@ -106,9 +111,11 @@ generate_key() {
     local slot_index="$1"
     local label="$2"
 
+    local key_id
+    key_id="$(printf '%02x' $((slot_index + 1)))"
+
     # Determine key type from the label prefix
     local pki_prefix="${label%%-*}"
-    local ca_level="${label#*-}"
 
     case "${pki_prefix}" in
         rsa)
@@ -118,7 +125,7 @@ generate_key() {
                 --login --pin "${USER_PIN}" \
                 --keypairgen --key-type rsa:4096 \
                 --label "${label}-signing" \
-                --id "$(printf '%02x' $((slot_index + 1)))" \
+                --id "${key_id}" \
                 2>&1 || {
                     log_error "Failed to generate RSA-4096 key for ${label}"
                     return 1
@@ -131,28 +138,29 @@ generate_key() {
                 --login --pin "${USER_PIN}" \
                 --keypairgen --key-type EC:secp384r1 \
                 --label "${label}-signing" \
-                --id "$(printf '%02x' $((slot_index + 1)))" \
+                --id "${key_id}" \
                 2>&1 || {
                     log_error "Failed to generate ECC P-384 key for ${label}"
                     return 1
                 }
             ;;
         pq)
-            # ML-DSA-87 is not yet widely supported in pkcs11-tool;
-            # attempt generation but fall back gracefully if unsupported
-            log "Generating ML-DSA-87 key pair in slot ${slot_index} (${label}) [experimental]"
+            # ML-DSA-87 not supported by pkcs11-tool — generate RSA-2048
+            # placeholder for TLS/agent keys. CA signing keys will be
+            # replaced with real ML-DSA-87 via the kipuka-hsm Cryptoki API.
+            log "Generating RSA-2048 placeholder in slot ${slot_index} (${label})"
             if pkcs11-tool --module "${PKCS11_MODULE}" \
                 --slot "${slot_index}" \
                 --login --pin "${USER_PIN}" \
-                --keypairgen --key-type EC:secp384r1 \
+                --keypairgen --key-type rsa:2048 \
                 --label "${label}-signing" \
-                --id "$(printf '%02x' $((slot_index + 1)))" \
+                --id "${key_id}" \
                 2>&1; then
-                log "PQ slot ${label}: generated ECC P-384 placeholder (ML-DSA-87 PKCS#11 support pending)"
+                log "PQ slot ${label}: RSA-2048 placeholder (ML-DSA-87 via Cryptoki API later)"
             else
-                log "PQ slot ${label}: key generation skipped (ML-DSA-87 not yet supported in pkcs11-tool)"
+                log "PQ slot ${label}: key generation failed"
+                return 1
             fi
-            return 0
             ;;
         *)
             log_error "Unknown PKI prefix: ${pki_prefix}"
@@ -217,6 +225,20 @@ main() {
     # List all token slots for verification
     log "Listing configured token slots:"
     pkcs11-tool --module "${PKCS11_MODULE}" --list-slots 2>&1 || true
+
+    # Start p11-kit server to expose PKCS#11 over Unix socket.
+    # Client containers mount /var/run/kryoptic and use p11-kit-client.so.
+    local socket_dir="/var/run/kryoptic"
+    mkdir -p "${socket_dir}"
+    if command -v p11-kit >/dev/null 2>&1; then
+        log "Starting p11-kit server on ${socket_dir}/pkcs11.sock"
+        p11-kit server \
+            --provider "${PKCS11_MODULE}" \
+            "unix:path=${socket_dir}/pkcs11.sock" &
+        log "p11-kit server PID: $!"
+    else
+        log "p11-kit not found — socket access unavailable, using direct module only"
+    fi
 
     # Keep container running
     exec sleep infinity

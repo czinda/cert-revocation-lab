@@ -246,6 +246,33 @@ services:
   # Activate with: ENROLLMENT_BACKEND=akamu (default)
   # Rust-based ACME CA + EST server, delegating to Dogtag PQ Intermediate CA.
 
+  # ── Kryoptic HSM (PKCS#11 Software Token) ─────────────────────────────────
+  # Provides HSM-backed key storage for kipuka and akamu via p11-kit socket.
+  # Client containers mount kryoptic-socket and use p11-kit-client.so.
+
+  kryoptic-pq-hsm:
+    profiles: [akamu]
+    build:
+      context: ./containers/kryoptic-hsm
+      dockerfile: Containerfile
+    container_name: kryoptic-pq-hsm
+    hostname: hsm-pq.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      HSM_SO_PIN: ${HSM_SO_PIN:-12345678}
+      HSM_USER_PIN: ${HSM_USER_PIN:-1234}
+    volumes:
+      - kryoptic-pq-data:/var/lib/kryoptic
+      - kryoptic-pq-socket:/var/run/kryoptic
+    networks:
+      pki-pq-net:
+        ipv4_address: 172.27.0.25
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /var/lib/kryoptic/status.json"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+
   akamu-pq:
     profiles: [akamu]
     image: ${AKAMU_IMAGE:-localhost/akamu:latest}
@@ -258,6 +285,7 @@ services:
       - ./configs/akamu/pq-config.toml:/app/conf/config.toml:ro
       - ./data/certs/pq:/certs:ro
       - akamu-pq-data:/app/data
+      - kryoptic-pq-socket:/var/run/kryoptic:ro
     extra_hosts:
       - "pq-root-ca.cert-lab.local:172.27.0.12"
       - "pq-intermediate-ca.cert-lab.local:172.27.0.11"
@@ -298,6 +326,7 @@ services:
       - ./configs/kipuka/pq-config.toml:/etc/kipuka/kipuka.toml:ro
       - ./data/certs/pq:/etc/kipuka/certs:ro
       - kipuka-pq-data:/var/lib/kipuka
+      - kryoptic-pq-socket:/var/run/kryoptic:ro
     extra_hosts:
       - "pq-root-ca.cert-lab.local:172.27.0.12"
       - "pq-intermediate-ca.cert-lab.local:172.27.0.11"
@@ -312,6 +341,7 @@ services:
       - "8456:9443"
     environment:
       - RUST_LOG=info
+      - HSM_USER_PIN=${HSM_USER_PIN:-1234}
     healthcheck:
       test: ["CMD-SHELL", "curl -sk https://localhost:9443/.well-known/est/cacerts 2>/dev/null | head -1 | grep -qE 'BEGIN|MII' || exit 1"]
       interval: 15s
@@ -523,3 +553,5 @@ volumes:
   ds-pq-kra-data:
   pki-pq-kra-data:
   pki-pq-kra-logs:
+  kryoptic-pq-data:
+  kryoptic-pq-socket:
