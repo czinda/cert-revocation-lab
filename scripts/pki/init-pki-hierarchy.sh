@@ -104,12 +104,23 @@ IOT_HOSTNAME="${CA_PREFIX}iot-ca.cert-lab.local"
 EST_HOSTNAME="${CA_PREFIX}est-ca.cert-lab.local"
 OCSP_HOSTNAME="${CA_PREFIX}ocsp.cert-lab.local"
 KRA_HOSTNAME="${CA_PREFIX}kra.cert-lab.local"
-ROOT_URL="https://${ROOT_HOSTNAME}:8443"
-INTERMEDIATE_URL="https://${INTERMEDIATE_HOSTNAME}:8443"
-IOT_URL="https://${IOT_HOSTNAME}:8443"
-EST_URL="https://${EST_HOSTNAME}:8443"
-OCSP_URL="https://${OCSP_HOSTNAME}:8443"
-KRA_URL="https://${KRA_HOSTNAME}:8443"
+# PQ CAs use HTTP:8080 because NSS cannot validate ML-DSA-87 cert chains
+# in the TLS handshake. RSA and ECC CAs use HTTPS:8443.
+if [ "$PKI_TYPE" = "pq" ] || [ "$PKI_TYPE" = "pqc" ]; then
+    ROOT_URL="http://${ROOT_HOSTNAME}:8080"
+    INTERMEDIATE_URL="http://${INTERMEDIATE_HOSTNAME}:8080"
+    IOT_URL="http://${IOT_HOSTNAME}:8080"
+    EST_URL="http://${EST_HOSTNAME}:8080"
+    OCSP_URL="http://${OCSP_HOSTNAME}:8080"
+    KRA_URL="http://${KRA_HOSTNAME}:8080"
+else
+    ROOT_URL="https://${ROOT_HOSTNAME}:8443"
+    INTERMEDIATE_URL="https://${INTERMEDIATE_HOSTNAME}:8443"
+    IOT_URL="https://${IOT_HOSTNAME}:8443"
+    EST_URL="https://${EST_HOSTNAME}:8443"
+    OCSP_URL="https://${OCSP_HOSTNAME}:8443"
+    KRA_URL="https://${KRA_HOSTNAME}:8443"
+fi
 
 PKI_PASSWORD="${PKI_ADMIN_PASSWORD:-${ADMIN_PASSWORD:-RedHat123}}"
 
