@@ -29,7 +29,7 @@ WORKDIR /build
 RUN git clone --depth 1 https://github.com/latchset/kryoptic.git
 
 WORKDIR /build/kryoptic
-RUN cargo build --release --features all
+RUN cargo build --release --features aes,ecc,hash,pqc
 
 # --- Final image ---
 FROM registry.fedoraproject.org/fedora:latest
