@@ -708,19 +708,16 @@ configure_server_cert_profile() {
 # Remove agent authentication from enrollment profiles so enrollment
 # auto-approves without requiring a separate agent approval step.
 # Required for akamu Dogtag RA mode (returns 503 on pending requests).
-# Usage: patch_profile_auto_approve <container> <instance> <ca_url> [profile_ids...]
+# Dogtag profiles are file-based at /var/lib/pki/<instance>/conf/ca/profiles/ca/
+# Usage: patch_profile_auto_approve <container> <instance> [profile_ids...]
 patch_profile_auto_approve() {
     local container="${1:?container required}"
     local instance="${2:?instance required}"
-    local ca_url="${3:?ca_url required}"
-    shift 3
+    shift 2
     local profiles=("${@:-caServerCert caECServerCert}")
     if [ ${#profiles[@]} -eq 0 ]; then
         profiles=(caServerCert caECServerCert)
     fi
-
-    local http_url
-    http_url=$(echo "$ca_url" | sed 's|https://\(.*\):8443|http://\1:8080|')
 
     for profile_id in "${profiles[@]}"; do
         log_info "Patching ${profile_id} for auto-approve on $container..."
@@ -729,21 +726,9 @@ patch_profile_auto_approve() {
             PROFILE=\"/var/lib/pki/${instance}/conf/ca/profiles/ca/${profile_id}.cfg\"
             if [ -f \"\$PROFILE\" ]; then
                 sed -i '/^auth.instance_id=/d' \"\$PROFILE\"
-                echo 'Patched file-based ${profile_id} (removed auth line)'
+                echo 'Removed auth.instance_id from ${profile_id}'
             else
-                rm -f /tmp/${profile_id}.cfg
-                echo y | pki -U '${http_url}' -u caadmin -w '${PKI_PASSWORD:-RedHat123}' \
-                    ca-profile-disable ${profile_id} 2>/dev/null || true
-                echo y | pki -U '${http_url}' -u caadmin -w '${PKI_PASSWORD:-RedHat123}' \
-                    ca-profile-show ${profile_id} --raw --output /tmp/${profile_id}.cfg 2>/dev/null
-                if [ -f /tmp/${profile_id}.cfg ]; then
-                    sed -i '/^auth.instance_id=/d' /tmp/${profile_id}.cfg
-                    echo y | pki -U '${http_url}' -u caadmin -w '${PKI_PASSWORD:-RedHat123}' \
-                        ca-profile-mod ${profile_id} --raw /tmp/${profile_id}.cfg 2>/dev/null
-                    echo 'Patched LDAP-based ${profile_id} (removed auth line)'
-                fi
-                echo y | pki -U '${http_url}' -u caadmin -w '${PKI_PASSWORD:-RedHat123}' \
-                    ca-profile-enable ${profile_id} 2>/dev/null || true
+                echo '${profile_id}.cfg not found at \$PROFILE — skipping'
             fi
         " 2>&1
     done
