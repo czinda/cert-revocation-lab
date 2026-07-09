@@ -1,15 +1,9 @@
 # ── Kipuka EST Server — ML-DSA-87 Post-Quantum PKI Hierarchy ───────────
 #
-# Configuration for the ML-DSA-87 (NIST FIPS 204) certificate revocation lab.
-# Proxies EST enrollment requests to the Dogtag PQ IoT Sub-CA (issuing CA)
-# (pq-iot-ca.cert-lab.local) using the caServerCert profile.
-#
-# ALL operational keys (TLS server, Dogtag agent) are stored in the
-# Kryoptic HSM via PKCS#11 — private keys never leave the HSM boundary.
-# Signing operations use C_Sign through the p11-kit Unix socket.
+# All operational keys (TLS server, Dogtag agent) are stored in SoftHSM2
+# via PKCS#11 — private keys never leave the HSM boundary.
 #
 # Network: 172.27.0.0/24 (CERT-LAB-PQ)
-# Certificates: data/certs/pq/
 # ────────────────────────────────────────────────────────────────────────
 
 # ── Server ───────────────────────────────────────────────────────────────
@@ -17,9 +11,6 @@
 listen_addr = "0.0.0.0:9443"
 
 # ── TLS (HSM-backed server key) ─────────────────────────────────────────
-# The TLS server private key is in the Kryoptic HSM. The pkcs11: URI
-# tells kipuka to use Pkcs11SigningKey (rustls SigningKey trait) which
-# delegates all TLS handshake signatures to the HSM via C_Sign.
 [tls]
 enabled   = true
 cert_file = "/etc/kipuka/certs/kipuka-pq.cert.pem"
@@ -28,19 +19,15 @@ ca_file   = "/etc/kipuka/certs/dogtag/ca-chain.pem"
 client_auth = "optional"
 
 # ── CA Key Material ──────────────────────────────────────────────────────
-# In Dogtag proxy mode, kipuka doesn't sign certificates locally.
-# key_file is required by the config parser but not used for signing.
 [ca]
 key_file   = "/etc/kipuka/certs/kipuka-pq.cert.pem"
 cert_file  = "/etc/kipuka/certs/kipuka-pq.cert.pem"
 
-# ── HSM / PKCS#11 (Kryoptic) ────────────────────────────────────────────
-# Connects to the Kryoptic HSM container via p11-kit Unix socket.
-# Used by the TLS server key (pkcs11: URI in [tls].key_file).
-# Keys are non-extractable (CKA_EXTRACTABLE=false, CKA_SENSITIVE=true).
+# ── HSM / PKCS#11 (SoftHSM2) ────────────────────────────────────────────
+# SoftHSM2 module loaded directly (shared token volume from kryoptic-pq-hsm).
 [hsm]
 provider     = "kryoptic"
-library_path = "/usr/lib64/p11-kit-client.so"
+library_path = "/usr/lib64/pkcs11/libsofthsm2.so"
 pin          = "env:HSM_USER_PIN"
 token_label  = "pq-kipuka-tls"
 
@@ -49,13 +36,10 @@ token_label  = "pq-kipuka-tls"
 url = "sqlite:///var/lib/kipuka/kipuka.db?mode=rwc"
 
 # ── Dogtag PKI Backend (HSM-backed agent key) ───────────────────────────
-# The agent mTLS private key is in the Kryoptic HSM. When agent_key_file
-# starts with pkcs11:, the Dogtag client loads the key via OpenSSL's
-# PKCS#11 engine — the key never leaves the HSM.
 [dogtag]
 ca_url          = "https://pq-iot-ca.cert-lab.local:8443"
 agent_cert_file = "/etc/kipuka/certs/dogtag/agent.pem"
-agent_key_file  = "pkcs11:token=pq-agent;object=pq-agent-signing;type=private"
+agent_key_file  = "/etc/kipuka/certs/dogtag/agent-rsa.key.pem"
 ca_cert_file    = "/etc/kipuka/certs/dogtag/ca-chain.pem"
 profile_id      = "caServerCert"
 

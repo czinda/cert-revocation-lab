@@ -326,6 +326,7 @@ services:
       - ./configs/kipuka/pq-config.toml:/etc/kipuka/kipuka.toml:ro
       - ./data/certs/pq:/etc/kipuka/certs:ro
       - kipuka-pq-data:/var/lib/kipuka
+      - kryoptic-pq-data:/var/lib/softhsm:ro
       - kryoptic-pq-socket:/var/run/kryoptic:ro
     extra_hosts:
       - "pq-root-ca.cert-lab.local:172.27.0.12"
