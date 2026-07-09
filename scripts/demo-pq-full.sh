@@ -279,37 +279,35 @@ demo_kra() {
         info "KRA transport cert: ML-KEM-1024 (FIPS 203)"
     fi
 
-    # Generate and archive a key
+    # Generate and archive a key via REST API (bypasses pki CLI SSL issues)
     divider
-    echo -e "  ${BOLD}Key Archival${NC}"
+    echo -e "  ${BOLD}Key Archival (via REST API)${NC}"
     local key_result
-    key_result=$(sudo podman exec "$KRA_CONTAINER" bash -c "
-        pki -U http://localhost:8080 -u caadmin -w ${ADMIN_PASSWORD} \
-            kra-key-generate 'demo-archived-key-\$(date +%s)' \
-            --key-algorithm AES --key-size 256 \
-            --usages wrap,unwrap 2>&1
-    " 2>/dev/null || echo "FAILED")
+    key_result=$(curl -sk -u "caadmin:${ADMIN_PASSWORD}" -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"keyAlgorithm\":\"AES\",\"keySize\":256,\"clientKeyID\":\"demo-$(date +%s)\",\"usages\":\"wrap,unwrap\"}" \
+        "http://localhost:8493/kra/rest/agent/keys/generate" 2>&1)
 
-    if echo "$key_result" | grep -qi "Key ID\|request_id\|created"; then
+    if echo "$key_result" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['entries'][0]['requestID'])" 2>/dev/null; then
+        local req_id
+        req_id=$(echo "$key_result" | python3 -c "import sys,json; print(json.load(sys.stdin)['entries'][0]['requestID'])" 2>/dev/null)
         pass "Symmetric key (AES-256) archived in KRA"
-        local key_id
-        key_id=$(echo "$key_result" | grep -i "Key ID" | awk '{print $NF}' | head -1)
-        [ -n "$key_id" ] && info "Key ID: $key_id"
+        info "Request ID: ${req_id}"
+    elif [ -z "$key_result" ]; then
+        warn "KRA not responding — may still be starting"
     else
-        warn "Key archival: $key_result"
+        warn "Key archival response: $(echo "$key_result" | head -1)"
     fi
 
-    # List keys
+    # List keys via REST
     divider
     echo -e "  ${BOLD}Archived Keys${NC}"
     local key_list
-    key_list=$(sudo podman exec "$KRA_CONTAINER" bash -c "
-        pki -U http://localhost:8080 -u caadmin -w ${ADMIN_PASSWORD} \
-            kra-key-find --maxResults 5 2>&1
-    " 2>/dev/null || echo "")
+    key_list=$(curl -sk -u "caadmin:${ADMIN_PASSWORD}" \
+        "http://localhost:8493/kra/rest/agent/keys" 2>&1)
 
     local key_count
-    key_count=$(echo "$key_list" | grep -c "Key ID" 2>/dev/null || echo 0)
+    key_count=$(echo "$key_list" | python3 -c "import sys,json; print(json.load(sys.stdin).get('total',0))" 2>/dev/null || echo 0)
     pass "${key_count} key(s) archived in KRA"
 
     echo ""
