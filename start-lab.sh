@@ -791,7 +791,11 @@ start_pq_pki_hierarchy() {
         fi
 
         # Wait for CA containers to be running
-        for ctr in dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca akamu-pq kipuka-pq dogtag-pq-ocsp dogtag-pq-kra; do
+        local pq_wait_list="dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-ocsp dogtag-pq-kra"
+        if [ "$ENROLLMENT_BACKEND" = "akamu" ]; then
+            pq_wait_list="$pq_wait_list kryoptic-pq-hsm akamu-pq kipuka-pq"
+        fi
+        for ctr in $pq_wait_list; do
             local elapsed=0
             while [ $elapsed -lt 60 ]; do
                 local status=""
@@ -836,6 +840,14 @@ start_pq_pki_hierarchy() {
         fi
     else
         log_info "Dogtag ACME/EST RA initialization handled by init-pq-pki-hierarchy.sh"
+    fi
+
+    # Fix SELinux labels on PQ cert files (containers run as uid 1001)
+    if command -v chcon &>/dev/null; then
+        chcon -R -t container_file_t "$SCRIPT_DIR/data/certs/pq" 2>/dev/null || true
+        # Also fix key file permissions for kipuka uid 1001
+        chmod 644 "$SCRIPT_DIR/data/certs/pq"/*.key.pem 2>/dev/null || true
+        chmod 644 "$SCRIPT_DIR/data/certs/pq"/dogtag/*.pem 2>/dev/null || true
     fi
 
     log_success "PQ PKI containers started (hierarchy init may be partial)"
