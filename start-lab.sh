@@ -710,17 +710,26 @@ start_pq_pki_hierarchy() {
     else
         log_info "Starting PQ PKI containers (requires sudo for privileged mode)..."
 
-        # Start DS containers ONE AT A TIME to avoid ns-slapd initialization race.
-        # podman-compose ignores depends_on service_healthy conditions, so launching
-        # all DS containers simultaneously causes 2-3 to crash from resource contention
-        # during concurrent NSS database creation and slapd startup.
+        # Step 1: Create ALL containers in one compose call (no start).
+        # This avoids the compose reconciliation bug where starting one service
+        # causes compose to stop/recreate dependency containers.
+        log_info "Creating all PQ containers (single compose call)..."
+        if is_running_as_root; then
+            podman-compose -f pki-pq-compose.yml $COMPOSE_PROFILE up --no-start 2>/dev/null || true
+        else
+            sudo podman-compose -f pki-pq-compose.yml $COMPOSE_PROFILE up --no-start 2>/dev/null || true
+        fi
+
+        # Step 2: Start DS containers ONE AT A TIME with podman start.
+        # Never use podman-compose up for individual services — it reconciles
+        # the entire project and SIGKILL's running containers.
         log_info "Starting PQ Directory Servers sequentially (avoiding init race)..."
         for ds in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-ocsp ds-pq-kra; do
             log_info "Starting $ds..."
             if is_running_as_root; then
-                podman-compose -f pki-pq-compose.yml $COMPOSE_PROFILE up -d --no-recreate "$ds"
+                podman start "$ds" 2>/dev/null
             else
-                sudo podman-compose -f pki-pq-compose.yml $COMPOSE_PROFILE up -d --no-recreate "$ds"
+                sudo podman start "$ds" 2>/dev/null
             fi
 
             # Wait for this DS to become healthy before starting the next
@@ -737,7 +746,7 @@ start_pq_pki_hierarchy() {
                     log_success "$ds is healthy"
                     break
                 fi
-                # Check if container exited (crashed) — retry once
+                # Check if container exited (crashed) — restart it
                 local state=""
                 if is_running_as_root; then
                     state=$(podman inspect --format '{{.State.Status}}' "$ds" 2>/dev/null || echo "missing")
@@ -745,15 +754,11 @@ start_pq_pki_hierarchy() {
                     state=$(sudo podman inspect --format '{{.State.Status}}' "$ds" 2>/dev/null || echo "missing")
                 fi
                 if [ "$state" = "exited" ]; then
-                    log_warn "$ds crashed during init, retrying..."
+                    log_warn "$ds crashed during init, restarting..."
                     if is_running_as_root; then
-                        podman rm -f "$ds" 2>/dev/null
-                        podman volume rm -f "cert-revocation-lab_${ds}-data" 2>/dev/null
-                        podman-compose -f pki-pq-compose.yml $COMPOSE_PROFILE up -d --no-recreate "$ds"
+                        podman start "$ds" 2>/dev/null
                     else
-                        sudo podman rm -f "$ds" 2>/dev/null
-                        sudo podman volume rm -f "cert-revocation-lab_${ds}-data" 2>/dev/null
-                        sudo podman-compose -f pki-pq-compose.yml $COMPOSE_PROFILE up -d --no-recreate "$ds"
+                        sudo podman start "$ds" 2>/dev/null
                     fi
                 fi
                 sleep 10
@@ -764,35 +769,26 @@ start_pq_pki_hierarchy() {
             fi
         done
 
-        # Now start CA containers individually with podman start.
-        # DO NOT use podman-compose up here — it reconciles the entire project
-        # and recreates the DS containers we just started sequentially, re-triggering
-        # the parallel init race condition.
+        # Step 3: Start CA containers with podman start (already created by compose).
         log_info "Starting PQ Dogtag CA containers..."
-        for ca in dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca akamu-pq kipuka-pq dogtag-pq-ocsp dogtag-pq-kra; do
-            local ca_state=""
+        for ca in dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-ocsp dogtag-pq-kra; do
             if is_running_as_root; then
-                ca_state=$(podman inspect --format '{{.State.Status}}' "$ca" 2>/dev/null || echo "missing")
+                podman start "$ca" 2>/dev/null
             else
-                ca_state=$(sudo podman inspect --format '{{.State.Status}}' "$ca" 2>/dev/null || echo "missing")
-            fi
-            if [ "$ca_state" = "running" ]; then
-                log_success "$ca already running"
-            elif [ "$ca_state" = "created" ] || [ "$ca_state" = "exited" ]; then
-                if is_running_as_root; then
-                    podman start "$ca" 2>/dev/null
-                else
-                    sudo podman start "$ca" 2>/dev/null
-                fi
-            else
-                # Container doesn't exist yet — create it via compose (single service)
-                if is_running_as_root; then
-                    podman-compose -f pki-pq-compose.yml $COMPOSE_PROFILE up -d --no-recreate "$ca"
-                else
-                    sudo podman-compose -f pki-pq-compose.yml $COMPOSE_PROFILE up -d --no-recreate "$ca"
-                fi
+                sudo podman start "$ca" 2>/dev/null
             fi
         done
+
+        # Start enrollment servers (akamu/kipuka) if using akamu backend
+        if [ "$ENROLLMENT_BACKEND" = "akamu" ]; then
+            for svc in kryoptic-pq-hsm akamu-pq kipuka-pq; do
+                if is_running_as_root; then
+                    podman start "$svc" 2>/dev/null || true
+                else
+                    sudo podman start "$svc" 2>/dev/null || true
+                fi
+            done
+        fi
 
         # Wait for CA containers to be running
         for ctr in dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca akamu-pq kipuka-pq dogtag-pq-ocsp dogtag-pq-kra; do
