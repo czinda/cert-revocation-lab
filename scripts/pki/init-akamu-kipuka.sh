@@ -319,6 +319,92 @@ main() {
     # Provision kipuka certificate
     provision_cert "kipuka" "kipuka-${PKI_TYPE}.cert-lab.local"
 
+    # --- Provision Dogtag RA agent certificate ---
+    # Akamu and kipuka both need an agent cert for Dogtag mTLS auth.
+    # Generate an RSA key, get it signed by the IoT Sub-CA.
+    local agent_dir="${CERTS_DIR}/dogtag"
+    mkdir -p "$agent_dir"
+
+    if [ -f "${agent_dir}/agent.pem" ] && [ -f "${agent_dir}/agent-rsa.key.pem" ]; then
+        log_info "Agent cert already exists: ${agent_dir}/agent.pem"
+    else
+        log_info "Provisioning Dogtag RA agent certificate..."
+
+        # Generate RSA-2048 agent key
+        openssl genrsa -out "${agent_dir}/agent-rsa.key.pem" 2048 2>/dev/null
+
+        # Generate CSR
+        openssl req -new -key "${agent_dir}/agent-rsa.key.pem" \
+            -out "/tmp/agent.csr" \
+            -subj "/CN=PKI Agent/O=Cert-Lab/C=US" 2>/dev/null
+
+        # Copy CSR into the CA container
+        sudo podman cp "/tmp/agent.csr" "${ISSUING_CA_CONTAINER}:/tmp/agent.csr"
+
+        # Submit and approve via pki CLI inside the container
+        local submit_result
+        submit_result=$(sudo podman exec "$ISSUING_CA_CONTAINER" bash -c "
+            pki -U ${ISSUING_CA_URL_INSIDE} -u caadmin -w ${PKI_PASSWORD} \
+                ca-cert-request-submit --profile ${PROFILE} --csr-file /tmp/agent.csr 2>&1
+        " 2>/dev/null || echo "")
+
+        local req_id
+        req_id=$(echo "$submit_result" | grep 'Request ID:' | awk '{print $NF}' | head -1)
+
+        if [ -n "$req_id" ]; then
+            # Approve the request
+            sudo podman exec "$ISSUING_CA_CONTAINER" bash -c "
+                pki -U ${ISSUING_CA_URL_INSIDE} -u caadmin -w ${PKI_PASSWORD} \
+                    ca-cert-request-approve ${req_id} --force 2>&1
+            " >/dev/null 2>&1 || true
+
+            # Get cert ID and download
+            local cert_id
+            cert_id=$(sudo podman exec "$ISSUING_CA_CONTAINER" bash -c "
+                pki -U ${ISSUING_CA_URL_INSIDE} -u caadmin -w ${PKI_PASSWORD} \
+                    ca-cert-request-show ${req_id} 2>&1 | grep 'Certificate ID:' | awk '{print \$NF}'
+            " 2>/dev/null)
+
+            if [ -n "$cert_id" ]; then
+                sudo podman exec "$ISSUING_CA_CONTAINER" bash -c "
+                    pki -U ${ISSUING_CA_URL_INSIDE} -u caadmin -w ${PKI_PASSWORD} \
+                        ca-cert-show ${cert_id} --encoded --output /tmp/agent.pem 2>&1
+                " >/dev/null 2>&1
+                sudo podman cp "${ISSUING_CA_CONTAINER}:/tmp/agent.pem" "${agent_dir}/agent.pem"
+                log_info "Agent cert issued: ${agent_dir}/agent.pem"
+            else
+                log_warn "Could not get cert ID for agent cert (non-fatal)"
+            fi
+        else
+            log_warn "Agent cert request failed (non-fatal): $submit_result"
+        fi
+
+        rm -f /tmp/agent.csr
+    fi
+
+    # Copy CA chain for Dogtag TLS trust
+    if [ ! -f "${agent_dir}/ca-chain.pem" ]; then
+        if [ -f "${CERTS_DIR}/iot-ca-chain.crt" ]; then
+            cp "${CERTS_DIR}/iot-ca-chain.crt" "${agent_dir}/ca-chain.pem"
+        elif [ -f "${CERTS_DIR}/ca-chain.crt" ]; then
+            cp "${CERTS_DIR}/ca-chain.crt" "${agent_dir}/ca-chain.pem"
+        fi
+        log_info "CA chain copied: ${agent_dir}/ca-chain.pem"
+    fi
+
+    # --- Fix permissions and SELinux labels ---
+    # Kipuka runs as uid 1001; key files need to be readable
+    chown -R 1001:0 "${CERTS_DIR}" 2>/dev/null || true
+    chmod 640 "${CERTS_DIR}"/*.key.pem 2>/dev/null || true
+    chmod 640 "${agent_dir}"/*.key.pem 2>/dev/null || true
+    chmod 644 "${CERTS_DIR}"/*.cert.pem "${CERTS_DIR}"/*.crt 2>/dev/null || true
+    chmod 644 "${agent_dir}"/agent.pem "${agent_dir}"/ca-chain.pem 2>/dev/null || true
+
+    # SELinux: containers need container_file_t label
+    if command -v chcon &>/dev/null; then
+        chcon -R -t container_file_t "${CERTS_DIR}" 2>/dev/null || true
+    fi
+
     echo
     echo "========================================================================"
     echo "  Certificate provisioning complete (${ALGO_DESC})"
@@ -328,7 +414,9 @@ main() {
     echo "  Akamu cert:  ${CERTS_DIR}/akamu-${PKI_TYPE}.cert.pem"
     echo "  Kipuka key:  ${CERTS_DIR}/kipuka-${PKI_TYPE}.key.pem"
     echo "  Kipuka cert: ${CERTS_DIR}/kipuka-${PKI_TYPE}.cert.pem"
-    echo "  CA cert:     ${CERTS_DIR}/intermediate-ca.crt"
+    echo "  Agent cert:  ${agent_dir}/agent.pem"
+    echo "  Agent key:   ${agent_dir}/agent-rsa.key.pem"
+    echo "  CA chain:    ${agent_dir}/ca-chain.pem"
     echo
 }
 
