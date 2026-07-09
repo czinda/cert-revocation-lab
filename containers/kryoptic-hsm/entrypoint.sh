@@ -14,7 +14,7 @@ set -euo pipefail
 # SoftHSM2 is used as the PKCS#11 backend — Kryoptic's module doesn't
 # initialize slots reliably in containerized environments. SoftHSM2
 # ships in the same image and provides a stable PKCS#11 v2.40 interface.
-PKCS11_MODULE="/usr/lib64/softhsm/libsofthsm2.so"
+PKCS11_MODULE="/usr/lib64/pkcs11/libsofthsm2.so"
 TOKEN_DIR="/var/lib/softhsm/tokens"
 STATUS_FILE="/var/lib/kryoptic/status.json"
 
