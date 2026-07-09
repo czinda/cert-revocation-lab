@@ -1,12 +1,10 @@
 # rsa-config.toml — Akamu ACME RA for the RSA-4096 PKI hierarchy.
 #
-# Part of the cert-revocation-lab triple PKI infrastructure.
-# Delegates certificate signing to the Dogtag RSA IoT Sub-CA.
-#
-# Network: 172.26.0.0/24 (CERT-LAB)
+# Dogtag RA mode: delegates signing to the Dogtag RSA IoT Sub-CA.
+# Reference: https://akamu.dev/doc/user/configuration.html#casigner
 
 listen_addr = "0.0.0.0:8080"
-base_url    = "http://akamu-rsa.cert-lab.local:8080"
+base_url    = "http://localhost:8483"
 
 [database]
 url = "sqlite:///app/data/akamu.db"
@@ -32,8 +30,3 @@ validate_dnssec = false
 
 [profiles]
 refresh_interval_secs = 3600
-
-[profiles.providers.dogtag]
-type        = "dogtag"
-profile_dir = "/certs/profiles"
-profiles    = []

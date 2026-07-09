@@ -1,28 +1,34 @@
 # pq-config.toml — Akamu ACME RA for the ML-DSA-87 (Post-Quantum) PKI hierarchy.
 #
-# Part of the cert-revocation-lab triple PKI infrastructure.
-# This instance acts as an ACME Registration Authority — it accepts ACME
-# requests but delegates certificate signing to the Dogtag PQ IoT Sub-CA
-# via its REST enrollment API. Certificates are in the Dogtag trust chain
-# (Root → Intermediate → IoT Sub-CA), so revocation via EDA/Ansible works.
+# Dogtag RA mode: Akamu validates ACME requests and forwards CSRs to
+# the Dogtag PQ IoT Sub-CA for signing. The CA key never resides on
+# the Akamu host. CRL and OCSP are served by Dogtag.
+#
+# Reference: https://akamu.dev/doc/user/configuration.html#casigner
 #
 # Network: 172.27.0.0/24 (CERT-LAB-PQ)
 
 listen_addr = "0.0.0.0:8080"
-base_url    = "http://akamu-pq.cert-lab.local:8080"
+
+# base_url is embedded in every URL returned to ACME clients (directory,
+# account, order, certificate URLs). Must match what clients use to reach
+# the server. For the lab, clients run on the host where port 8486 maps
+# to container port 8080.
+base_url = "http://localhost:8486"
 
 [database]
 url = "sqlite:///app/data/akamu.db"
 
 [ca]
-# No key_file — Dogtag signs all certificates via [ca.signer].
-# cert_file holds the IoT Sub-CA chain for AKI derivation and trust anchoring.
+# RA mode: key_file is omitted — Dogtag signs all certificates.
+# cert_file points to the Dogtag CA certificate chain (used for
+# chain building and AKI computation per the docs).
 cert_file = "/certs/iot-ca-chain.crt"
 
-# CRL and OCSP point to Dogtag's endpoints (akamu's built-in CRL/OCSP
-# are disabled for Dogtag-backed CAs since the CA has no local key).
+# CRL and OCSP point to Dogtag's endpoints (akamu's built-in
+# CRL/OCSP return 404 in RA mode — this is expected).
 crl_url  = "http://pq-iot-ca.cert-lab.local:8080/ca/ee/ca/getCRL?op=getCRL&crlIssuingPoint=MasterCRL"
-ocsp_url = "https://pq-ocsp.cert-lab.local:8443/ocsp/ee/ocsp"
+ocsp_url = "http://pq-ocsp.cert-lab.local:8080/ocsp/ee/ocsp"
 
 [ca.signer]
 type         = "dogtag"
@@ -40,8 +46,3 @@ validate_dnssec = false
 
 [profiles]
 refresh_interval_secs = 3600
-
-[profiles.providers.dogtag]
-type        = "dogtag"
-profile_dir = "/certs/profiles"
-profiles    = []

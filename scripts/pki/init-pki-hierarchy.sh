@@ -1105,6 +1105,10 @@ main() {
     init_intermediate_ca
     init_iot_ca
 
+    # Patch caServerCert profile for auto-approve (required for akamu RA mode
+    # and kipuka EST — both return errors on pending/agent-approval profiles).
+    patch_profile_auto_approve "$IOT_CONTAINER" "${INST_PREFIX}iot-ca" "$IOT_URL"
+
     # PQ: ensure CAs have reloaded patched web.xml before OCSP/KRA pkispawn.
     # lib-pki-common.sh patches web.xml pre-pkispawn, but the running Tomcat may
     # have cached the old CONFIDENTIAL values. Restart ensures HTTP endpoints

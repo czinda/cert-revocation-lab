@@ -701,3 +701,42 @@ configure_server_cert_profile() {
     log_info "caServerCert profile updated (keyType=-, added EC and ML-DSA parameters)"
     return 0
 }
+
+# Remove agent authentication from caServerCert profile so enrollment
+# auto-approves without requiring a separate agent approval step.
+# Required for akamu Dogtag RA mode (returns 503 on pending requests).
+# Usage: patch_profile_auto_approve <container> <instance> <ca_url>
+patch_profile_auto_approve() {
+    local container="${1:?container required}"
+    local instance="${2:?instance required}"
+    local ca_url="${3:?ca_url required}"
+
+    log_info "Patching caServerCert profile for auto-approve on $container..."
+
+    # Use HTTP URL for pki CLI (PQ CAs don't support HTTPS for CLI)
+    local http_url
+    http_url=$(echo "$ca_url" | sed 's|https://\(.*\):8443|http://\1:8080|')
+
+    $PODMAN exec "$container" bash -c "
+        # Try file-based profile first
+        PROFILE=\"/var/lib/pki/${instance}/conf/ca/profiles/ca/caServerCert.cfg\"
+        if [ -f \"\$PROFILE\" ]; then
+            sed -i 's/^auth.instance_id=.*/auth.instance_id=/' \"\$PROFILE\"
+            echo 'Patched file-based profile (removed auth.instance_id)'
+        else
+            # LDAP-based profile — use pki CLI
+            echo y | pki -U '${http_url}' -u caadmin -w '${PKI_PASSWORD:-RedHat123}' \
+                ca-profile-disable caServerCert 2>/dev/null || true
+            echo y | pki -U '${http_url}' -u caadmin -w '${PKI_PASSWORD:-RedHat123}' \
+                ca-profile-show caServerCert --raw --output /tmp/caServerCert.cfg 2>/dev/null
+            if [ -f /tmp/caServerCert.cfg ]; then
+                sed -i 's/^auth.instance_id=.*/auth.instance_id=/' /tmp/caServerCert.cfg
+                echo y | pki -U '${http_url}' -u caadmin -w '${PKI_PASSWORD:-RedHat123}' \
+                    ca-profile-mod caServerCert --raw /tmp/caServerCert.cfg 2>/dev/null
+                echo 'Patched LDAP-based profile (removed auth.instance_id)'
+            fi
+            echo y | pki -U '${http_url}' -u caadmin -w '${PKI_PASSWORD:-RedHat123}' \
+                ca-profile-enable caServerCert 2>/dev/null || true
+        fi
+    " 2>&1
+}
