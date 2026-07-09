@@ -25,16 +25,19 @@ A full-stack lab environment running **three independent PKI hierarchies** -- RS
 │ Root CA (8443)          │ Root CA (8463)          │ Root CA (8453)          │
 │     │                   │     │                   │     │                   │
 │ Intermediate CA (8444)  │ Intermediate CA (8464)  │ Intermediate CA (8454)  │
-│     ├──┐                │     │                   │     │                   │
+│     ├──┐                │     ├──┐                │     ├──┐                │
 │ IoT Sub-CA (8445)       │ IoT Sub-CA (8465)       │ IoT Sub-CA (8455)       │
-│ EST Sub-CA (8447/EST)   │ EST Sub-CA (8466/EST)   │ EST Sub-CA (8456/EST)   │
-│ ACME Sub-CA (8446)      │                         │                         │
+│ OCSP Responder (8448)   │ OCSP Responder (8467)   │ OCSP Responder (8457)   │
+│ KRA (8449)              │ KRA (8468)              │ KRA (8458)              │
+│ Kipuka EST (8447)       │ Kipuka EST (8466)       │ Kipuka EST (8456)       │
+│ Akamu ACME (8446)       │ Akamu ACME (8469)       │ Akamu ACME (8459)       │
 ├─────────────────────────┼─────────────────────────┼─────────────────────────┤
 │ Network: 172.26.0.0/24  │ Network: 172.28.0.0/24  │ Network: 172.27.0.0/24  │
+│ Security: CERT-LAB      │ Security: CERT-LAB-ECC  │ Security: CERT-LAB-PQ   │
 │ Certs: data/certs/rsa/  │ Certs: data/certs/ecc/  │ Certs: data/certs/pq/   │
 └─────────────────────────┴─────────────────────────┴─────────────────────────┘
 
-FreeIPA (172.25.0.10:4443) - Identity Management with internal CA
+FreeIPA (172.25.0.10:4443) - Identity Management with CA subordinate to Intermediate CA
 ```
 
 ## Architecture Overview
@@ -53,18 +56,18 @@ FreeIPA (172.25.0.10:4443) - Identity Management with internal CA
        └────────┬────────┘                     │
                 ▼                              ▼
        ┌─────────────────┐           ┌─────────────────┐
-       │  Event-Driven   │           │   EST/ACME      │
-       │    Ansible      │           │  Enrollment     │
-       │   (Rulebook)    │           │                 │
-       └────────┬────────┘           └─────────────────┘
-                │
-       ┌────────┴────────┐
-       ▼                 ▼
-┌─────────────┐   ┌─────────────┐
-│  Dogtag CA  │   │   FreeIPA   │
-│ (REST API)  │   │ (Cert Revoke│
-│             │   │  via API)   │
-└─────────────┘   └─────────────┘
+       │  Event-Driven   │           │  Akamu (ACME)   │
+       │    Ansible      │           │  Kipuka (EST)   │
+       │   (Rulebook)    │           │  Enrollment RAs │
+       └────────┬────────┘           └────────┬────────┘
+                │                             │
+       ┌────────┴────────┐                    │
+       ▼                 ▼                    ▼
+┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+│  Dogtag CA  │   │   FreeIPA   │   │ Intermediate│
+│ (REST API)  │   │ (Cert Revoke│   │   CA (sign) │
+│             │   │  via API)   │   │             │
+└─────────────┘   └─────────────┘   └─────────────┘
 ```
 
 **Event Flow:**
@@ -81,8 +84,10 @@ FreeIPA (172.25.0.10:4443) - Identity Management with internal CA
 | **Dogtag Root CA** | Trust anchor (per PKI hierarchy) | Dogtag PKI, 389DS |
 | **Dogtag Intermediate CA** | Online issuing CA for Sub-CAs | Dogtag PKI, 389DS |
 | **Dogtag IoT Sub-CA** | Certificates for IoT devices | Dogtag PKI, 389DS |
-| **Dogtag EST Sub-CA** | EST enrollment (RFC 7030) | Dogtag PKI, 389DS |
-| **Dogtag ACME Sub-CA** | ACME enrollment (RFC 8555) | Dogtag PKI, 389DS |
+| **OCSP Responder** | Dedicated OCSP signing (per hierarchy) | Dogtag PKI, 389DS |
+| **KRA** | Key archival and recovery | Dogtag PKI, 389DS |
+| **Akamu ACME Server** | ACME enrollment (RFC 8555) -- all 3 PKI types | Go, Dogtag signer RA mode |
+| **Kipuka EST Server** | EST enrollment (RFC 7030) -- all 3 PKI types | Go, Dogtag proxy with OTP auth |
 | **FreeIPA** | Identity management, user/host certs | FreeIPA with Internal Dogtag CA |
 | **Kafka** | Event streaming bus | Confluent Kafka |
 | **Event-Driven Ansible** | Real-time event processing | ansible-rulebook |
@@ -158,6 +163,9 @@ vi .env   # Set all CHANGEME values
 
 # Start fresh (removes all previous data)
 ./start-lab.sh --clean --all
+
+# Use legacy Dogtag RAs instead of Akamu/Kipuka (default: akamu)
+ENROLLMENT_BACKEND=dogtag ./start-lab.sh --rsa
 ```
 
 > **Note:** FreeIPA requires rootful podman (systemd support). Start it separately:
@@ -191,10 +199,14 @@ The initialization scripts automatically handle:
 - Root CA (self-signed)
 - Intermediate CA (CSR signed by Root CA)
 - IoT Sub-CA (CSR signed by Intermediate CA)
-- EST Sub-CA with EST subsystem enabled (RFC 7030)
-- ACME Sub-CA with ACME responder (RSA only, RFC 8555)
+- OCSP Responder (dedicated OCSP signing, pkispawn -s OCSP)
+- KRA (key archival/recovery, pkispawn -s KRA)
+- Akamu ACME server (Go-based, RFC 8555 -- all PKI types)
+- Kipuka EST server (Go-based, RFC 7030 -- all PKI types)
 - Admin credential export
 - EDA SSH bridge setup (keys, ownership, SELinux context, `.env` vars)
+
+> **Enrollment backends:** By default, Akamu (ACME) and Kipuka (EST) are used for all three PKI types. Set `ENROLLMENT_BACKEND=dogtag` for legacy Dogtag RA instances (RSA-only ACME, EST for all types). See `docs/services.md` for details.
 
 ### 5. Certificate Operations
 
@@ -310,18 +322,26 @@ sudo ./scripts/teardown-gitlab-runner.sh
 | RSA Root CA | https://localhost:8443/ca | admin / (see .env) |
 | RSA Intermediate CA | https://localhost:8444/ca | admin / (see .env) |
 | RSA IoT Sub-CA | https://localhost:8445/ca | admin / (see .env) |
-| RSA ACME Sub-CA | https://localhost:8446/ca | admin / (see .env) |
-| RSA EST Sub-CA | https://localhost:8447/ca | admin / (see .env) |
+| RSA Akamu ACME | http://localhost:8446/acme/directory | - |
+| RSA Kipuka EST | https://localhost:8447/.well-known/est/cacerts | - |
+| RSA OCSP Responder | https://localhost:8448/ocsp/ee/ocsp | - |
+| RSA KRA | https://localhost:8449/kra | admin / (see .env) |
 | **ECC PKI** | | |
 | ECC Root CA | https://localhost:8463/ca | admin / (see .env) |
 | ECC Intermediate CA | https://localhost:8464/ca | admin / (see .env) |
 | ECC IoT Sub-CA | https://localhost:8465/ca | admin / (see .env) |
-| ECC EST Sub-CA | https://localhost:8466/ca | admin / (see .env) |
+| ECC Kipuka EST | https://localhost:8466/.well-known/est/cacerts | - |
+| ECC OCSP Responder | https://localhost:8467/ocsp/ee/ocsp | - |
+| ECC KRA | https://localhost:8468/kra | admin / (see .env) |
+| ECC Akamu ACME | http://localhost:8469/acme/directory | - |
 | **ML-DSA-87 PKI** | | |
 | PQ Root CA | https://localhost:8453/ca | admin / (see .env) |
 | PQ Intermediate CA | https://localhost:8454/ca | admin / (see .env) |
 | PQ IoT Sub-CA | https://localhost:8455/ca | admin / (see .env) |
-| PQ EST Sub-CA | https://localhost:8456/ca | admin / (see .env) |
+| PQ Kipuka EST | https://localhost:8456/.well-known/est/cacerts | - |
+| PQ OCSP Responder | https://localhost:8457/ocsp/ee/ocsp | - |
+| PQ KRA | https://localhost:8458/kra | admin / (see .env) |
+| PQ Akamu ACME | http://localhost:8459/acme/directory | - |
 | **Infrastructure** | | |
 | FreeIPA | https://localhost:4443/ipa/ui | admin / (see .env) |
 | AWX | http://localhost:8084 | admin / (see .env) |
@@ -332,7 +352,7 @@ sudo ./scripts/teardown-gitlab-runner.sh
 | Jupyter Lab | http://localhost:8888 | Token: (see .env) |
 | Semaphore UI | http://localhost:3010 | admin / (see /srv/semaphore/env) |
 
-> **Note:** Credentials are configured in `.env`. Copy `.env.example` to `.env` and set your passwords before starting.
+> **Note:** Credentials are configured in `.env`. Copy `.env.example` to `.env` and set your passwords before starting. Set `ENROLLMENT_BACKEND` to `akamu` (default) or `dogtag` (legacy) to select enrollment RA servers.
 
 ## Container Networks
 
@@ -358,11 +378,11 @@ sudo ./scripts/teardown-gitlab-runner.sh
 | 172.26.0.12 | RSA Root CA | 8443:8443 |
 | 172.26.0.11 | RSA Intermediate CA | 8444:8443 |
 | 172.26.0.13 | RSA IoT CA | 8445:8443 |
-| 172.26.0.18 | ACME Sub-CA | 8446:8443 |
-| 172.26.0.20 | RSA EST CA | 8447:8443 |
-| 172.26.0.14-16 | 389DS instances | internal |
-| 172.26.0.17 | 389DS (ACME) | internal |
-| 172.26.0.19 | 389DS (EST) | internal |
+| 172.26.0.18 | Akamu ACME (RSA) | 8446 |
+| 172.26.0.20 | Kipuka EST (RSA) | 8447 |
+| 172.26.0.21 | OCSP Responder | 8448:8443 |
+| 172.26.0.24 | KRA | 8449:8443 |
+| 172.26.0.14-16 | 389DS (Root, Intermediate, IoT) | internal |
 
 **ECC P-384 PKI Network (172.28.0.0/24)** - rootful podman:
 
@@ -371,9 +391,11 @@ sudo ./scripts/teardown-gitlab-runner.sh
 | 172.28.0.12 | ECC Root CA | 8463:8443 |
 | 172.28.0.11 | ECC Intermediate CA | 8464:8443 |
 | 172.28.0.13 | ECC IoT CA | 8465:8443 |
-| 172.28.0.18 | ECC EST CA | 8466:8443 |
-| 172.28.0.14-16 | 389DS instances | internal |
-| 172.28.0.17 | 389DS (EST) | internal |
+| 172.28.0.18 | Kipuka EST (ECC) | 8466 |
+| 172.28.0.21 | ECC OCSP Responder | 8467:8443 |
+| 172.28.0.24 | ECC KRA | 8468:8443 |
+| 172.28.0.20 | Akamu ACME (ECC) | 8469 |
+| 172.28.0.14-16 | 389DS (Root, Intermediate, IoT) | internal |
 
 **ML-DSA-87 PKI Network (172.27.0.0/24)** - rootful podman:
 
@@ -382,9 +404,11 @@ sudo ./scripts/teardown-gitlab-runner.sh
 | 172.27.0.12 | PQ Root CA | 8453:8443 |
 | 172.27.0.11 | PQ Intermediate CA | 8454:8443 |
 | 172.27.0.13 | PQ IoT CA | 8455:8443 |
-| 172.27.0.18 | PQ EST CA | 8456:8443 |
-| 172.27.0.14-16 | 389DS instances | internal |
-| 172.27.0.17 | 389DS (EST) | internal |
+| 172.27.0.18 | Kipuka EST (PQ) | 8456 |
+| 172.27.0.21 | PQ OCSP Responder | 8457:8443 |
+| 172.27.0.24 | PQ KRA | 8458:8443 |
+| 172.27.0.20 | Akamu ACME (PQ) | 8459 |
+| 172.27.0.14-16 | 389DS (Root, Intermediate, IoT) | internal |
 
 **FreeIPA Network (172.25.0.0/24)** - rootful podman:
 
@@ -422,7 +446,18 @@ cert-revocation-lab/
 │   ├── ecc-root-ca.cfg        # ECC Root CA
 │   ├── pq-root-ca.cfg         # PQ Root CA
 │   ├── *-step1.cfg / *-step2.cfg  # Subordinate CA configs (CSR/install phases)
-│   └── est-ca-*.cfg           # EST Sub-CA configs (per PKI type)
+│   ├── ocsp-*.cfg             # OCSP Responder configs (per PKI type)
+│   └── kra-*.cfg              # KRA configs (per PKI type)
+│
+├── configs/akamu/             # Akamu ACME server configs (per PKI type)
+│   ├── rsa-config.toml
+│   ├── ecc-config.toml
+│   └── pq-config.toml
+│
+├── configs/kipuka/            # Kipuka EST server configs (per PKI type)
+│   ├── rsa-config.toml
+│   ├── ecc-config.toml
+│   └── pq-config.toml
 │
 ├── scripts/
 │   ├── pki-cli.py             # Low-level certificate management tool
@@ -432,11 +467,10 @@ cert-revocation-lab/
 │   ├── setup-semaphore.sh          # Semaphore project configuration
 │   ├── setup-eda-auth.sh      # EDA admin credential export
 │   └── pki/                   # PKI initialization scripts
-│       ├── init-pki-hierarchy.sh      # RSA full hierarchy (+ ACME + EST)
-│       ├── init-ecc-pki-hierarchy.sh  # ECC full hierarchy (+ EST)
-│       ├── init-pq-pki-hierarchy.sh   # PQ full hierarchy (+ EST)
+│       ├── init-pki-hierarchy.sh      # RSA full hierarchy (CAs + OCSP + KRA + Akamu/Kipuka)
+│       ├── init-ecc-pki-hierarchy.sh  # ECC full hierarchy (CAs + OCSP + KRA + Akamu/Kipuka)
+│       ├── init-pq-pki-hierarchy.sh   # PQ full hierarchy (CAs + OCSP + KRA + Akamu/Kipuka)
 │       ├── init-*-ca.sh               # Individual CA init scripts
-│       ├── enable-est.sh              # EST subsystem enablement
 │       └── sign-csr.sh               # CSR signing utility
 │
 ├── containers/
@@ -700,6 +734,8 @@ sudo podman logs dogtag-root-ca
 - **[Dogtag PKI](https://www.dogtagpki.org/)** - Enterprise-grade Certificate Authority
 - **[FreeIPA](https://www.freeipa.org/)** - Identity Management
 - **[389 Directory Server](https://www.port389.org/)** - LDAP Server
+- **Akamu** - Go-based ACME server (RFC 8555) in Dogtag signer RA mode
+- **Kipuka** - Go-based EST server (RFC 7030) with Dogtag proxy and OTP auth
 - **[Ansible AWX](https://github.com/ansible/awx)** - Automation Platform
 - **[Event-Driven Ansible](https://www.ansible.com/use-cases/event-driven-automation)** - Real-time Automation
 - **[Apache Kafka](https://kafka.apache.org/)** - Event Streaming
@@ -707,14 +743,41 @@ sudo podman logs dogtag-root-ca
 - **[FastAPI](https://fastapi.tiangolo.com/)** - Python Web Framework
 - **[Ansible Semaphore](https://semaphoreui.com/)** - Web-based Ansible Task Management
 
+## Enrollment Backends (ACME and EST)
+
+The lab supports two enrollment backends, controlled by `ENROLLMENT_BACKEND` (default: `akamu`):
+
+| Backend | ACME Server | EST Server | Coverage | Notes |
+|---------|------------|------------|----------|-------|
+| **akamu** (default) | Akamu (Go) | Kipuka (Go) | All 3 PKI types get both ACME + EST | Lightweight, standalone |
+| **dogtag** (legacy) | Dogtag RA | Dogtag RA | RSA-only ACME; EST for all types | `pki-server create` instances |
+
+**Enrollment RA port table (same ports regardless of backend):**
+
+| Service | RSA | ECC | PQ |
+|---------|-----|-----|-----|
+| ACME (Akamu or Dogtag) | 8446 | 8469 | 8459 |
+| EST (Kipuka or Dogtag) | 8447 | 8466 | 8456 |
+
+Both backends proxy enrollment to the Intermediate CA -- signing keys stay on the CA, never on the enrollment server. The `lab_cli/config.py` module builds `CA_CONFIGS` dynamically based on `ENROLLMENT_BACKEND`; the `lab_cli/protocols.py` module resolves ACME/EST URLs from `CA_CONFIGS` at runtime.
+
+**Akamu** operates in Dogtag signer RA mode: it receives ACME orders, generates CSRs, and proxies signing to the Intermediate CA REST API. It supports HTTP-01 and DNS-01 challenges.
+
+**Kipuka** operates as a Dogtag proxy with OTP authentication: it accepts EST simpleenroll requests with Basic auth, submits CSRs to the Intermediate CA, and returns signed certificates in PKCS#7 format. Configuration is in `configs/kipuka/`.
+
+**Demo scripts:** `scripts/demo-pq-full.sh` exercises the full PQ hierarchy including Akamu/Kipuka enrollment.
+
+See `docs/services.md` for detailed service descriptions, container IPs, and API endpoints.
+
 ## Related Standards
 
 | Standard | Usage in Lab |
 |----------|-------------|
-| [RFC 7030](https://datatracker.ietf.org/doc/html/rfc7030) | EST certificate enrollment via dedicated EST Sub-CAs |
-| [RFC 8555](https://datatracker.ietf.org/doc/html/rfc8555) | ACME automated certificate issuance (RSA hierarchy) |
+| [RFC 7030](https://datatracker.ietf.org/doc/html/rfc7030) | EST certificate enrollment via Kipuka (default) or Dogtag EST RA |
+| [RFC 8555](https://datatracker.ietf.org/doc/html/rfc8555) | ACME automated certificate issuance via Akamu (default) or Dogtag ACME RA |
 | [RFC 5280](https://datatracker.ietf.org/doc/html/rfc5280) | X.509 certificate profiles and CRL generation |
 | [FIPS 204](https://csrc.nist.gov/pubs/fips/204/final) | ML-DSA-87 post-quantum digital signatures |
+| [FIPS 203](https://csrc.nist.gov/pubs/fips/203/final) | ML-KEM-1024 post-quantum key encapsulation (KRA) |
 | [NIST SP 800-207](https://csrc.nist.gov/pubs/sp/800/207/final) | Zero Trust Architecture principles |
 
 ## Author

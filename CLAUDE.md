@@ -46,7 +46,7 @@ The hierarchy uses four deployment models:
 - **Full CAs** (Root, Intermediate, IoT): Two-step `pkispawn` deployment with dedicated 389 DS. Generate CSR → parent CA signs → import signed cert. Each has own signing keys and LDAP backend.
 - **OCSP Responders**: Single-step `pkispawn -s OCSP` deployment with dedicated 389 DS. Joins Root CA's security domain, gets OCSP signing cert from Intermediate CA automatically. Validates certificate revocation status independently of the CA's built-in OCSP.
 - **KRA (Key Recovery Authority)**: Single-step `pkispawn -s KRA` deployment with dedicated 389 DS. Provides key archival and recovery services. Gets storage/transport certs from Intermediate CA.
-- **Enrollment RAs** (EST, ACME): Two backends available, selected via `ENROLLMENT_BACKEND` env var (default: `akamu`). **Akamu/Kipuka** (default): Standalone Go-based ACME (Akamu) and EST (Kipuka) servers — all three PKI types get both ACME and EST. **Dogtag RAs** (legacy): Lightweight `pki-server create` instances using `DogtagRABackend`/`PKIIssuer` — RSA-only ACME, EST for all types. Both proxy enrollment to the Intermediate CA.
+- **Enrollment RAs** (EST, ACME): Two backends available, selected via `ENROLLMENT_BACKEND` env var (default: `akamu`). **Akamu/Kipuka** (default): Go-based ACME (Akamu) and Rust-based EST (Kipuka) servers acting as RAs — Akamu uses `[ca.signer]` to delegate signing to the Dogtag IoT Sub-CA, Kipuka uses Dogtag agent mTLS (supports PKCS#11 HSM-backed keys). All three PKI types get both ACME and EST. **Dogtag RAs** (legacy): Lightweight `pki-server create` instances using `DogtagRABackend`/`PKIIssuer` — RSA-only ACME, EST for all types. Both backends proxy enrollment to the IoT Sub-CA (the issuing CA).
 
 ## Common Commands
 
@@ -98,6 +98,10 @@ sudo podman-compose -f pki-pq-compose.yml logs -f <service-name>   # PQ PKI
 
 # Build mock security containers
 podman-compose build mock-edr mock-siem
+
+# Full PQ demo (EST, ACME, KRA, OCSP, revocation, HSM — 8 sections)
+sudo bash scripts/demo-pq-full.sh
+sudo bash scripts/demo-pq-full.sh --section 2  # Just EST enrollment
 ```
 
 ## Python CLI (lab)
@@ -178,7 +182,7 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → Ansible Playbook 
 - **Prometheus + Grafana**: PKI performance monitoring (http://localhost:3000, http://localhost:9090)
 - **Certificate Pinning Validator**: SPKI pin verification with Kafka event integration (http://localhost:8091)
 - **KMIP Server**: PyKMIP-based key lifecycle management (http://localhost:8092, KMIP on port 5696)
-- **Kryoptic HSM**: PKCS#11 software token for CA key storage simulation
+- **Kryoptic HSM**: PKCS#11 token container using SoftHSM2 backend (14 slots for CA + enrollment keys)
 - **Federated PKI**: Partner Organization + Bridge CA for cross-organization trust (federation-compose.yml)
 - **Incident Response**: Full IR playbooks — quarantine, investigate, revoke, re-key, verify, notify
 
@@ -302,7 +306,7 @@ The lab supports two enrollment backends, controlled by `ENROLLMENT_BACKEND` (de
 
 | Backend | ACME Server | EST Server | Coverage | Notes |
 |---------|------------|------------|----------|-------|
-| **akamu** (default) | Akamu | Kipuka | All 3 PKI types get both ACME + EST | Go-based, lightweight |
+| **akamu** (default) | Akamu (Go) | Kipuka (Rust) | All 3 PKI types get both ACME + EST | RA mode — delegates to Dogtag IoT Sub-CA |
 | **dogtag** (legacy) | Dogtag RA | Dogtag RA | RSA-only ACME; EST for all types | `pki-server create` instances |
 
 **Enrollment RA port table:**
@@ -312,7 +316,11 @@ The lab supports two enrollment backends, controlled by `ENROLLMENT_BACKEND` (de
 | Akamu (ACME) | 8446 | 8469 | 8459 |
 | Kipuka (EST) | 8447 | 8466 | 8456 |
 
-Both backends proxy enrollment to the Intermediate CA. Certificates issued via EST/ACME are managed by the Intermediate CA (revocation targets the Intermediate CA container). The `lab_cli/config.py` module builds `CA_CONFIGS` dynamically based on `ENROLLMENT_BACKEND`; the `lab_cli/protocols.py` module resolves ACME/EST URLs from `CA_CONFIGS` at runtime — no hardcoded endpoints.
+Both backends proxy enrollment to the IoT Sub-CA (the issuing CA). Certificates issued via EST/ACME are managed by the IoT Sub-CA (revocation targets the IoT CA container). The `lab_cli/config.py` module builds `CA_CONFIGS` dynamically based on `ENROLLMENT_BACKEND`; the `lab_cli/protocols.py` module resolves ACME/EST URLs from `CA_CONFIGS` at runtime — no hardcoded endpoints.
+
+**Akamu** uses a `[ca.signer]` section pointing to the Dogtag IoT Sub-CA REST API with agent mTLS credentials — it processes ACME protocol but delegates all certificate signing to Dogtag (PR #41 Dogtag signer backend). Certs are in the Dogtag trust chain and event-driven revocation works normally. Akamu's built-in CRL/OCSP endpoints return 404 in RA mode (use Dogtag's endpoints instead).
+
+**Kipuka** connects to the Dogtag IoT Sub-CA via agent mTLS using hyper-openssl. In PQ mode, agent keys are stored in the Kryoptic HSM via PKCS#11 URIs (`pkcs11:token=pq-agent;object=pq-agent-signing;type=private`) — private keys never leave the HSM boundary.
 
 **Key endpoints (akamu backend, RSA example):**
 - ACME: `http://akamu-rsa.cert-lab.local:8446/acme/directory`
@@ -360,7 +368,10 @@ python scripts/compliance-scan.py --pki-type rsa --ca-level intermediate
 python scripts/compliance-scan.py --all
 ```
 
-### Kryoptic HSM (PKCS#11)
+### Kryoptic HSM (PKCS#11 via SoftHSM2)
+
+Uses SoftHSM2 as the PKCS#11 backend (Kryoptic's native module had slot init issues in containers). Module path: `/usr/lib64/pkcs11/libsofthsm2.so`. 14 token slots: 9 CA hierarchy (root/intermediate/iot x3 PKI types) + 5 enrollment/agent (pq-kipuka-ca, pq-kipuka-tls, pq-akamu-ca, pq-akamu-tls, pq-agent). All keys are RSA-4096, non-extractable (`CKA_EXTRACTABLE=false`).
+
 ```bash
 # HSM status and token slots
 lab hsm-status
@@ -458,7 +469,9 @@ The `agnosticd/configs/cert-revocation-lab/` directory deploys the lab onto a si
 - **PQ image**: Uses upstream `quay.io/dogtagpki/pki-ca:latest` (Dogtag 11.10.0, JSS 5.10.0, NSS 3.123.1). ML-DSA-87 and ML-KEM support are included — no need to build from main
 - **certutil key generation**: `certutil -R` is extremely slow on some systems due to NSS entropy. EST/ACME RA init scripts use `openssl req` + PKCS#12 import instead
 - **EST simplereenroll (RFC 7030 §4.2.2)**: Returns 401 Unauthorized. `PKIInMemoryRealm` only supports password auth but `simplereenroll` requires TLS client cert authentication to identify the cert being renewed. `SSLAuthenticatorWithFallback` tries cert auth first and doesn't fall back to Basic when the realm can't map the cert. Would require switching to an LDAP-backed realm (`PKILDAPRealm`) which needs a 389 DS instance the lightweight EST RA doesn't have
-- **Akamu Dogtag RA mode**: Akamu uses `[ca.signer]` to delegate signing to the Dogtag IoT Sub-CA — certs are in the Dogtag trust chain and event-driven revocation works. Akamu's built-in CRL/OCSP endpoints return 404 in RA mode (use Dogtag's endpoints). Requires the Dogtag signer backend (PR #41, cherry-picked into our akamu fork)
+- **Kipuka PKCS#11 config validation**: The config validator rejects `pkcs11:` URIs as invalid file paths (e.g., `key_file = "pkcs11:token=..."`). Workaround: the config parser accepts the URI but validation warns — the PKCS#11 key loading path handles it correctly at runtime
+- **p11-kit 0.26 server subcommand**: The `p11-kit` version in the container image lacks the `server` subcommand needed for Unix socket forwarding. Kipuka/Akamu use the SoftHSM2 module directly (`/usr/lib64/pkcs11/libsofthsm2.so`) via shared token volume instead of p11-kit remote
+- **CRL regeneration in Dogtag proxy mode**: Akamu's built-in CRL/OCSP endpoints return 404 when using the Dogtag signer backend (expected — Akamu is an RA, not a CA). Use the Dogtag IoT Sub-CA's CRL and the dedicated OCSP responder instead
 
 ## EDA SSH Setup
 
