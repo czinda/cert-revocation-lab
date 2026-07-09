@@ -4,12 +4,9 @@
 # Proxies EST enrollment requests to the Dogtag PQ IoT Sub-CA (issuing CA)
 # (pq-iot-ca.cert-lab.local) using the caServerCert profile.
 #
-# Kipuka uses native-tls (OpenSSL 3.5+) which CAN validate ML-DSA-87 cert
-# chains, so HTTPS to Dogtag works. The pki CLI (NSS-based) still needs
-# HTTP, but kipuka's Dogtag client uses OpenSSL via reqwest::native-tls.
-#
-# The profile is caServerCert (not caMLDSAServerCert) because OpenSSL
-# cannot generate ML-DSA CSRs — the CA generates ML-DSA keys server-side.
+# ALL operational keys (TLS server, Dogtag agent) are stored in the
+# Kryoptic HSM via PKCS#11 — private keys never leave the HSM boundary.
+# Signing operations use C_Sign through the p11-kit Unix socket.
 #
 # Network: 172.27.0.0/24 (CERT-LAB-PQ)
 # Certificates: data/certs/pq/
@@ -19,49 +16,46 @@
 [server]
 listen_addr = "0.0.0.0:9443"
 
-# ── TLS ──────────────────────────────────────────────────────────────────
+# ── TLS (HSM-backed server key) ─────────────────────────────────────────
+# The TLS server private key is in the Kryoptic HSM. The pkcs11: URI
+# tells kipuka to use Pkcs11SigningKey (rustls SigningKey trait) which
+# delegates all TLS handshake signatures to the HSM via C_Sign.
 [tls]
 enabled   = true
 cert_file = "/etc/kipuka/certs/kipuka-pq.cert.pem"
-key_file  = "/etc/kipuka/certs/kipuka-pq.key.pem"
-ca_file   = "/etc/kipuka/certs/ca-chain.crt"
-
-# Accept but don't require client certificates — enrollment can fall
-# back to OTP authentication via HTTP Basic.
+key_file  = "pkcs11:token=pq-kipuka-tls;object=pq-kipuka-tls-signing;type=private"
+ca_file   = "/etc/kipuka/certs/dogtag/ca-chain.pem"
 client_auth = "optional"
 
 # ── CA Key Material ──────────────────────────────────────────────────────
-# When [hsm] is configured, pkcs11_uri overrides key_file for signing.
-# key_file is kept as fallback and for the config parser.
+# In Dogtag proxy mode, kipuka doesn't sign certificates locally.
+# key_file is required by the config parser but not used for signing.
 [ca]
-key_file   = "/etc/kipuka/certs/kipuka-pq.key.pem"
+key_file   = "/etc/kipuka/certs/kipuka-pq.cert.pem"
 cert_file  = "/etc/kipuka/certs/kipuka-pq.cert.pem"
-pkcs11_uri = "pkcs11:token=pq-kipuka-ca;object=pq-kipuka-ca-signing;type=private"
 
 # ── HSM / PKCS#11 (Kryoptic) ────────────────────────────────────────────
 # Connects to the Kryoptic HSM container via p11-kit Unix socket.
+# Used by the TLS server key (pkcs11: URI in [tls].key_file).
 # Keys are non-extractable (CKA_EXTRACTABLE=false, CKA_SENSITIVE=true).
 [hsm]
 provider     = "kryoptic"
 library_path = "/usr/lib64/p11-kit-client.so"
 pin          = "env:HSM_USER_PIN"
-token_label  = "pq-kipuka-ca"
+token_label  = "pq-kipuka-tls"
 
 # ── Database ─────────────────────────────────────────────────────────────
 [database]
 url = "sqlite:///var/lib/kipuka/kipuka.db?mode=rwc"
 
-# ── Dogtag PKI Backend ──────────────────────────────────────────────────
-# Proxy enrollment to the PQ IoT Sub-CA (issuing CA) via Dogtag REST API.
-# The IoT Sub-CA is the leaf-issuing tier — the Intermediate CA only signs
-# sub-CA certificates.
-#
-# NOTE: Kipuka uses native-tls (OpenSSL 3.5+) which handles ML-DSA-87
-# cert chains — HTTPS to Dogtag works here unlike NSS-based clients.
+# ── Dogtag PKI Backend (HSM-backed agent key) ───────────────────────────
+# The agent mTLS private key is in the Kryoptic HSM. When agent_key_file
+# starts with pkcs11:, the Dogtag client loads the key via OpenSSL's
+# PKCS#11 engine — the key never leaves the HSM.
 [dogtag]
-ca_url         = "https://pq-iot-ca.cert-lab.local:8443"
+ca_url          = "https://pq-iot-ca.cert-lab.local:8443"
 agent_cert_file = "/etc/kipuka/certs/dogtag/agent.pem"
-agent_key_file  = "/etc/kipuka/certs/dogtag/agent-rsa.key.pem"
+agent_key_file  = "pkcs11:token=pq-agent;object=pq-agent-signing;type=private"
 ca_cert_file    = "/etc/kipuka/certs/dogtag/ca-chain.pem"
 profile_id      = "caServerCert"
 
@@ -82,8 +76,6 @@ ttl_seconds     = 3600
 max_usage       = 1
 
 # ── Admin API ────────────────────────────────────────────────────────────
-# Enables OTP management, health checks, and certificate listing.
-# Bearer token auth — simple shared secret for lab use.
 [admin]
 enabled      = true
 auth_method  = "basic"
