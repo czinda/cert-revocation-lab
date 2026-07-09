@@ -754,10 +754,16 @@ start_pq_pki_hierarchy() {
                     state=$(sudo podman inspect --format '{{.State.Status}}' "$ds" 2>/dev/null || echo "missing")
                 fi
                 if [ "$state" = "exited" ]; then
-                    log_warn "$ds crashed during init, restarting..."
+                    log_warn "$ds crashed during init, wiping volume and restarting..."
                     if is_running_as_root; then
+                        podman rm -f "$ds" 2>/dev/null
+                        podman volume rm -f "cert-revocation-lab_${ds}-data" 2>/dev/null
+                        podman-compose -f pki-pq-compose.yml $COMPOSE_PROFILE up --no-start "$ds" 2>/dev/null || true
                         podman start "$ds" 2>/dev/null
                     else
+                        sudo podman rm -f "$ds" 2>/dev/null
+                        sudo podman volume rm -f "cert-revocation-lab_${ds}-data" 2>/dev/null
+                        sudo podman-compose -f pki-pq-compose.yml $COMPOSE_PROFILE up --no-start "$ds" 2>/dev/null || true
                         sudo podman start "$ds" 2>/dev/null
                     fi
                 fi
@@ -842,13 +848,15 @@ start_pq_pki_hierarchy() {
         log_info "Dogtag ACME/EST RA initialization handled by init-pq-pki-hierarchy.sh"
     fi
 
-    # Fix SELinux labels on PQ cert files (containers run as uid 1001)
+    # Fix SELinux labels and ownership on PQ cert files for kipuka (uid 1001)
     if command -v chcon &>/dev/null; then
         chcon -R -t container_file_t "$SCRIPT_DIR/data/certs/pq" 2>/dev/null || true
-        # Also fix key file permissions for kipuka uid 1001
-        chmod 644 "$SCRIPT_DIR/data/certs/pq"/*.key.pem 2>/dev/null || true
-        chmod 644 "$SCRIPT_DIR/data/certs/pq"/dogtag/*.pem 2>/dev/null || true
     fi
+    # Key files readable by container uid 1001 but not world-readable
+    chown -R 1001:0 "$SCRIPT_DIR/data/certs/pq" 2>/dev/null || true
+    chmod 640 "$SCRIPT_DIR/data/certs/pq"/*.key.pem 2>/dev/null || true
+    chmod 640 "$SCRIPT_DIR/data/certs/pq"/dogtag/*.key.pem 2>/dev/null || true
+    chmod 644 "$SCRIPT_DIR/data/certs/pq"/*.cert.pem "$SCRIPT_DIR/data/certs/pq"/*.crt 2>/dev/null || true
 
     log_success "PQ PKI containers started (hierarchy init may be partial)"
 }
