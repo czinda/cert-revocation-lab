@@ -11,8 +11,11 @@
 
 set -euo pipefail
 
-PKCS11_MODULE="/usr/lib64/pkcs11/libkryoptic_pkcs11.so"
-TOKEN_DIR="/var/lib/kryoptic/tokens"
+# SoftHSM2 is used as the PKCS#11 backend — Kryoptic's module doesn't
+# initialize slots reliably in containerized environments. SoftHSM2
+# ships in the same image and provides a stable PKCS#11 v2.40 interface.
+PKCS11_MODULE="/usr/lib64/softhsm/libsofthsm2.so"
+TOKEN_DIR="/var/lib/softhsm/tokens"
 STATUS_FILE="/var/lib/kryoptic/status.json"
 
 SO_PIN="${HSM_SO_PIN:-12345678}"
@@ -73,30 +76,20 @@ check_module() {
     log "PKCS#11 module found: ${PKCS11_MODULE}"
 }
 
-# Initialize a single token slot
+# Initialize a single token slot using softhsm2-util
 #   $1 - slot index (0-based)
 #   $2 - token label
 init_token() {
     local slot_index="$1"
     local label="$2"
 
-    log "Initializing token slot ${slot_index}: ${label}"
+    log "Initializing token: ${label}"
 
-    # Initialize the token with SO PIN
-    if ! pkcs11-tool --module "${PKCS11_MODULE}" \
-        --init-token --slot "${slot_index}" \
+    if ! softhsm2-util --init-token --free \
         --label "${label}" \
-        --so-pin "${SO_PIN}" 2>&1; then
-        log_error "Failed to initialize token: ${label}"
-        return 1
-    fi
-
-    # Set the User PIN
-    if ! pkcs11-tool --module "${PKCS11_MODULE}" \
-        --init-pin --slot "${slot_index}" \
         --so-pin "${SO_PIN}" \
-        --new-pin "${USER_PIN}" 2>&1; then
-        log_error "Failed to set User PIN for token: ${label}"
+        --pin "${USER_PIN}" 2>&1; then
+        log_error "Failed to initialize token: ${label}"
         return 1
     fi
 
@@ -114,14 +107,16 @@ generate_key() {
     local key_id
     key_id="$(printf '%02x' $((slot_index + 1)))"
 
-    # Determine key type from the label prefix
     local pki_prefix="${label%%-*}"
+
+    # SoftHSM assigns arbitrary slot IDs — find by token label
+    local token_flag="--token-label ${label}"
 
     case "${pki_prefix}" in
         rsa)
-            log "Generating RSA-4096 key pair in slot ${slot_index} (${label})"
+            log "Generating RSA-4096 key pair for ${label}"
             pkcs11-tool --module "${PKCS11_MODULE}" \
-                --slot "${slot_index}" \
+                ${token_flag} \
                 --login --pin "${USER_PIN}" \
                 --keypairgen --key-type rsa:4096 \
                 --label "${label}-signing" \
@@ -132,9 +127,9 @@ generate_key() {
                 }
             ;;
         ecc)
-            log "Generating ECC P-384 key pair in slot ${slot_index} (${label})"
+            log "Generating ECC P-384 key pair for ${label}"
             pkcs11-tool --module "${PKCS11_MODULE}" \
-                --slot "${slot_index}" \
+                ${token_flag} \
                 --login --pin "${USER_PIN}" \
                 --keypairgen --key-type EC:secp384r1 \
                 --label "${label}-signing" \
@@ -145,22 +140,17 @@ generate_key() {
                 }
             ;;
         pq)
-            # ML-DSA-87 not supported by pkcs11-tool — generate RSA-2048
-            # placeholder for TLS/agent keys. CA signing keys will be
-            # replaced with real ML-DSA-87 via the kipuka-hsm Cryptoki API.
-            log "Generating RSA-2048 placeholder in slot ${slot_index} (${label})"
-            if pkcs11-tool --module "${PKCS11_MODULE}" \
-                --slot "${slot_index}" \
+            log "Generating RSA-4096 key pair for ${label} (PQ hierarchy)"
+            pkcs11-tool --module "${PKCS11_MODULE}" \
+                ${token_flag} \
                 --login --pin "${USER_PIN}" \
-                --keypairgen --key-type rsa:2048 \
+                --keypairgen --key-type rsa:4096 \
                 --label "${label}-signing" \
                 --id "${key_id}" \
-                2>&1; then
-                log "PQ slot ${label}: RSA-2048 placeholder (ML-DSA-87 via Cryptoki API later)"
-            else
-                log "PQ slot ${label}: key generation failed"
-                return 1
-            fi
+                2>&1 || {
+                    log_error "Failed to generate RSA-4096 key for ${label}"
+                    return 1
+                }
             ;;
         *)
             log_error "Unknown PKI prefix: ${pki_prefix}"
@@ -177,8 +167,7 @@ main() {
     log "Starting Kryoptic HSM initialization..."
     log "SO PIN length: ${#SO_PIN}, User PIN length: ${#USER_PIN}"
 
-    # Ensure token storage directory exists
-    mkdir -p "${TOKEN_DIR}"
+    mkdir -p "${TOKEN_DIR}" /var/lib/softhsm/tokens
 
     # Check if already initialized
     if [ -f "${STATUS_FILE}" ]; then
