@@ -112,16 +112,19 @@ def acme_issue_certificate(
         for d in [config_dir, work_dir, logs_dir]:
             d.mkdir(parents=True, exist_ok=True)
 
-        # Check if certbot is available
+        # Check if certbot is available; install if pip is available
         certbot_check = subprocess.run(
             ["which", "certbot"],
-            capture_output=True,
-            text=True
+            capture_output=True, text=True, timeout=5,
         )
 
         if certbot_check.returncode != 0:
-            # Fall back to simple ACME client via curl
-            return _acme_simple_client(acme_url, domain, config)
+            pip_install = subprocess.run(
+                ["pip", "install", "--quiet", "certbot"],
+                capture_output=True, text=True, timeout=120,
+            )
+            if pip_install.returncode != 0:
+                return _acme_simple_client(acme_url, domain, config)
 
         # Use certbot
         cmd = [
@@ -145,11 +148,38 @@ def acme_issue_certificate(
             cert_path = config_dir / "live" / domain / "cert.pem"
             if cert_path.exists():
                 cert_content = cert_path.read_text()
+                details = {"acme_url": acme_url, "domain": domain}
+                cert_info = subprocess.run(
+                    ["openssl", "x509", "-noout", "-subject", "-issuer",
+                     "-serial", "-dates"],
+                    input=cert_content, capture_output=True, text=True, timeout=5,
+                )
+                if cert_info.returncode == 0:
+                    for line in cert_info.stdout.strip().splitlines():
+                        k, _, v = line.partition("=")
+                        details[k.strip()] = v.strip()
+                sig_info = subprocess.run(
+                    ["openssl", "x509", "-noout", "-text"],
+                    input=cert_content, capture_output=True, text=True, timeout=5,
+                )
+                if sig_info.returncode == 0:
+                    for line in sig_info.stdout.splitlines():
+                        if "Signature Algorithm" in line:
+                            details["signature_algorithm"] = line.strip().split(":", 1)[-1].strip()
+                            break
+                serial_line = subprocess.run(
+                    ["openssl", "x509", "-noout", "-serial"],
+                    input=cert_content, capture_output=True, text=True, timeout=5,
+                )
+                serial = None
+                if serial_line.returncode == 0 and "=" in serial_line.stdout:
+                    serial = f"0x{serial_line.stdout.strip().split('=', 1)[1]}"
                 return ProtocolResult(
                     success=True,
                     message="Certificate issued via ACME",
                     certificate=cert_content,
-                    details={"acme_url": acme_url, "domain": domain}
+                    serial=serial,
+                    details=details,
                 )
 
         return ProtocolResult(
