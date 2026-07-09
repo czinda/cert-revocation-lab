@@ -43,35 +43,35 @@ def _resolve_host(hostname: str, port: int) -> str:
         return "localhost"
 
 
-def _get_acme_url(pki_type: PKIType) -> Optional[str]:
-    """Build the ACME base URL for *pki_type* from CA_CONFIGS.
+def _build_url(pki_type: PKIType, ca_level: str, suffix: str = "") -> Optional[str]:
+    """Build a URL for a CA from CA_CONFIGS with correct scheme/port handling.
 
-    Returns ``None`` when no ACME config exists for the requested hierarchy
-    (e.g. ECC and PQ have no ACME RA with the dogtag backend).
+    When http_port is set, uses HTTP (the port serves plaintext). Otherwise
+    uses the scheme from ca.url. This avoids the scheme/port mismatch where
+    HTTPS scheme was paired with an HTTP port.
     """
     pki = pki_type.value
-    if pki not in CA_CONFIGS or "acme" not in CA_CONFIGS[pki]:
+    if pki not in CA_CONFIGS or ca_level not in CA_CONFIGS[pki]:
         return None
-    ca = CA_CONFIGS[pki]["acme"]
-    scheme = "http" if ca.url.startswith("http://") else "https"
-    port = ca.http_port or ca.host_port
+    ca = CA_CONFIGS[pki][ca_level]
+    if ca.http_port:
+        port = ca.http_port
+        scheme = "http"
+    else:
+        port = ca.host_port
+        scheme = "http" if ca.url.startswith("http://") else "https"
     host = _resolve_host(ca.hostname, port)
-    return f"{scheme}://{host}:{port}/acme"
+    return f"{scheme}://{host}:{port}{suffix}"
+
+
+def _get_acme_url(pki_type: PKIType) -> Optional[str]:
+    """Build the ACME base URL for *pki_type* from CA_CONFIGS."""
+    return _build_url(pki_type, "acme", "/acme")
 
 
 def _get_est_url(pki_type: PKIType) -> Optional[str]:
-    """Build the EST base URL for *pki_type* from CA_CONFIGS.
-
-    Returns ``None`` when no EST config exists for the requested hierarchy.
-    """
-    pki = pki_type.value
-    if pki not in CA_CONFIGS or "est" not in CA_CONFIGS[pki]:
-        return None
-    ca = CA_CONFIGS[pki]["est"]
-    scheme = "http" if ca.url.startswith("http://") else "https"
-    port = ca.http_port or ca.host_port
-    host = _resolve_host(ca.hostname, port)
-    return f"{scheme}://{host}:{port}/.well-known/est"
+    """Build the EST base URL for *pki_type* from CA_CONFIGS."""
+    return _build_url(pki_type, "est", "/.well-known/est")
 
 
 def acme_issue_certificate(
@@ -534,14 +534,7 @@ def est_reenroll_certificate(
 
 def _get_acme_base_url(pki_type: PKIType) -> Optional[str]:
     """Base URL for akamu (without /acme path)."""
-    pki = pki_type.value
-    if pki not in CA_CONFIGS or "acme" not in CA_CONFIGS[pki]:
-        return None
-    ca = CA_CONFIGS[pki]["acme"]
-    scheme = "http" if ca.url.startswith("http://") else "https"
-    port = ca.http_port or ca.host_port
-    host = _resolve_host(ca.hostname, port)
-    return f"{scheme}://{host}:{port}"
+    return _build_url(pki_type, "acme")
 
 
 def acme_get_directory(pki_type: PKIType) -> ProtocolResult:
@@ -651,6 +644,13 @@ def acme_query_ocsp(
         lab_root = os.getenv("LAB_ROOT_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         pki_dir = {"rsa": "rsa", "ecc": "ecc", "pqc": "pq"}.get(pki_type.value, "rsa")
         issuer_path = os.path.join(lab_root, "data", "certs", pki_dir, "iot-ca-chain.crt")
+
+    if not os.path.isfile(issuer_path):
+        return ProtocolResult(
+            success=False,
+            message=f"Issuer certificate not found: {issuer_path}",
+            details={"hint": f"Deploy the {pki_type.value.upper()} PKI hierarchy first"},
+        )
 
     cmd = [
         "openssl", "ocsp",
@@ -782,16 +782,19 @@ def acme_revoke_cert(pki_type: PKIType, cert_pem: str, reason: int = 1) -> Proto
             "--data", payload,
             f"{acme_url}/revoke-cert",
         ]
+        cmd.extend(["-w", "\n%{http_code}", "-o", "-"])
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
             return ProtocolResult(success=False, message=f"Revocation request failed: {result.stderr}")
 
-        if result.stdout.strip() == "" or "200" in str(result):
+        lines = result.stdout.strip().rsplit("\n", 1)
+        http_code = lines[-1].strip() if len(lines) > 0 else ""
+        if http_code in ("200", "204"):
             return ProtocolResult(success=True, message="Certificate revoked via ACME")
 
         return ProtocolResult(
             success=False,
-            message=f"Revocation response: {result.stdout[:200]}",
+            message=f"Revocation failed (HTTP {http_code}): {result.stdout[:200]}",
         )
     finally:
         Path(cert_file).unlink(missing_ok=True)
@@ -803,14 +806,7 @@ def acme_revoke_cert(pki_type: PKIType, cert_pem: str, reason: int = 1) -> Proto
 
 def _get_est_base_url(pki_type: PKIType) -> Optional[str]:
     """Base URL for kipuka (without /.well-known/est path)."""
-    pki = pki_type.value
-    if pki not in CA_CONFIGS or "est" not in CA_CONFIGS[pki]:
-        return None
-    ca = CA_CONFIGS[pki]["est"]
-    scheme = "http" if ca.url.startswith("http://") else "https"
-    port = ca.http_port or ca.host_port
-    host = _resolve_host(ca.hostname, port)
-    return f"{scheme}://{host}:{port}"
+    return _build_url(pki_type, "est")
 
 
 def est_get_status(pki_type: PKIType) -> ProtocolResult:
@@ -953,7 +949,9 @@ def est_serverkeygen(
             key_cmd = ["openssl", "ecparam", "-genkey", "-name", "secp384r1", "-out", str(key_path)]
         else:
             key_cmd = ["openssl", "genrsa", "-out", str(key_path), "2048"]
-        subprocess.run(key_cmd, capture_output=True, timeout=30)
+        result = subprocess.run(key_cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            return ProtocolResult(success=False, message=f"Key generation failed: {result.stderr}")
 
         csr_cmd = [
             "openssl", "req", "-new",
@@ -961,12 +959,14 @@ def est_serverkeygen(
             "-out", str(csr_path),
             "-subj", f"/CN={device_fqdn}/O=Cert-Lab/C=US",
         ]
-        subprocess.run(csr_cmd, capture_output=True, timeout=30)
+        result = subprocess.run(csr_cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            return ProtocolResult(success=False, message=f"CSR generation failed: {result.stderr}")
 
         der_cmd = ["openssl", "req", "-in", str(csr_path), "-outform", "DER"]
         result = subprocess.run(der_cmd, capture_output=True, timeout=30)
         if result.returncode != 0:
-            return ProtocolResult(success=False, message="CSR generation failed")
+            return ProtocolResult(success=False, message="CSR DER conversion failed")
 
         csr_base64 = base64.b64encode(result.stdout).decode("ascii")
 

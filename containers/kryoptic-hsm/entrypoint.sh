@@ -228,20 +228,18 @@ main() {
 
     # Start p11-kit server to expose PKCS#11 over Unix socket.
     # Client containers mount /var/run/kryoptic and use p11-kit-client.so.
+    # Run in foreground so PID 1 is p11-kit — receives SIGTERM on container stop.
     local socket_dir="/var/run/kryoptic"
     mkdir -p "${socket_dir}"
     if command -v p11-kit >/dev/null 2>&1; then
-        log "Starting p11-kit server on ${socket_dir}/pkcs11.sock"
-        p11-kit server \
+        log "Starting p11-kit server on ${socket_dir}/pkcs11.sock (foreground)"
+        exec p11-kit server \
             --provider "${PKCS11_MODULE}" \
-            "unix:path=${socket_dir}/pkcs11.sock" &
-        log "p11-kit server PID: $!"
+            "unix:path=${socket_dir}/pkcs11.sock"
     else
         log "p11-kit not found — socket access unavailable, using direct module only"
+        exec sleep infinity
     fi
-
-    # Keep container running
-    exec sleep infinity
 }
 
 main "$@"

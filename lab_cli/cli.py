@@ -430,7 +430,7 @@ def acme_issue(
     console.print(f"\n[bold cyan]ACME Certificate Issuance[/bold cyan]\n")
     console.print(f"  Domain:   {domain}")
     console.print(f"  PKI:      {pki_type.value.upper()}")
-    console.print(f"  Backend:  {'kipuka' if ENROLLMENT_BACKEND == 'akamu' and 'est' in str(locals().get('est_url', '')) else 'akamu' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag'}")
+    console.print(f"  Backend:  {'akamu' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag'}")
     console.print(f"  Endpoint: {acme_url}/directory")
     console.print()
 
@@ -507,7 +507,7 @@ def est_enroll(
     console.print(f"\n[bold cyan]EST Certificate Enrollment[/bold cyan]\n")
     console.print(f"  Device:   {device_fqdn}")
     console.print(f"  PKI:      {pki_type.value.upper()}")
-    console.print(f"  Backend:  {'kipuka' if ENROLLMENT_BACKEND == 'akamu' and 'est' in str(locals().get('est_url', '')) else 'akamu' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag'}")
+    console.print(f"  Backend:  {'akamu' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag'}")
     console.print(f"  Endpoint: {est_url}")
     console.print()
 
@@ -568,7 +568,7 @@ def est_cacerts(
 
     console.print(f"\n[bold cyan]EST CA Certificates[/bold cyan]\n")
     console.print(f"  PKI:      {pki_type.value.upper()}")
-    console.print(f"  Backend:  {'kipuka' if ENROLLMENT_BACKEND == 'akamu' and 'est' in str(locals().get('est_url', '')) else 'akamu' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag'}")
+    console.print(f"  Backend:  {'akamu' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag'}")
     console.print(f"  Endpoint: {est_url}/cacerts")
     console.print()
 
@@ -646,7 +646,7 @@ def est_reenroll(
     console.print(f"\n[bold cyan]EST Certificate Renewal (simplereenroll)[/bold cyan]\n")
     console.print(f"  Device:   {device_fqdn}")
     console.print(f"  PKI:      {pki_type.value.upper()}")
-    console.print(f"  Backend:  {'kipuka' if ENROLLMENT_BACKEND == 'akamu' and 'est' in str(locals().get('est_url', '')) else 'akamu' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag'}")
+    console.print(f"  Backend:  {'akamu' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag'}")
     console.print(f"  Endpoint: {est_url}")
     console.print()
 
@@ -2213,6 +2213,11 @@ def acme_ocsp_cmd(
     console.print(f"\n[bold cyan]Akamu OCSP Query — {pki_type.value.upper()} PKI[/bold cyan]\n")
 
     result = acme_query_ocsp(pki_type, cert_file, issuer)
+
+    if not result.success:
+        console.print(f"[red]✗ {result.message}[/red]")
+        raise typer.Exit(1)
+
     status = result.details.get("status", "unknown") if result.details else "unknown"
     color = {"good": "green", "revoked": "red"}.get(status, "yellow")
     console.print(f"  Status: [{color}]{status}[/{color}]")
@@ -2458,7 +2463,7 @@ def enrollment_status_cmd():
 
             url = ""
             if r.details:
-                url = r.details.get("acme_url", r.details.get("est_url", ""))
+                url = r.details.get("acme_url", r.details.get("est_url", r.details.get("url", "")))
 
             table.add_row(pki.upper(), svc.upper(), backend, status, url)
 
