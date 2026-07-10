@@ -259,9 +259,9 @@ demo_acme() {
 # Section 5: KRA Key Archival (ML-KEM-1024)
 # =============================================================================
 demo_kra() {
-    header "Section 5: KRA Key Archival & Recovery"
+    header "Section 5: KRA Key Archival & Recovery (ML-KEM-1024)"
     info "KRA uses ML-KEM-1024 (FIPS 203) for key transport encryption"
-    info "All archival operations protected by post-quantum key encapsulation"
+    info "ML-KEM-1024 storage cert for at-rest key protection"
     echo ""
 
     # Show KRA transport cert
@@ -310,9 +310,38 @@ demo_kra() {
     key_count=$(echo "$key_list" | python3 -c "import sys,json; print(json.load(sys.stdin).get('total',0))" 2>/dev/null || echo 0)
     pass "${key_count} key(s) archived in KRA"
 
+    # Explain ML-KEM vs RSA key wrapping
     echo ""
-    warn "Key recovery limitation: ML-KEM encapsulateMLKEM() not yet implemented"
-    warn "Key archival works; recovery requires new Dogtag code path (upstream)"
+    divider
+    echo -e "  ${BOLD}ML-KEM-1024 Key Recovery (FIPS 203 Design)${NC}"
+    echo ""
+    info "ML-KEM is a Key Encapsulation Mechanism — unlike RSA key wrapping,"
+    info "it generates a NEW shared secret during encapsulation."
+    echo ""
+    info "  PQC Archival (what NSS will do):"
+    info "    1. Client calls PK11_Encapsulate(transport_pub_key)"
+    info "       → produces: ciphertext + shared_secret (AES KEK)"
+    info "    2. Client wraps private key with shared_secret (AES-KWP)"
+    info "    3. KRA calls PK11_Decapsulate(ciphertext, transport_priv_key)"
+    info "       → recovers shared_secret → unwraps private key"
+    info "    4. KRA re-wraps with storage key for LDAP storage"
+    echo ""
+    info "  PQC Recovery:"
+    info "    1. KRA calls PK11_Decapsulate(stored_ciphertext, storage_priv_key)"
+    info "       → recovers shared_secret"
+    info "    2. PK11_UnwrapPrivKey(wrapped_key, shared_secret)"
+    info "       → private key recovered on HSM"
+    info "    3. Package into PKCS#12, return to client"
+    echo ""
+    info "  Key difference from RSA:"
+    info "    RSA: Cipher.WRAP_MODE wraps existing session key"
+    info "    ML-KEM: PK11_Encapsulate() creates a NEW shared secret"
+    info "    ML-KEM can't sign — must use POP_NONE for CRMF requests"
+    echo ""
+    info "  Status: NSS 3.123.1 has PK11_Encapsulate()/PK11_Decapsulate()"
+    info "  Dogtag Java/JSS code path not yet wired (upstream development)"
+    info "  Key archival works today; recovery requires the new encapsulation path"
+    info "  Ref: Cfu's kraCompatVerify tool + RHCS/pki-devel wiki: pqc-kra-design"
 }
 
 # =============================================================================
