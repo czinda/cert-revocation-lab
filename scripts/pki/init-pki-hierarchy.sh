@@ -25,6 +25,8 @@ CERTS_DIR="${CERTS_DIR:-/certs}"
 
 # Shared colors and podman detection
 source "$(dirname "$SCRIPT_DIR")/lib-common.sh"
+# PKI-specific helpers (mock systemctl, web.xml patches, profile patching)
+source "${SCRIPT_DIR}/lib-pki-common.sh" 2>/dev/null || true
 
 # Parse PKI type from arguments (default: rsa)
 PKI_TYPE="rsa"
@@ -1105,10 +1107,11 @@ main() {
     init_intermediate_ca
     init_iot_ca
 
-    # Patch enrollment profiles for auto-approve (required for akamu RA mode
-    # and kipuka EST — both return errors on pending/agent-approval profiles).
-    # Dogtag profiles are file-based, not LDAP-based.
-    patch_profile_auto_approve "$IOT_CONTAINER" "${INST_PREFIX}iot-ca" caServerCert caECServerCert
+    # NOTE: Profile auto-approve cannot be achieved by removing auth.instance_id.
+    # Dogtag's EnrollProfile.submit() checks if authToken is null — without an
+    # authenticator, token is always null and the request defers to PENDING.
+    # Enrollment RAs (akamu/kipuka) must handle the pending→approve flow themselves,
+    # or use the pki CLI with -u/-w credentials (which provides an authToken).
 
     # PQ: ensure CAs have reloaded patched web.xml before OCSP/KRA pkispawn.
     # lib-pki-common.sh patches web.xml pre-pkispawn, but the running Tomcat may

@@ -858,6 +858,18 @@ start_pq_pki_hierarchy() {
     chmod 640 "$SCRIPT_DIR/data/certs/pq"/dogtag/*.key.pem 2>/dev/null || true
     chmod 644 "$SCRIPT_DIR/data/certs/pq"/*.cert.pem "$SCRIPT_DIR/data/certs/pq"/*.crt 2>/dev/null || true
 
+    # Restart akamu/kipuka after cert provisioning so they pick up the new certs
+    if [ "$ENROLLMENT_BACKEND" = "akamu" ]; then
+        log_info "Restarting enrollment servers with provisioned certs..."
+        for svc in akamu-pq kipuka-pq; do
+            if is_running_as_root; then
+                podman restart "$svc" 2>/dev/null || true
+            else
+                sudo podman restart "$svc" 2>/dev/null || true
+            fi
+        done
+    fi
+
     log_success "PQ PKI containers started (hierarchy init may be partial)"
 }
 
