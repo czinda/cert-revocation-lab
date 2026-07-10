@@ -290,12 +290,13 @@ def est_enroll_certificate(
                 message=f"Failed to generate key: {result.stderr}"
             )
 
-        # Generate CSR
+        # Generate CSR with SAN (required by acmeServerCert profile)
         csr_cmd = [
             "openssl", "req", "-new",
             "-key", str(key_path),
             "-out", str(csr_path),
-            "-subj", f"/CN={device_fqdn}/O=Cert-Lab/C=US"
+            "-subj", f"/CN={device_fqdn}/O=Cert-Lab/C=US",
+            "-addext", f"subjectAltName=DNS:{device_fqdn}",
         ]
         result = subprocess.run(csr_cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
@@ -507,12 +508,13 @@ def est_reenroll_certificate(
         if result.returncode != 0:
             return ProtocolResult(success=False, message=f"Failed to generate key: {result.stderr}")
 
-        # Generate CSR
+        # Generate CSR with SAN (required by acmeServerCert profile)
         csr_cmd = [
             "openssl", "req", "-new",
             "-key", str(key_path),
             "-out", str(csr_path),
-            "-subj", f"/CN={device_fqdn}/O=Cert-Lab/C=US"
+            "-subj", f"/CN={device_fqdn}/O=Cert-Lab/C=US",
+            "-addext", f"subjectAltName=DNS:{device_fqdn}",
         ]
         result = subprocess.run(csr_cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
