@@ -276,7 +276,7 @@ demo_kra() {
     if [ -n "$transport_alg" ]; then
         echo "$transport_alg" | while read -r line; do info "$line"; done
     else
-        info "KRA transport cert: ML-KEM-1024 (FIPS 203)"
+        fail "Could not query KRA transport cert — container not running?"
     fi
 
     # Generate and archive a key via pki CLI (same method as demo-kra-pqc.sh)
@@ -297,10 +297,10 @@ demo_kra() {
             info "$(echo "$line" | sed 's/^[[:space:]]*//')"
         done
     elif [ -z "$key_output" ]; then
-        warn "KRA not responding — container may not be running"
+        fail "KRA not responding — container may not be running"
         info "Check: sudo podman ps | grep kra"
     else
-        warn "Key archival: $(echo "$key_output" | head -3)"
+        fail "Key archival failed: $(echo "$key_output" | head -3)"
     fi
 
     # List keys via pki CLI
@@ -314,7 +314,13 @@ demo_kra() {
 
     local key_count
     key_count=$(echo "$key_list_output" | grep -c "Key ID:" || echo 0)
-    pass "${key_count} key(s) archived in KRA"
+    if [ -z "$key_list_output" ]; then
+        fail "Could not list archived keys — KRA not reachable"
+    elif [ "$key_count" -gt 0 ]; then
+        pass "${key_count} key(s) archived in KRA"
+    else
+        info "0 keys archived (none generated yet)"
+    fi
 
     # Explain ML-KEM vs RSA key wrapping
     echo ""
