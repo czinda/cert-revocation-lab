@@ -117,7 +117,7 @@ if ! sudo podman inspect kipuka-pq &>/dev/null; then
         -v "${SCRIPT_DIR}/configs/kipuka/pq-config.toml:/etc/kipuka/kipuka.toml:ro" \
         -v "${SCRIPT_DIR}/data/certs/pq:/etc/kipuka/certs:ro" \
         -v "${VOL_PREFIX}kipuka-pq-data:/var/lib/kipuka" \
-        -e RUST_LOG=info \
+        -e RUST_LOG=debug \
         -e "HSM_USER_PIN=${HSM_USER_PIN}" \
         "${EXTRA_HOSTS[@]}" \
         "$KIPUKA_IMAGE"
@@ -148,29 +148,38 @@ echo "=== Starting enrollment servers ==="
 sudo podman start akamu-pq 2>/dev/null && echo "✓ akamu-pq started" || echo "! akamu-pq failed to start"
 sudo podman start kipuka-pq 2>/dev/null && echo "✓ kipuka-pq started" || echo "! kipuka-pq failed to start"
 
-# Wait for health
+# Wait for endpoints to respond (actual connectivity check, not podman healthcheck)
 echo ""
-echo "=== Waiting for health checks ==="
-for ctr in akamu-pq kipuka-pq; do
-    elapsed=0
-    while [ $elapsed -lt 60 ]; do
-        health=$(sudo podman inspect --format '{{.State.Health.Status}}' "$ctr" 2>/dev/null || echo "none")
-        if [ "$health" = "healthy" ]; then
-            echo "✓ $ctr is healthy"
-            break
-        fi
-        status=$(sudo podman inspect --format '{{.State.Status}}' "$ctr" 2>/dev/null || echo "missing")
-        if [ "$status" = "exited" ]; then
-            echo "! $ctr exited — check logs: sudo podman logs $ctr"
-            break
-        fi
-        sleep 3
-        ((elapsed += 3)) || true
-    done
-    if [ $elapsed -ge 60 ]; then
-        echo "! $ctr not healthy after 60s — check logs: sudo podman logs $ctr"
+echo "=== Verifying endpoints ==="
+sleep 5
+
+# ACME: check directory endpoint
+elapsed=0
+while [ $elapsed -lt 30 ]; do
+    if curl -s --connect-timeout 2 http://localhost:8486/acme/directory 2>/dev/null | grep -q keyChange; then
+        echo "✓ akamu ACME responding (http://localhost:8486/acme/directory)"
+        break
     fi
+    sleep 2
+    ((elapsed += 2)) || true
 done
+if [ $elapsed -ge 30 ]; then
+    echo "! akamu not responding — check: sudo podman logs akamu-pq"
+fi
+
+# EST: check cacerts endpoint
+elapsed=0
+while [ $elapsed -lt 30 ]; do
+    if curl -sk --connect-timeout 2 https://localhost:8456/.well-known/est/cacerts 2>/dev/null | grep -q MII; then
+        echo "✓ kipuka EST responding (https://localhost:8456/.well-known/est/cacerts)"
+        break
+    fi
+    sleep 2
+    ((elapsed += 2)) || true
+done
+if [ $elapsed -ge 30 ]; then
+    echo "! kipuka not responding — check: sudo podman logs kipuka-pq"
+fi
 
 # Note: no restart needed — containers were started after cert provisioning.
 # podman restart destroys and recreates, which loses the container.
