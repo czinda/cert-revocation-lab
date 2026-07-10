@@ -275,7 +275,7 @@ services:
 
   akamu-pq:
     profiles: [akamu]
-    image: ${AKAMU_IMAGE:-localhost/akamu:latest}
+    image: ${AKAMU_IMAGE:-quay.io/czinda/akamu:latest}
     container_name: akamu-pq
     hostname: akamu-pq.${LAB_DOMAIN:-cert-lab.local}
     depends_on:

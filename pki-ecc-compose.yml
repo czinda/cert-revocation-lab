@@ -244,7 +244,7 @@ services:
 
   akamu-ecc:
     profiles: [akamu]
-    image: ${AKAMU_IMAGE:-localhost/akamu:latest}
+    image: ${AKAMU_IMAGE:-quay.io/czinda/akamu:latest}
     container_name: akamu-ecc
     hostname: akamu-ecc.${LAB_DOMAIN:-cert-lab.local}
     depends_on:

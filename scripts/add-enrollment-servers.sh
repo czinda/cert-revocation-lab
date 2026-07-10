@@ -81,7 +81,7 @@ EXTRA_HOSTS=(
 )
 
 # Create akamu-pq
-AKAMU_IMAGE="${AKAMU_IMAGE:-localhost/akamu:latest}"
+AKAMU_IMAGE="${AKAMU_IMAGE:-quay.io/czinda/akamu:latest}"
 if ! sudo podman inspect akamu-pq &>/dev/null; then
     echo "  Creating akamu-pq..."
     sudo podman create \
