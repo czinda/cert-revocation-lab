@@ -72,6 +72,42 @@ app = typer.Typer(
 console = Console()
 
 
+def _show_cert_details(con: Console, pem: str) -> None:
+    """Display certificate subject, issuer, dates, and algorithms."""
+    import subprocess as _sp, tempfile as _tf, os as _os
+    with _tf.NamedTemporaryFile(mode="w", suffix=".pem", delete=False) as cf:
+        cf.write(pem)
+        cf_path = cf.name
+    try:
+        detail = _sp.run(
+            ["openssl", "x509", "-in", cf_path, "-noout",
+             "-subject", "-issuer", "-serial", "-dates"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if detail.returncode == 0:
+            con.print(f"\n[bold cyan]Certificate Details[/bold cyan]")
+            for line in detail.stdout.strip().splitlines():
+                con.print(f"  {line.strip()}")
+
+        text_out = _sp.run(
+            ["openssl", "x509", "-in", cf_path, "-noout", "-text"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if text_out.returncode == 0:
+            for line in text_out.stdout.splitlines():
+                stripped = line.strip()
+                if "Signature Algorithm:" in stripped:
+                    con.print(f"  [yellow]{stripped}[/yellow]")
+                    break
+            for line in text_out.stdout.splitlines():
+                stripped = line.strip()
+                if "Public Key Algorithm:" in stripped:
+                    con.print(f"  {stripped}")
+                    break
+    finally:
+        _os.unlink(cf_path)
+
+
 def version_callback(value: bool):
     if value:
         console.print(f"lab-cli version {__version__}")
@@ -352,40 +388,8 @@ def issue(
         console.print(f"  Serial:     {result.serial}")
         console.print(f"  Request ID: {result.request_id}")
 
-        # Show certificate details if PEM is available
         if result.certificate_pem:
-            import subprocess as _sp, tempfile as _tf
-            with _tf.NamedTemporaryFile(mode="w", suffix=".pem", delete=False) as cf:
-                cf.write(result.certificate_pem)
-                cf_path = cf.name
-            try:
-                detail = _sp.run(
-                    ["openssl", "x509", "-in", cf_path, "-noout",
-                     "-subject", "-issuer", "-dates"],
-                    capture_output=True, text=True, timeout=10,
-                )
-                if detail.returncode == 0:
-                    console.print(f"\n[bold cyan]Certificate Details[/bold cyan]")
-                    for line in detail.stdout.strip().splitlines():
-                        console.print(f"  {line.strip()}")
-                sig_alg = _sp.run(
-                    ["openssl", "x509", "-in", cf_path, "-noout", "-text"],
-                    capture_output=True, text=True, timeout=10,
-                )
-                if sig_alg.returncode == 0:
-                    for line in sig_alg.stdout.splitlines():
-                        stripped = line.strip()
-                        if "Signature Algorithm:" in stripped:
-                            console.print(f"  [yellow]{stripped}[/yellow]")
-                            break
-                    for line in sig_alg.stdout.splitlines():
-                        stripped = line.strip()
-                        if "Public Key Algorithm:" in stripped:
-                            console.print(f"  {stripped}")
-                            break
-            finally:
-                import os
-                os.unlink(cf_path)
+            _show_cert_details(console, result.certificate_pem)
     else:
         console.print(f"\n[red]✗ Failed to issue certificate[/red]")
         console.print(f"  Error: {result.message}")
@@ -595,48 +599,8 @@ def est_enroll(
                 if key not in ("certificate", "hint"):
                     console.print(f"  {key}: {value}")
 
-        # Show certificate details
         if result.certificate:
-            import subprocess as _sp, tempfile as _tf
-            with _tf.NamedTemporaryFile(mode="w", suffix=".pem", delete=False) as cf:
-                cf.write(result.certificate)
-                cf_path = cf.name
-            try:
-                detail = _sp.run(
-                    ["openssl", "x509", "-in", cf_path, "-noout",
-                     "-subject", "-issuer", "-serial", "-dates",
-                     "-sigopt", "rsa_padding_mode:pss", "-text"],
-                    capture_output=True, text=True, timeout=10,
-                )
-                if detail.returncode != 0:
-                    detail = _sp.run(
-                        ["openssl", "x509", "-in", cf_path, "-noout",
-                         "-subject", "-issuer", "-serial", "-dates"],
-                        capture_output=True, text=True, timeout=10,
-                    )
-                if detail.returncode == 0:
-                    console.print(f"\n[bold cyan]Certificate Details[/bold cyan]")
-                    for line in detail.stdout.strip().splitlines():
-                        console.print(f"  {line.strip()}")
-
-                sig_alg = _sp.run(
-                    ["openssl", "x509", "-in", cf_path, "-noout", "-text"],
-                    capture_output=True, text=True, timeout=10,
-                )
-                if sig_alg.returncode == 0:
-                    for line in sig_alg.stdout.splitlines():
-                        stripped = line.strip()
-                        if "Signature Algorithm:" in stripped:
-                            console.print(f"  [yellow]{stripped}[/yellow]")
-                            break
-                    for line in sig_alg.stdout.splitlines():
-                        stripped = line.strip()
-                        if "Public Key Algorithm:" in stripped:
-                            console.print(f"  {stripped}")
-                            break
-            finally:
-                import os
-                os.unlink(cf_path)
+            _show_cert_details(console, result.certificate)
     else:
         console.print(f"\n[red]✗ EST enrollment failed[/red]")
         console.print(f"  Error: {result.message}")
