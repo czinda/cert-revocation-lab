@@ -41,6 +41,8 @@ ra_key_file  = "/certs/dogtag/agent-rsa.key.pem"
 ca_cert_file = "/certs/dogtag/ca-chain.pem"
 profile_id   = "acmeServerCert"
 timeout_secs = 30
+username     = "caadmin"
+password     = "RedHat123"
 
 [server]
 http_validation_allow_private_ips = true
