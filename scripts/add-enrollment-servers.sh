@@ -22,8 +22,6 @@ if [ "$PKI_TYPE" != "pq" ]; then
     exit 1
 fi
 
-NETWORK="cert-revocation-lab_pki-pq-net"
-
 echo "=== Adding Akamu ACME + Kipuka EST to running PQ stack ==="
 
 # Check that the IoT CA is running (enrollment depends on it)
@@ -35,17 +33,30 @@ if [ "$IOT_STATUS" != "running" ]; then
 fi
 echo "✓ IoT CA is running"
 
-# Check network exists
-if ! sudo podman network exists "$NETWORK" 2>/dev/null; then
-    echo "ERROR: Network $NETWORK does not exist"
+# Find the PQ network (podman-compose may or may not prefix project name)
+NETWORK=""
+for candidate in pki-pq-net cert-revocation-lab_pki-pq-net; do
+    if sudo podman network exists "$candidate" 2>/dev/null; then
+        NETWORK="$candidate"
+        break
+    fi
+done
+if [ -z "$NETWORK" ]; then
+    echo "ERROR: No PQ network found (tried pki-pq-net, cert-revocation-lab_pki-pq-net)"
     exit 1
 fi
 echo "✓ Network $NETWORK exists"
 
+# Detect volume prefix by checking existing volumes
+VOL_PREFIX=""
+if sudo podman volume exists "cert-revocation-lab_ds-pq-root-data" 2>/dev/null; then
+    VOL_PREFIX="cert-revocation-lab_"
+fi
+
 # Create volumes if they don't exist
 for vol in akamu-pq-data kipuka-pq-data; do
-    sudo podman volume exists "cert-revocation-lab_${vol}" 2>/dev/null || \
-        sudo podman volume create "cert-revocation-lab_${vol}"
+    sudo podman volume exists "${VOL_PREFIX}${vol}" 2>/dev/null || \
+        sudo podman volume create "${VOL_PREFIX}${vol}"
 done
 
 # Remove existing containers if in bad state (Created/Exited)
@@ -82,7 +93,7 @@ if ! sudo podman inspect akamu-pq &>/dev/null; then
         -p 8486:8080 \
         -v "${SCRIPT_DIR}/configs/akamu/pq-config.toml:/app/conf/config.toml:ro" \
         -v "${SCRIPT_DIR}/data/certs/pq:/certs:ro" \
-        -v "cert-revocation-lab_akamu-pq-data:/app/data" \
+        -v "${VOL_PREFIX}akamu-pq-data:/app/data" \
         --user 1001:1001 \
         --read-only \
         --tmpfs /tmp:size=64M,noexec,nosuid \
@@ -105,7 +116,7 @@ if ! sudo podman inspect kipuka-pq &>/dev/null; then
         -p 8456:9443 \
         -v "${SCRIPT_DIR}/configs/kipuka/pq-config.toml:/etc/kipuka/kipuka.toml:ro" \
         -v "${SCRIPT_DIR}/data/certs/pq:/etc/kipuka/certs:ro" \
-        -v "cert-revocation-lab_kipuka-pq-data:/var/lib/kipuka" \
+        -v "${VOL_PREFIX}kipuka-pq-data:/var/lib/kipuka" \
         -e RUST_LOG=info \
         -e "HSM_USER_PIN=${HSM_USER_PIN}" \
         "${EXTRA_HOSTS[@]}" \
