@@ -551,6 +551,23 @@ def est_enroll(
     console.print(f"  PKI:      {pki_type.value.upper()}")
     console.print(f"  Backend:  {'akamu' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag'}")
     console.print(f"  Endpoint: {est_url}")
+
+    # Auto-generate OTP if not provided and using kipuka backend
+    if not otp and not client_cert and ENROLLMENT_BACKEND == "akamu":
+        from .protocols import est_generate_otp
+        console.print(f"\n  [dim]Generating OTP for {device_fqdn}...[/dim]")
+        otp_result = est_generate_otp(pki_type, device_fqdn)
+        if otp_result.success and otp_result.details and otp_result.details.get("token"):
+            otp = otp_result.details["token"]
+            console.print(f"  [green]✓ OTP generated[/green] (expires: {otp_result.details.get('expires', 'n/a')})")
+        else:
+            console.print(f"  [red]✗ OTP generation failed: {otp_result.message}[/red]")
+            if otp_result.details and "hint" in otp_result.details:
+                console.print(f"    [yellow]{otp_result.details['hint']}[/yellow]")
+            raise typer.Exit(1)
+
+    auth_method = "OTP" if otp else ("mTLS" if client_cert else "password")
+    console.print(f"  Auth:     {auth_method}")
     console.print()
 
     with Progress(
