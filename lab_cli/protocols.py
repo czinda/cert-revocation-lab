@@ -237,6 +237,7 @@ def est_enroll_certificate(
     pki_type: PKIType = PKIType.RSA,
     client_cert: Optional[str] = None,
     client_key: Optional[str] = None,
+    otp: Optional[str] = None,
 ) -> ProtocolResult:
     """
     Enroll for a certificate using EST protocol (RFC 7030).
@@ -247,6 +248,7 @@ def est_enroll_certificate(
         pki_type: PKI type (rsa, ecc, pqc)
         client_cert: Optional client certificate for authentication
         client_key: Optional client key for authentication
+        otp: Pre-generated OTP token (auto-generated via admin API if omitted)
 
     Returns:
         ProtocolResult with certificate details
@@ -326,9 +328,18 @@ def est_enroll_certificate(
             f"{est_url}/simpleenroll"
         ]
 
-        # Add client cert auth if provided, otherwise use HTTP Basic auth
+        # Authentication: client cert > explicit OTP > auto-generate OTP (kipuka) > password
         if client_cert and client_key:
             enroll_cmd.extend(["--cert", client_cert, "--key", client_key])
+        elif otp:
+            enroll_cmd.extend(["-u", f"{device_fqdn}:{otp}"])
+        elif ENROLLMENT_BACKEND == "akamu":
+            otp_result = est_generate_otp(pki_type, device_fqdn)
+            if otp_result.success and otp_result.details and otp_result.details.get("token"):
+                enroll_cmd.extend(["-u", f"{device_fqdn}:{otp_result.details['token']}"])
+            else:
+                est_password = config.pki_admin_password if config else "RedHat123"
+                enroll_cmd.extend(["-u", f"est-client:{est_password}"])
         else:
             est_password = config.pki_admin_password if config else "RedHat123"
             enroll_cmd.extend(["-u", f"est-client:{est_password}"])

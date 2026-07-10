@@ -349,6 +349,41 @@ def issue(
         console.print(f"\n[green]✓ Certificate issued successfully[/green]")
         console.print(f"  Serial:     {result.serial}")
         console.print(f"  Request ID: {result.request_id}")
+
+        # Show certificate details if PEM is available
+        if result.certificate_pem:
+            import subprocess as _sp, tempfile as _tf
+            with _tf.NamedTemporaryFile(mode="w", suffix=".pem", delete=False) as cf:
+                cf.write(result.certificate_pem)
+                cf_path = cf.name
+            try:
+                detail = _sp.run(
+                    ["openssl", "x509", "-in", cf_path, "-noout",
+                     "-subject", "-issuer", "-dates"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if detail.returncode == 0:
+                    console.print(f"\n[bold cyan]Certificate Details[/bold cyan]")
+                    for line in detail.stdout.strip().splitlines():
+                        console.print(f"  {line.strip()}")
+                sig_alg = _sp.run(
+                    ["openssl", "x509", "-in", cf_path, "-noout", "-text"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if sig_alg.returncode == 0:
+                    for line in sig_alg.stdout.splitlines():
+                        stripped = line.strip()
+                        if "Signature Algorithm:" in stripped:
+                            console.print(f"  [yellow]{stripped}[/yellow]")
+                            break
+                    for line in sig_alg.stdout.splitlines():
+                        stripped = line.strip()
+                        if "Public Key Algorithm:" in stripped:
+                            console.print(f"  {stripped}")
+                            break
+            finally:
+                import os
+                os.unlink(cf_path)
     else:
         console.print(f"\n[red]✗ Failed to issue certificate[/red]")
         console.print(f"  Error: {result.message}")
@@ -476,20 +511,25 @@ def est_enroll(
     ),
     client_cert: Optional[str] = typer.Option(
         None, "--cert", "-c",
-        help="Client certificate for authentication"
+        help="Client certificate file for mTLS authentication"
     ),
     client_key: Optional[str] = typer.Option(
         None, "--key", "-k",
-        help="Client key for authentication"
+        help="Client key file for mTLS authentication"
+    ),
+    otp: Optional[str] = typer.Option(
+        None, "--otp", "-o",
+        help="One-time password (auto-generated via admin API if omitted)"
     ),
 ):
     """Enroll for a certificate using EST protocol (RFC 7030).
 
-    Uses the Dogtag EST subsystem on the IoT CA for certificate enrollment.
-    EST is designed for IoT device certificate provisioning.
+    Uses kipuka EST (akamu backend) or Dogtag EST for certificate enrollment.
+    OTP is auto-generated via the kipuka admin API when using the akamu backend.
 
     Example:
-        lab est-enroll --device sensor01 --pki-type rsa
+        lab est-enroll --device sensor01 --pki-type pqc
+        lab est-enroll -d iot-gateway -p rsa --otp <token>
     """
     config = LabConfig.load()
 
@@ -524,6 +564,7 @@ def est_enroll(
             pki_type=pki_type,
             client_cert=client_cert,
             client_key=client_key,
+            otp=otp,
         )
 
         progress.update(task, completed=1)
@@ -534,6 +575,49 @@ def est_enroll(
             for key, value in result.details.items():
                 if key not in ("certificate", "hint"):
                     console.print(f"  {key}: {value}")
+
+        # Show certificate details
+        if result.certificate:
+            import subprocess as _sp, tempfile as _tf
+            with _tf.NamedTemporaryFile(mode="w", suffix=".pem", delete=False) as cf:
+                cf.write(result.certificate)
+                cf_path = cf.name
+            try:
+                detail = _sp.run(
+                    ["openssl", "x509", "-in", cf_path, "-noout",
+                     "-subject", "-issuer", "-serial", "-dates",
+                     "-sigopt", "rsa_padding_mode:pss", "-text"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if detail.returncode != 0:
+                    detail = _sp.run(
+                        ["openssl", "x509", "-in", cf_path, "-noout",
+                         "-subject", "-issuer", "-serial", "-dates"],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                if detail.returncode == 0:
+                    console.print(f"\n[bold cyan]Certificate Details[/bold cyan]")
+                    for line in detail.stdout.strip().splitlines():
+                        console.print(f"  {line.strip()}")
+
+                sig_alg = _sp.run(
+                    ["openssl", "x509", "-in", cf_path, "-noout", "-text"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if sig_alg.returncode == 0:
+                    for line in sig_alg.stdout.splitlines():
+                        stripped = line.strip()
+                        if "Signature Algorithm:" in stripped:
+                            console.print(f"  [yellow]{stripped}[/yellow]")
+                            break
+                    for line in sig_alg.stdout.splitlines():
+                        stripped = line.strip()
+                        if "Public Key Algorithm:" in stripped:
+                            console.print(f"  {stripped}")
+                            break
+            finally:
+                import os
+                os.unlink(cf_path)
     else:
         console.print(f"\n[red]✗ EST enrollment failed[/red]")
         console.print(f"  Error: {result.message}")
