@@ -37,18 +37,19 @@ cert_file  = "/etc/kipuka/certs/kipuka-pq.cert.pem"
 [database]
 url = "sqlite:///var/lib/kipuka/kipuka.db?mode=rwc"
 
-# ── Dogtag PKI Backend (HSM-backed agent key) ───────────────────────────
+# ── Dogtag PKI Backend (mTLS agent authentication) ──────────────────────
 [dogtag]
-# HTTP + basic auth: NSS Bug 2025246 blocks ML-DSA-87 TLS client cert
-# validation. Until NSS 3.124+ fixes ssl_SetAuthKeyBits for ML-DSA,
-# PQ deployments must use HTTP with username/password authentication.
-ca_url          = "http://pq-iot-ca.cert-lab.local:8080"
+# HTTPS with mTLS: kipuka uses OpenSSL 3.5+ (native-tls) which supports
+# ML-DSA-87 TLS SignatureSchemes. NSS (used by Dogtag server-side) handles
+# incoming TLS via JDK/JSSE with the handshake size fix. The agent cert
+# is an RSA-4096 cert issued by the PQ Intermediate CA (signed with ML-DSA-87)
+# — RSA key for TLS client auth compatibility, ML-DSA-87 issuer signature
+# for post-quantum trust chain integrity.
+ca_url          = "https://pq-iot-ca.cert-lab.local:8443"
 agent_cert_file = "/etc/kipuka/certs/dogtag/agent.pem"
 agent_key_file  = "/etc/kipuka/certs/dogtag/agent-rsa.key.pem"
 ca_cert_file    = "/etc/kipuka/certs/dogtag/ca-chain.pem"
 profile_id      = "caServerCert"
-username        = "caadmin"
-password        = "RedHat123"
 
 # ── EST Protocol ─────────────────────────────────────────────────────────
 [est]

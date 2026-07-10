@@ -67,10 +67,10 @@ demo_status() {
     echo ""
     echo -e "  ${BOLD}Enrollment Servers:${NC}"
     local est_ok acme_ok
-    est_ok=$(curl -sk "${EST_URL}/.well-known/est/cacerts" 2>/dev/null | head -c5)
-    acme_ok=$(curl -s "${ACME_URL}/acme/directory" 2>/dev/null | head -c5)
-    [ -n "$est_ok" ] && pass "Kipuka EST  — ${EST_URL}" || fail "Kipuka EST not responding"
-    [ "$acme_ok" = '{"key' ] && pass "Akamu ACME  — ${ACME_URL}" || fail "Akamu ACME not responding"
+    est_ok=$(curl -sk --connect-timeout 3 "${EST_URL}/.well-known/est/cacerts" 2>/dev/null | head -c5)
+    acme_ok=$(curl -s --connect-timeout 3 "${ACME_URL}/acme/directory" 2>/dev/null | head -c5)
+    if [ -n "$est_ok" ]; then pass "Kipuka EST  — ${EST_URL}"; else warn "Kipuka EST not responding"; fi
+    if [ "$acme_ok" = '{"key' ]; then pass "Akamu ACME  — ${ACME_URL}"; else warn "Akamu ACME not responding"; fi
 
     echo ""
     echo -e "  ${BOLD}HSM (SoftHSM2):${NC}"

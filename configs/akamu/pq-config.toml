@@ -32,7 +32,7 @@ ocsp_url = "http://pq-ocsp.cert-lab.local:8080/ocsp/ee/ocsp"
 
 [ca.signer]
 type         = "dogtag"
-url          = "http://pq-iot-ca.cert-lab.local:8080"
+url          = "https://pq-iot-ca.cert-lab.local:8443"
 ra_cert_file = "/certs/dogtag/agent.pem"
 ra_key_file  = "/certs/dogtag/agent-rsa.key.pem"
 ca_cert_file = "/certs/dogtag/ca-chain.pem"
