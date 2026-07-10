@@ -105,7 +105,7 @@ if ! sudo podman inspect akamu-pq &>/dev/null; then
 fi
 
 # Create kipuka-pq
-KIPUKA_IMAGE="${KIPUKA_IMAGE:-quay.io/czinda/kipuka:latest-amd64}"
+KIPUKA_IMAGE="${KIPUKA_IMAGE:-quay.io/czinda/kipuka:latest}"
 if ! sudo podman inspect kipuka-pq &>/dev/null; then
     echo "  Creating kipuka-pq..."
     sudo podman create \

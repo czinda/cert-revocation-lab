@@ -284,7 +284,7 @@ services:
 
   kipuka-ecc:
     profiles: [akamu]
-    image: ${KIPUKA_IMAGE:-quay.io/czinda/kipuka:latest-amd64}
+    image: ${KIPUKA_IMAGE:-quay.io/czinda/kipuka:latest}
     container_name: kipuka-ecc
     hostname: kipuka-ecc.${LAB_DOMAIN:-cert-lab.local}
     depends_on:

@@ -316,7 +316,7 @@ services:
 
   kipuka-pq:
     profiles: [akamu]
-    image: ${KIPUKA_IMAGE:-quay.io/czinda/kipuka:latest-amd64}
+    image: ${KIPUKA_IMAGE:-quay.io/czinda/kipuka:latest}
     container_name: kipuka-pq
     hostname: kipuka-pq.${LAB_DOMAIN:-cert-lab.local}
     depends_on:
