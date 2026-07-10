@@ -279,46 +279,41 @@ demo_kra() {
         info "KRA transport cert: ML-KEM-1024 (FIPS 203)"
     fi
 
-    # Generate and archive a key via podman exec (not host curl — port may not be mapped)
+    # Generate and archive a key via pki CLI (same method as demo-kra-pqc.sh)
     divider
     echo -e "  ${BOLD}Key Archival (AES-256)${NC}"
     local client_key_id="demo-pqc-key-$$"
-    local key_result
-    key_result=$(sudo podman exec "$KRA_CONTAINER" bash -c "
-        curl -sk -u 'caadmin:${ADMIN_PASSWORD}' -X POST \
-            -H 'Content-Type: application/json' \
-            -d '{\"keyAlgorithm\":\"AES\",\"keySize\":256,\"clientKeyID\":\"${client_key_id}\",\"usages\":\"wrap,unwrap\"}' \
-            http://localhost:8080/kra/rest/agent/keys/generate 2>/dev/null
+    local key_output
+    key_output=$(sudo podman exec "$KRA_CONTAINER" bash -c "
+        pki -U http://localhost:8080 -u caadmin -w '${ADMIN_PASSWORD}' \
+            kra-key-generate '${client_key_id}' \
+            --key-algorithm AES --key-size 256 --usages wrap,unwrap 2>/dev/null
     " 2>/dev/null || echo "")
 
-    if echo "$key_result" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['entries'][0]['requestID'])" 2>/dev/null; then
-        local req_id key_id status
-        req_id=$(echo "$key_result" | python3 -c "import sys,json; print(json.load(sys.stdin)['entries'][0]['requestID'])" 2>/dev/null)
-        key_id=$(echo "$key_result" | python3 -c "import sys,json; print(json.load(sys.stdin)['entries'][0].get('keyURL','').split('/')[-1])" 2>/dev/null)
-        status=$(echo "$key_result" | python3 -c "import sys,json; print(json.load(sys.stdin)['entries'][0].get('requestStatus',''))" 2>/dev/null)
+    if echo "$key_output" | grep -q "Key ID:"; then
         pass "Symmetric key (AES-256) archived in KRA"
         info "Client Key ID: ${client_key_id}"
-        if [ -n "$key_id" ]; then info "Key ID:        ${key_id}"; fi
-        info "Request ID:    ${req_id}"
-        if [ -n "$status" ]; then info "Status:        ${status}"; fi
-    elif [ -z "$key_result" ]; then
+        echo "$key_output" | grep -E "Key ID:|Request ID:|Status:" | while read -r line; do
+            info "$(echo "$line" | sed 's/^[[:space:]]*//')"
+        done
+    elif [ -z "$key_output" ]; then
         warn "KRA not responding — container may not be running"
         info "Check: sudo podman ps | grep kra"
     else
-        warn "Key archival response: $(echo "$key_result" | head -1)"
+        warn "Key archival: $(echo "$key_output" | head -3)"
     fi
 
-    # List keys via podman exec
+    # List keys via pki CLI
     divider
     echo -e "  ${BOLD}Archived Keys${NC}"
-    local key_list
-    key_list=$(sudo podman exec "$KRA_CONTAINER" bash -c "
-        curl -sk -u 'caadmin:${ADMIN_PASSWORD}' \
-            http://localhost:8080/kra/rest/agent/keys 2>/dev/null
+    local key_list_output
+    key_list_output=$(sudo podman exec "$KRA_CONTAINER" bash -c "
+        pki -U http://localhost:8080 -u caadmin -w '${ADMIN_PASSWORD}' \
+            kra-key-find --maxResults 100 2>/dev/null
     " 2>/dev/null || echo "")
 
     local key_count
-    key_count=$(echo "$key_list" | python3 -c "import sys,json; print(json.load(sys.stdin).get('total',0))" 2>/dev/null || echo 0)
+    key_count=$(echo "$key_list_output" | grep -c "Key ID:" || echo 0)
     pass "${key_count} key(s) archived in KRA"
 
     # Explain ML-KEM vs RSA key wrapping
