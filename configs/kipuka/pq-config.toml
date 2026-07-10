@@ -39,7 +39,10 @@ url = "sqlite:///var/lib/kipuka/kipuka.db?mode=rwc"
 
 # ── Dogtag PKI Backend (HSM-backed agent key) ───────────────────────────
 [dogtag]
-ca_url          = "https://pq-iot-ca.cert-lab.local:8443"
+# HTTP required: Dogtag's NSS rejects ML-DSA-87-signed client certs during
+# TLS handshake (401 Unauthorized). Kipuka's native-tls can parse ML-DSA-87
+# server certs but the CA-side NSS client cert validation fails.
+ca_url          = "http://pq-iot-ca.cert-lab.local:8080"
 agent_cert_file = "/etc/kipuka/certs/dogtag/agent.pem"
 agent_key_file  = "/etc/kipuka/certs/dogtag/agent-rsa.key.pem"
 ca_cert_file    = "/etc/kipuka/certs/dogtag/ca-chain.pem"
