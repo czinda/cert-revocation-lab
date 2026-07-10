@@ -321,11 +321,13 @@ def issue(
 
     device_fqdn = f"{device}.{config.lab_domain}"
 
+    display_profile = profile or ("caECServerCert" if pki_type == PKIType.ECC else "caServerCert")
+
     console.print(f"\n[bold cyan]Issuing Certificate[/bold cyan]\n")
     console.print(f"  Device:  {device_fqdn}")
     console.print(f"  PKI:     {pki_type.value.upper()}")
     console.print(f"  CA:      {ca_level.value}")
-    console.print(f"  Profile: {profile}")
+    console.print(f"  Profile: {display_profile}")
     console.print()
 
     with Progress(
