@@ -379,7 +379,7 @@ services:
 
   # Dogtag ECC OCSP Responder - Dedicated OCSP subsystem (ECDSA P-384)
   dogtag-ecc-ocsp:
-    image: ${PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
+    image: ${PKI_OCSP_IMAGE:-quay.io/dogtagpki/pki-ocsp:latest}
     container_name: dogtag-ecc-ocsp
     hostname: ecc-ocsp.${LAB_DOMAIN:-cert-lab.local}
     privileged: true
@@ -448,7 +448,7 @@ services:
       retries: 10
 
   dogtag-ecc-kra:
-    image: ${PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
+    image: ${PKI_KRA_IMAGE:-quay.io/dogtagpki/pki-kra:latest}
     container_name: dogtag-ecc-kra
     hostname: ecc-kra.${LAB_DOMAIN:-cert-lab.local}
     privileged: true

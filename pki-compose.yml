@@ -402,7 +402,7 @@ services:
   # Full Dogtag OCSP instance with own signing key, joins Root CA security domain,
   # gets signing cert from Intermediate CA. Validates revocation independently.
   dogtag-ocsp:
-    image: ${PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
+    image: ${PKI_OCSP_IMAGE:-quay.io/dogtagpki/pki-ocsp:latest}
     container_name: dogtag-ocsp
     hostname: ocsp.${LAB_DOMAIN:-cert-lab.local}
     privileged: true
@@ -472,7 +472,7 @@ services:
   # Full Dogtag KRA instance for key archival and recovery.
   # Joins Root CA security domain, gets certs from Intermediate CA.
   dogtag-kra:
-    image: ${PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
+    image: ${PKI_KRA_IMAGE:-quay.io/dogtagpki/pki-kra:latest}
     container_name: dogtag-kra
     hostname: kra.${LAB_DOMAIN:-cert-lab.local}
     privileged: true

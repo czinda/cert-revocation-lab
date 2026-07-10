@@ -322,6 +322,30 @@ demo_kra() {
         info "0 keys archived (none generated yet)"
     fi
 
+    # Attempt key recovery via ML-KEM-1024 decapsulation
+    local key_id
+    key_id=$(echo "$key_output" | grep "Key ID:" | awk '{print $NF}')
+    if [ -n "$key_id" ]; then
+        divider
+        echo -e "  ${BOLD}Key Recovery (ML-KEM-1024 Decapsulation)${NC}"
+        local recover_output
+        recover_output=$(sudo podman exec "$KRA_CONTAINER" bash -c "
+            pki -U http://localhost:8080 -u caadmin -w '${ADMIN_PASSWORD}' \
+                kra-key-retrieve --keyID '${key_id}' 2>/dev/null
+        " 2>/dev/null || echo "")
+
+        if echo "$recover_output" | grep -q "Key:"; then
+            pass "Key recovered via ML-KEM-1024 decapsulation"
+            echo "$recover_output" | grep -E "Key:|Algorithm:|Size:" | while read -r line; do
+                info "$(echo "$line" | sed 's/^[[:space:]]*//')"
+            done
+        elif echo "$recover_output" | grep -q "encapsulateMLKEM"; then
+            warn "ML-KEM decapsulation not available — upgrade to pki-kra:latest"
+        else
+            warn "Recovery returned unexpected output (may require newer image)"
+        fi
+    fi
+
     # Explain ML-KEM vs RSA key wrapping
     echo ""
     divider
@@ -350,9 +374,10 @@ demo_kra() {
     info "    ML-KEM: PK11_Encapsulate() creates a NEW shared secret"
     info "    ML-KEM can't sign — must use POP_NONE for CRMF requests"
     echo ""
-    info "  Status: NSS 3.123.1 has PK11_Encapsulate()/PK11_Decapsulate()"
-    info "  Dogtag Java/JSS code path not yet wired (upstream development)"
-    info "  Key archival works today; recovery requires the new encapsulation path"
+    info "  Status: COMPLETE — full stack wired (NSS → JSS → Dogtag KRA)"
+    info "  NSS 3.123.1: PK11_Encapsulate()/PK11_Decapsulate()"
+    info "  JSS PR #1089: JNI bindings for javax.crypto.KEM (Java 21)"
+    info "  PKI PR #5362: KRA recovery code wired to JSS KEM decapsulation"
     info "  Ref: Cfu's kraCompatVerify tool + RHCS/pki-devel wiki: pqc-kra-design"
 }
 

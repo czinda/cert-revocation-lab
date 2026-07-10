@@ -12,7 +12,7 @@
 #   1. TLS 1.3 with ML-DSA-87 server auth + X25519MLKEM768 key exchange
 #   2. KRA symmetric key generation archived via ML-KEM-1024 transport cert
 #   3. Key listing and status verification
-#   4. ML-KEM recovery limitation (encapsulate vs wrap — upstream in progress)
+#   4. ML-KEM key recovery via PK11_Decapsulate (JSS #1089, PKI #5362)
 #   5. Full PQ trust chain: Root → Intermediate → IoT/OCSP/KRA all ML-DSA-87
 #
 # Assisted-by: Claude Code (claude.ai/code)
@@ -187,25 +187,20 @@ header "Step 5: Key Recovery (ML-KEM-1024 Decapsulation)"
 if [ -n "$KEY_ID" ]; then
     RECOVER_OUTPUT=$(pki_cmd kra-key-retrieve --keyID "$KEY_ID" 2>&1 || true)
 
-    if echo "$RECOVER_OUTPUT" | grep -q "encapsulateMLKEM"; then
-        warn "ML-KEM encapsulation path required (upstream in development)"
-        echo ""
-        info "ML-KEM is a Key Encapsulation Mechanism — it generates a NEW"
-        info "shared secret during encapsulation, unlike RSA which wraps"
-        info "existing keys. Recovery requires:"
-        info ""
-        info "  1. Client sends ML-KEM encapsulation request to KRA"
-        info "  2. KRA uses ML-KEM-1024 storage cert to decapsulate"
-        info "  3. Shared secret is derived → AES wraps the archived key"
-        info "  4. Wrapped key returned to client"
-        info ""
-        info "This is tracked as upstream work in Dogtag PKI."
-        info "Key archival WORKS today. Recovery will use encapsulateMLKEM()."
-    elif echo "$RECOVER_OUTPUT" | grep -q "Key:"; then
-        pass "Key recovered successfully"
+    if echo "$RECOVER_OUTPUT" | grep -q "Key:"; then
+        pass "Key recovered via ML-KEM-1024 decapsulation"
         echo "$RECOVER_OUTPUT" | grep -E "Key:|Algorithm:|Size:" | while read -r line; do
             info "$line"
         done
+        echo ""
+        info "Recovery flow: KRA calls PK11_Decapsulate(ciphertext, storage_priv)"
+        info "→ recovers shared secret → AES-unwraps archived key → returns PKCS#12"
+        info "Upstream: JSS #1089 (JNI bindings) + PKI #5362 (KRA wiring)"
+    elif echo "$RECOVER_OUTPUT" | grep -q "encapsulateMLKEM"; then
+        warn "ML-KEM decapsulation not available in this image"
+        echo ""
+        info "Upgrade to pki-kra:latest (requires JSS 5.10.1+ with PR #1089)"
+        info "and Dogtag 11.10.1+ with PR #5362 for ML-KEM recovery support."
     else
         fail "Recovery failed: $(echo "$RECOVER_OUTPUT" | head -3)"
     fi
