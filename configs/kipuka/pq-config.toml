@@ -39,14 +39,18 @@ url = "sqlite:///var/lib/kipuka/kipuka.db?mode=rwc"
 
 # ── Dogtag PKI Backend ───────────────────────────────────────────────────
 [dogtag]
-# HTTPS with mTLS + basic auth: kipuka uses OpenSSL 3.5+ (native-tls)
-# for TLS, plus basic auth for Dogtag REST API authorization. mTLS
-# provides transport security; basic auth maps to the Dogtag agent role.
-ca_url          = "https://pq-iot-ca.cert-lab.local:8443"
+# HTTP with basic auth: Dogtag's HTTPS agent endpoints (/ca/rest/agent/*)
+# require certificate-based auth via client cert mapped to the agent group.
+# The mTLS client cert (RSA key, ML-DSA-87 issuer) is rejected because
+# Dogtag's NSS/JSSE can't validate the ML-DSA issuer chain during TLS
+# client cert verification (NSS lacks ML-DSA TLS SignatureScheme support).
+# HTTP port 8080 accepts basic auth for ALL endpoints including agent
+# approve, which is required for kipuka's auto-approve flow.
+ca_url          = "http://pq-iot-ca.cert-lab.local:8080"
 agent_cert_file = "/etc/kipuka/certs/dogtag/agent.pem"
 agent_key_file  = "/etc/kipuka/certs/dogtag/agent-rsa.key.pem"
 ca_cert_file    = "/etc/kipuka/certs/dogtag/ca-chain.pem"
-profile_id      = "caServerCert"
+profile_id      = "acmeServerCert"
 username        = "caadmin"
 password        = "RedHat123"
 
