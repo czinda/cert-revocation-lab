@@ -172,11 +172,8 @@ for ctr in akamu-pq kipuka-pq; do
     fi
 done
 
-# Restart after cert provisioning
-echo ""
-echo "=== Restarting with provisioned certs ==="
-sudo podman restart akamu-pq kipuka-pq 2>/dev/null || true
-sleep 5
+# Note: no restart needed — containers were started after cert provisioning.
+# podman restart destroys and recreates, which loses the container.
 
 # Quick smoke test
 echo ""
