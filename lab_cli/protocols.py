@@ -971,11 +971,18 @@ def est_list_otps(pki_type: PKIType) -> ProtocolResult:
 def est_serverkeygen(
     pki_type: PKIType,
     device_fqdn: str,
+    otp: Optional[str] = None,
 ) -> ProtocolResult:
     """Request server-side key generation via EST (RFC 7030 §4.4)."""
     est_url = _get_est_url(pki_type)
     if est_url is None:
         return ProtocolResult(success=False, message=f"EST not available for {pki_type.value}")
+
+    # Auto-generate OTP for kipuka backend
+    if not otp and ENROLLMENT_BACKEND == "akamu":
+        otp_result = est_generate_otp(pki_type, device_fqdn)
+        if otp_result.success and otp_result.details and otp_result.details.get("token"):
+            otp = otp_result.details["token"]
 
     with tempfile.TemporaryDirectory() as tmpdir:
         key_path = Path(tmpdir) / "key.pem"
@@ -989,11 +996,13 @@ def est_serverkeygen(
         if result.returncode != 0:
             return ProtocolResult(success=False, message=f"Key generation failed: {result.stderr}")
 
+        # Generate CSR with SAN (required by acmeServerCert profile)
         csr_cmd = [
             "openssl", "req", "-new",
             "-key", str(key_path),
             "-out", str(csr_path),
             "-subj", f"/CN={device_fqdn}/O=Cert-Lab/C=US",
+            "-addext", f"subjectAltName=DNS:{device_fqdn}",
         ]
         result = subprocess.run(csr_cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
@@ -1006,15 +1015,19 @@ def est_serverkeygen(
 
         csr_base64 = base64.b64encode(result.stdout).decode("ascii")
 
-        est_password = "RedHat123"
         cmd = [
             "curl", "-sk", "-X", "POST",
-            "-u", f"est-client:{est_password}",
             "-H", "Content-Type: application/pkcs10",
             "-H", "Content-Transfer-Encoding: base64",
             "--data", csr_base64,
             f"{est_url}/serverkeygen",
         ]
+        if otp:
+            cmd.extend(["-u", f"{device_fqdn}:{otp}"])
+        else:
+            config = LabConfig.load()
+            est_password = config.pki_admin_password if config else "RedHat123"
+            cmd.extend(["-u", f"est-client:{est_password}"])
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
         if result.returncode != 0:
