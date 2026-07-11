@@ -35,11 +35,11 @@ type         = "dogtag"
 # HTTP required: akamu uses rustls (not OpenSSL) for its reqwest client.
 # rustls/ring cannot verify ML-DSA-87 server certs from the PQ CA.
 # kipuka uses native-tls (OpenSSL 3.5+) and CAN do HTTPS mTLS.
-url          = "http://pq-iot-ca.cert-lab.local:8080"
+url          = "http://stunnel-pq-proxy.cert-lab.local:8080"
 ra_cert_file = "/certs/dogtag/agent.pem"
 ra_key_file  = "/certs/dogtag/agent-rsa.key.pem"
 ca_cert_file = "/certs/dogtag/ca-chain.pem"
-profile_id   = "acmeServerCert"
+profile_id   = "caServerCert"
 timeout_secs = 30
 username     = "caadmin"
 password     = "RedHat123"

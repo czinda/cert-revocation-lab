@@ -142,6 +142,34 @@ services:
       retries: 5
       start_period: 120s
 
+  # stunnel TLS proxy — akamu connects here via HTTP, stunnel forwards
+  # to Dogtag HTTPS with mTLS agent cert. Needed because akamu uses
+  # rustls which can't verify ML-DSA-87 server certs.
+  stunnel-pq-proxy:
+    image: registry.fedoraproject.org/fedora:44
+    container_name: stunnel-pq-proxy
+    hostname: stunnel-pq-proxy.cert-lab.local
+    depends_on:
+      dogtag-pq-ca:
+        condition: service_started
+    volumes:
+      - ./configs/stunnel/pq-proxy.conf:/etc/stunnel/stunnel.conf:ro
+      - ./data/certs/pq:/certs:ro
+    extra_hosts:
+      - "pq-ca.cert-lab.local:172.27.0.12"
+    networks:
+      pki-pq-net:
+        ipv4_address: 172.27.0.20
+    ports:
+      - "8495:8080"
+    command: ["bash", "-c", "dnf install -y stunnel 2>/dev/null && stunnel /etc/stunnel/stunnel.conf"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:8080/ca/rest/info 2>/dev/null | head -c5 | grep -q '{' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
 volumes:
   ds-pq-ca-data:
   ds-pq-kra-data:
