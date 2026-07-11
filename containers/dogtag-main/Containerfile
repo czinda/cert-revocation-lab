@@ -1,9 +1,8 @@
-# Dogtag PKI from Main Branch (includes ML-KEM KRA + ML-DSA-87 support)
+# Dogtag PKI + JSS from Main Branch
 #
-# Mirrors the upstream dogtagpki/pki Dockerfile multi-stage pattern:
-# - JSS and LDAPJDK imported as pre-built RPMs from quay.io dist images
-# - PKI built via ./build.sh rpm (spec-based), not Maven
-# - Final image targets pki-ca stage (used for all subsystems at runtime)
+# Builds both JSS and PKI from upstream master to get unreleased features:
+# - JSS PR #1089: ML-KEM KEM encapsulation/decapsulation JNI bindings
+# - PKI PR #5362: KRA key recovery wired to JSS KEM decapsulation
 #
 # Build:
 #   podman build -t localhost/dogtag-pki-main:latest -f Containerfile .
@@ -13,11 +12,44 @@
 # Subsystem selection happens at runtime via pkispawn or pki-server create.
 
 ARG BASE_IMAGE="registry.fedoraproject.org/fedora:latest"
+ARG JSS_REPO="https://github.com/dogtagpki/jss.git"
+ARG JSS_BRANCH="master"
 ARG PKI_REPO="https://github.com/dogtagpki/pki.git"
 ARG PKI_BRANCH="master"
 
 ################################################################################
-# Stage 1: Clone source and install build dependencies
+# Stage 0: Build JSS from source (ML-KEM KEM bindings, PR #1089)
+################################################################################
+FROM $BASE_IMAGE AS jss-builder
+
+ARG JSS_REPO
+ARG JSS_BRANCH
+
+RUN dnf install -y dnf-plugins-core git rpm-build \
+    && dnf clean all
+
+WORKDIR /root/jss
+
+RUN git clone --depth 1 --branch $JSS_BRANCH $JSS_REPO . \
+    && echo "JSS_COMMIT=$(git rev-parse HEAD)" > /root/jss-build-info \
+    && echo "JSS_BRANCH=$JSS_BRANCH" >> /root/jss-build-info \
+    && echo "JSS_DATE=$(git log -1 --format=%ci)" >> /root/jss-build-info
+
+RUN dnf builddep -y --skip-unavailable jss.spec \
+    && dnf clean all
+
+RUN ./build.sh --work-dir=build rpm
+
+################################################################################
+# Stage 0b: Lightweight dist holding JSS RPMs
+################################################################################
+FROM alpine:latest AS jss-dist
+
+COPY --from=jss-builder /root/jss/build/RPMS /root/RPMS/
+COPY --from=jss-builder /root/jss-build-info /root/jss-build-info
+
+################################################################################
+# Stage 1: Build PKI from source (ML-KEM KRA recovery, PR #5362)
 ################################################################################
 FROM $BASE_IMAGE AS pki-builder
 
@@ -37,7 +69,7 @@ RUN git clone --depth 1 --branch $PKI_BRANCH $PKI_REPO . \
 RUN dnf builddep -y --skip-unavailable pki.spec \
     && dnf clean all
 
-COPY --from=quay.io/dogtagpki/jss-dist:latest /root/RPMS /tmp/RPMS/
+COPY --from=jss-dist /root/RPMS /tmp/RPMS/
 COPY --from=quay.io/dogtagpki/ldapjdk-dist:latest /root/RPMS /tmp/RPMS/
 
 RUN dnf install -y /tmp/RPMS/* \
@@ -72,7 +104,7 @@ RUN dnf install -y dogtag-pki \
     && rpm -e --nodeps $(rpm -qa | grep -E "$REGEX") \
     && dnf clean all
 
-COPY --from=quay.io/dogtagpki/jss-dist:latest /root/RPMS /tmp/RPMS/
+COPY --from=jss-dist /root/RPMS /tmp/RPMS/
 COPY --from=quay.io/dogtagpki/ldapjdk-dist:latest /root/RPMS /tmp/RPMS/
 COPY --from=pki-dist /root/RPMS /tmp/RPMS/
 
@@ -135,6 +167,7 @@ CMD [ "/usr/share/pki/server/bin/pki-server-run" ]
 FROM pki-server AS pki-ca
 
 COPY --from=pki-dist /root/pki-build-info /root/pki-build-info
+COPY --from=jss-dist /root/jss-build-info /root/jss-build-info
 
 RUN pki-server ca-create
 RUN pki-server ca-deploy
