@@ -1,0 +1,60 @@
+# pq-hsm-config.toml — Akamu ACME RA with Kryoptic HSM-backed agent keys.
+#
+# HSM variant: RA agent key stored in Kryoptic PKCS#11 token.
+# Use: HSM_BACKEND=kryoptic selects this config over pq-config.toml
+#
+# Dogtag RA mode: Akamu validates ACME requests and forwards CSRs to
+# the Dogtag PQ IoT Sub-CA for signing. CRL/OCSP from Dogtag.
+#
+# Network: 172.27.0.0/24 (CERT-LAB-PQ)
+
+# ── HSM / PKCS#11 (Kryoptic) ────────────────────────────────────────────
+[hsm]
+provider     = "kryoptic"
+library_path = "/usr/lib64/pkcs11/libkryoptic_pkcs11.so"
+pin          = "env:HSM_USER_PIN"
+token_label  = "Akamu ACME"
+
+listen_addr = "0.0.0.0:8080"
+
+# base_url is embedded in every URL returned to ACME clients (directory,
+# account, order, certificate URLs). Must match what clients use to reach
+# the server. For the lab, clients run on the host where port 8486 maps
+# to container port 8080.
+base_url = "http://localhost:8486"
+
+[database]
+url = "sqlite:///app/data/akamu.db"
+
+[ca]
+# RA mode: key_file is omitted — Dogtag signs all certificates.
+# cert_file points to the Dogtag CA certificate chain (used for
+# chain building and AKI computation per the docs).
+cert_file = "/certs/iot-ca-chain.crt"
+
+# CRL and OCSP point to Dogtag's endpoints (akamu's built-in
+# CRL/OCSP return 404 in RA mode — this is expected).
+crl_url  = "http://pq-iot-ca.cert-lab.local:8080/ca/ee/ca/getCRL?op=getCRL&crlIssuingPoint=MasterCRL"
+ocsp_url = "http://pq-ocsp.cert-lab.local:8080/ocsp/ee/ocsp"
+
+[ca.signer]
+type         = "dogtag"
+# HTTP required: akamu uses rustls (not OpenSSL) for its reqwest client.
+# rustls/ring cannot verify ML-DSA-87 server certs from the PQ CA.
+# kipuka uses native-tls (OpenSSL 3.5+) and CAN do HTTPS mTLS.
+url          = "http://stunnel-pq-proxy.cert-lab.local:8080"
+ra_cert_file = "/certs/dogtag/agent.pem"
+ra_key_file  = "/certs/dogtag/agent-rsa.key.pem"
+ca_cert_file = "/certs/dogtag/ca-chain.pem"
+profile_id   = "caServerCert"
+timeout_secs = 30
+username     = "caadmin"
+password     = "RedHat123"
+
+[server]
+http_validation_allow_private_ips = true
+http_validation_port = 80
+validate_dnssec = false
+
+[profiles]
+refresh_interval_secs = 3600
