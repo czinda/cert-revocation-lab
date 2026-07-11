@@ -1,0 +1,155 @@
+# Minimal PQ PKI — Self-signed ML-DSA-87 CA + KRA
+#
+# Single self-signed CA (no 3-level hierarchy). For rapid enrollment
+# backend testing with akamu (ACME) and kipuka (EST).
+#
+# Usage:
+#   sudo podman-compose -f pki-pq-minimal.yml up --no-start
+#   sudo podman start ds-pq-ca ds-pq-kra
+#   # wait for DS healthy, then:
+#   sudo bash scripts/pki/init-pq-minimal.sh
+#
+# Network: pki-pq-net (172.27.0.0/24)
+
+version: "3.8"
+
+services:
+  ds-pq-ca:
+    image: quay.io/389ds/dirsrv:latest
+    container_name: ds-pq-ca
+    hostname: ds-pq-ca.cert-lab.local
+    environment:
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      DS_SUFFIX_NAME: pq-ca
+    volumes:
+      - ds-pq-ca-data:/data
+    networks:
+      pki-pq-net:
+        ipv4_address: 172.27.0.14
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/libexec/dirsrv/dscontainer -H || ldapsearch -x -H ldap://localhost:3389 -b '' -s base > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      start_period: 120s
+      retries: 10
+
+  ds-pq-kra:
+    image: quay.io/389ds/dirsrv:latest
+    container_name: ds-pq-kra
+    hostname: ds-pq-kra.cert-lab.local
+    environment:
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      DS_SUFFIX_NAME: pq-kra
+    volumes:
+      - ds-pq-kra-data:/data
+    networks:
+      pki-pq-net:
+        ipv4_address: 172.27.0.24
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/libexec/dirsrv/dscontainer -H || ldapsearch -x -H ldap://localhost:3389 -b '' -s base > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      start_period: 120s
+      retries: 10
+
+  dogtag-pq-ca:
+    image: ${PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
+    container_name: dogtag-pq-ca
+    hostname: pq-ca.cert-lab.local
+    privileged: true
+    depends_on:
+      ds-pq-ca:
+        condition: service_healthy
+    environment:
+      PKI_DS_URL: ldap://ds-pq-ca.cert-lab.local:3389
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_INSTANCE_NAME: pki-pq-ca
+      DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+    volumes:
+      - ./configs/pki:/etc/pki-configs:ro
+      - ./scripts/pki:/scripts:ro
+      - ./data/certs/pq:/certs
+      - pki-pq-ca-data:/var/lib/pki
+      - pki-pq-ca-logs:/var/log/pki
+    extra_hosts:
+      - "ds-pq-ca.cert-lab.local:172.27.0.14"
+      - "ds-pq-kra.cert-lab.local:172.27.0.24"
+      - "pq-ca.cert-lab.local:172.27.0.12"
+      - "pq-kra.cert-lab.local:172.27.0.23"
+      - "akamu-pq.cert-lab.local:172.27.0.18"
+      - "kipuka-pq.cert-lab.local:172.27.0.19"
+    networks:
+      pki-pq-net:
+        ipv4_address: 172.27.0.12
+    ports:
+      - "8453:8443"
+      - "8490:8080"
+    command: ["/bin/bash", "-c", "sleep infinity"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk https://localhost:8443/ca/admin/ca/getStatus 2>/dev/null | grep -q running || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  dogtag-pq-kra:
+    image: ${PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
+    container_name: dogtag-pq-kra
+    hostname: pq-kra.cert-lab.local
+    privileged: true
+    depends_on:
+      ds-pq-kra:
+        condition: service_healthy
+      dogtag-pq-ca:
+        condition: service_started
+    environment:
+      PKI_DS_URL: ldap://ds-pq-kra.cert-lab.local:3389
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_INSTANCE_NAME: pki-pq-kra
+      DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+    volumes:
+      - ./configs/pki:/etc/pki-configs:ro
+      - ./scripts/pki:/scripts:ro
+      - ./data/certs/pq:/certs
+      - pki-pq-kra-data:/var/lib/pki
+      - pki-pq-kra-logs:/var/log/pki
+    extra_hosts:
+      - "ds-pq-ca.cert-lab.local:172.27.0.14"
+      - "ds-pq-kra.cert-lab.local:172.27.0.24"
+      - "pq-ca.cert-lab.local:172.27.0.12"
+      - "pq-kra.cert-lab.local:172.27.0.23"
+      - "akamu-pq.cert-lab.local:172.27.0.18"
+      - "kipuka-pq.cert-lab.local:172.27.0.19"
+    networks:
+      pki-pq-net:
+        ipv4_address: 172.27.0.23
+    ports:
+      - "8458:8443"
+      - "8493:8080"
+    command: ["/bin/bash", "-c", "sleep infinity"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk https://localhost:8443/kra/admin/kra/getStatus 2>/dev/null | grep -q running || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+volumes:
+  ds-pq-ca-data:
+  ds-pq-kra-data:
+  pki-pq-ca-data:
+  pki-pq-ca-logs:
+  pki-pq-kra-data:
+  pki-pq-kra-logs:
+
+networks:
+  pki-pq-net:
+    external: true
