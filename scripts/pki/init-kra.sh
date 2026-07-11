@@ -70,6 +70,9 @@ PKI_PASSWORD="${PKI_ADMIN_PASSWORD:-$ADMIN_PASSWORD}"
 # Source common functions
 source "$(dirname "$0")/lib-pki-common.sh"
 
+# Apply HSM config override (pq- → pq-hsm-)
+CONFIG_PREFIX="$(hsm_config_prefix "${CONFIG_PREFIX:-}")"
+
 # Validate required environment
 [ -n "$DS_PASSWORD" ] || { log_error "DS_PASSWORD not set"; exit 1; }
 [ -n "$PKI_PASSWORD" ] || { log_error "PKI_ADMIN_PASSWORD not set"; exit 1; }

@@ -97,6 +97,8 @@ services:
       PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
       PKI_INSTANCE_NAME: pki-pq-root-ca
       DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      HSM_BACKEND: ${HSM_BACKEND:-}
+      KRYOPTIC_CONF: /etc/kryoptic/kryoptic.conf
       # ML-DSA-87 specific settings
       PQ_CA_KEY_TYPE: mldsa
       PQ_CA_KEY_ALGORITHM: ML-DSA-87
@@ -154,6 +156,8 @@ services:
       PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
       PKI_INSTANCE_NAME: pki-pq-intermediate-ca
       DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      HSM_BACKEND: ${HSM_BACKEND:-}
+      KRYOPTIC_CONF: /etc/kryoptic/kryoptic.conf
       # ML-DSA-87 specific settings
       PQ_CA_KEY_TYPE: mldsa
       PQ_CA_KEY_ALGORITHM: ML-DSA-87
@@ -211,6 +215,8 @@ services:
       PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
       PKI_INSTANCE_NAME: pki-pq-iot-ca
       DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      HSM_BACKEND: ${HSM_BACKEND:-}
+      KRYOPTIC_CONF: /etc/kryoptic/kryoptic.conf
       # ML-DSA-87 specific settings
       PQ_CA_KEY_TYPE: mldsa
       PQ_CA_KEY_ALGORITHM: ML-DSA-87
@@ -438,6 +444,8 @@ services:
       PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
       PKI_INSTANCE_NAME: pki-pq-ocsp
       DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      HSM_BACKEND: ${HSM_BACKEND:-}
+      KRYOPTIC_CONF: /etc/kryoptic/kryoptic.conf
       PQ_CA_KEY_TYPE: mldsa
       PQ_CA_KEY_ALGORITHM: ML-DSA-87
       PQ_CA_KEY_SIZE: 87
@@ -509,6 +517,8 @@ services:
       PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
       PKI_INSTANCE_NAME: pki-pq-kra
       DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      HSM_BACKEND: ${HSM_BACKEND:-}
+      KRYOPTIC_CONF: /etc/kryoptic/kryoptic.conf
     volumes:
       - ./configs/pki:/etc/pki-configs:ro
       - ./scripts/pki:/scripts:ro

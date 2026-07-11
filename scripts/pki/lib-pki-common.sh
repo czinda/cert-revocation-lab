@@ -10,6 +10,34 @@
 CERTS_DIR="${CERTS_DIR:-/certs}"
 CONFIG_DIR="${CONFIG_DIR:-/etc/pki-configs}"
 
+# HSM backend selection: "kryoptic" uses pq-hsm-* configs, default uses pq-*
+HSM_BACKEND="${HSM_BACKEND:-}"
+
+# Transform a config prefix for HSM mode: "pq-" → "pq-hsm-"
+hsm_config_prefix() {
+    local prefix="$1"
+    if [ "$HSM_BACKEND" = "kryoptic" ] && [ "$prefix" = "pq-" ]; then
+        echo "pq-hsm-"
+    else
+        echo "$prefix"
+    fi
+}
+
+# Transform a config filename for HSM mode: "pq-root-ca.cfg" → "pq-hsm-root-ca.cfg"
+hsm_config_file() {
+    local file="$1"
+    if [ "$HSM_BACKEND" = "kryoptic" ]; then
+        echo "${file/pq-/pq-hsm-}"
+    else
+        echo "$file"
+    fi
+}
+
+# Set KRYOPTIC_CONF for Kryoptic PKCS#11 module
+if [ "$HSM_BACKEND" = "kryoptic" ]; then
+    export KRYOPTIC_CONF="${KRYOPTIC_CONF:-/etc/kryoptic/kryoptic.conf}"
+fi
+
 # Setup mock systemctl for container environments
 # Dogtag PKI's pkispawn requires systemctl which isn't available in containers
 setup_mock_systemctl() {
