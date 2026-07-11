@@ -70,6 +70,29 @@ if echo "$CA_STATUS" | grep -q "running"; then
 else
     log_info "Initializing self-signed ML-DSA-87 CA..."
 
+    # Setup mock systemctl (containers don't have systemd)
+    log_info "Setting up mock systemctl in $CA_CONTAINER..."
+    sudo podman exec "$CA_CONTAINER" bash -c '
+cat > /usr/bin/systemctl << '\''MOCK_EOF'\''
+#!/bin/bash
+action="$1"; shift; service="$1"
+case "$action" in
+    start)
+        instance=$(echo "$service" | sed "s/pki-tomcatd@//;s/\.service//")
+        if [ -n "$instance" ]; then
+            echo "Starting PKI instance: $instance using pki-server run" >&2
+            nohup pki-server run "$instance" > /var/log/pki/$instance/startup.log 2>&1 &
+        fi
+        ;;
+    daemon-reload|enable|disable|is-active|status|stop)
+        echo "Mock systemctl $action: $service" >&2
+        ;;
+esac
+exit 0
+MOCK_EOF
+chmod +x /usr/bin/systemctl
+'
+
     # Create pkispawn config for self-signed CA
     sudo podman exec "$CA_CONTAINER" bash -c "cat > /tmp/pq-ca.cfg << 'EOFCFG'
 [DEFAULT]
@@ -163,6 +186,28 @@ if echo "$KRA_STATUS" | grep -q "running"; then
 else
     log_info "Initializing KRA with ML-KEM-1024..."
 
+    # Setup mock systemctl for KRA container
+    sudo podman exec "$KRA_CONTAINER" bash -c '
+cat > /usr/bin/systemctl << '\''MOCK_EOF'\''
+#!/bin/bash
+action="$1"; shift; service="$1"
+case "$action" in
+    start)
+        instance=$(echo "$service" | sed "s/pki-tomcatd@//;s/\.service//")
+        if [ -n "$instance" ]; then
+            echo "Starting PKI instance: $instance using pki-server run" >&2
+            nohup pki-server run "$instance" > /var/log/pki/$instance/startup.log 2>&1 &
+        fi
+        ;;
+    daemon-reload|enable|disable|is-active|status|stop)
+        echo "Mock systemctl $action: $service" >&2
+        ;;
+esac
+exit 0
+MOCK_EOF
+chmod +x /usr/bin/systemctl
+'
+
     # Get CA URL for security domain
     CA_URL="https://pq-ca.cert-lab.local:8443"
 
@@ -239,16 +284,15 @@ EOFCFG"
     "
 
     # Wait for KRA
-    local elapsed=0
-    while [ $elapsed -lt 120 ]; do
-        local status
-        status=$(sudo podman exec "$KRA_CONTAINER" curl -sk https://localhost:8443/kra/admin/kra/getStatus 2>/dev/null || echo "")
-        if echo "$status" | grep -q "running"; then
+    kra_elapsed=0
+    while [ $kra_elapsed -lt 120 ]; do
+        kra_status=$(sudo podman exec "$KRA_CONTAINER" curl -sk https://localhost:8443/kra/admin/kra/getStatus 2>/dev/null || echo "")
+        if echo "$kra_status" | grep -q "running"; then
             log_ok "KRA is running"
             break
         fi
         sleep 5
-        ((elapsed += 5)) || true
+        ((kra_elapsed += 5)) || true
     done
 
     log_ok "KRA initialized with ML-KEM-1024"
