@@ -113,6 +113,7 @@ pki_ds_database = pq-ca
 
 pki_security_domain_name = CERT-LAB-PQ
 
+[CA]
 pki_ca_signing_key_type = mldsa
 pki_ca_signing_key_algorithm = ML-DSA-87
 pki_ca_signing_key_size = 87
@@ -228,12 +229,13 @@ pki_ds_password = ${DS_PASSWORD}
 pki_ds_base_dn = dc=pq-kra
 pki_ds_database = pq-kra
 
-pki_security_domain_url = ${CA_URL}
+pki_security_domain_hostname = pq-ca.cert-lab.local
 pki_security_domain_user = caadmin
 pki_security_domain_password = ${PKI_PASSWORD}
 
 pki_issuing_ca = ${CA_URL}
 
+[KRA]
 pki_storage_key_type = mlkem
 pki_storage_key_algorithm = ML-KEM-1024
 pki_storage_key_size = 1024
