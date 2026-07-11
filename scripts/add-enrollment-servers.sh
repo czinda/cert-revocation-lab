@@ -78,6 +78,7 @@ EXTRA_HOSTS=(
     --add-host "akamu-pq.cert-lab.local:172.27.0.18"
     --add-host "kipuka-pq.cert-lab.local:172.27.0.19"
     --add-host "pq-ocsp.cert-lab.local:172.27.0.22"
+    --add-host "pq-kra.cert-lab.local:172.27.0.23"
 )
 
 # Create akamu-pq
