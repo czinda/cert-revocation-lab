@@ -107,6 +107,8 @@ services:
       - ./data/certs/pq:/certs
       - pki-pq-root-data:/var/lib/pki
       - pki-pq-root-logs:/var/log/pki
+      - kryoptic-pq-data:/var/lib/kryoptic:ro
+      - ./containers/kryoptic-hsm/kryoptic.conf:/etc/kryoptic/kryoptic.conf:ro
     extra_hosts:
       - "ds-pq-root.cert-lab.local:172.27.0.14"
       - "ds-pq-intermediate.cert-lab.local:172.27.0.15"
@@ -162,6 +164,8 @@ services:
       - ./data/certs/pq:/certs
       - pki-pq-intermediate-data:/var/lib/pki
       - pki-pq-intermediate-logs:/var/log/pki
+      - kryoptic-pq-data:/var/lib/kryoptic:ro
+      - ./containers/kryoptic-hsm/kryoptic.conf:/etc/kryoptic/kryoptic.conf:ro
     extra_hosts:
       - "ds-pq-root.cert-lab.local:172.27.0.14"
       - "ds-pq-intermediate.cert-lab.local:172.27.0.15"
@@ -217,6 +221,8 @@ services:
       - ./data/certs/pq:/certs
       - pki-pq-iot-data:/var/lib/pki
       - pki-pq-iot-logs:/var/log/pki
+      - kryoptic-pq-data:/var/lib/kryoptic:ro
+      - ./containers/kryoptic-hsm/kryoptic.conf:/etc/kryoptic/kryoptic.conf:ro
     extra_hosts:
       - "ds-pq-root.cert-lab.local:172.27.0.14"
       - "ds-pq-intermediate.cert-lab.local:172.27.0.15"
@@ -441,6 +447,8 @@ services:
       - ./data/certs/pq:/certs
       - pki-pq-ocsp-data:/var/lib/pki
       - pki-pq-ocsp-logs:/var/log/pki
+      - kryoptic-pq-data:/var/lib/kryoptic:ro
+      - ./containers/kryoptic-hsm/kryoptic.conf:/etc/kryoptic/kryoptic.conf:ro
     extra_hosts:
       - "ds-pq-root.cert-lab.local:172.27.0.14"
       - "ds-pq-intermediate.cert-lab.local:172.27.0.15"
@@ -507,6 +515,8 @@ services:
       - ./data/certs/pq:/certs
       - pki-pq-kra-data:/var/lib/pki
       - pki-pq-kra-logs:/var/log/pki
+      - kryoptic-pq-data:/var/lib/kryoptic:ro
+      - ./containers/kryoptic-hsm/kryoptic.conf:/etc/kryoptic/kryoptic.conf:ro
     extra_hosts:
       - "ds-pq-root.cert-lab.local:172.27.0.14"
       - "ds-pq-intermediate.cert-lab.local:172.27.0.15"
@@ -528,6 +538,83 @@ services:
       timeout: 10s
       retries: 5
       start_period: 120s
+
+  # 389 Directory Server for PQ Ops CA (RSA-4096, cross-signed by PQ Intermediate)
+  # HSM deployment only — activated by HSM_BACKEND=kryoptic
+  ds-pq-ops:
+    image: quay.io/389ds/dirsrv:${DS_VERSION:-latest}
+    container_name: ds-pq-ops
+    hostname: ds-pq-ops.${LAB_DOMAIN:-cert-lab.local}
+    environment:
+      DS_DM_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      DS_SUFFIX_NAME: ops-ca
+    volumes:
+      - ds-pq-ops-data:/data
+    networks:
+      pki-pq-net:
+        ipv4_address: 172.27.0.25
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/libexec/dirsrv/dscontainer -H || ldapsearch -x -H ldap://localhost:3389 -b '' -s base > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      start_period: 120s
+      retries: 10
+    profiles:
+      - hsm
+
+  # RSA-4096 Ops CA — issues TLS, admin, subsystem certs for PQ infrastructure.
+  # Cross-signed by PQ Intermediate CA. All keys in Kryoptic HSM slot 5.
+  # HSM deployment only — activated by HSM_BACKEND=kryoptic
+  dogtag-pq-ops-ca:
+    image: ${PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
+    container_name: dogtag-pq-ops-ca
+    hostname: pq-ops-ca.${LAB_DOMAIN:-cert-lab.local}
+    privileged: true
+    depends_on:
+      ds-pq-ops:
+        condition: service_healthy
+      dogtag-pq-intermediate-ca:
+        condition: service_started
+    environment:
+      PKI_DS_URL: ldap://ds-pq-ops.cert-lab.local:3389
+      PKI_DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      PKI_ADMIN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_BACKUP_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_CLIENT_PKCS12_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_TOKEN_PASSWORD: ${PKI_ADMIN_PASSWORD:-RedHat123}
+      PKI_INSTANCE_NAME: pki-pq-ops-ca
+      DS_PASSWORD: ${DS_PASSWORD:-RedHat123}
+      KRYOPTIC_CONF: /etc/kryoptic/kryoptic.conf
+    volumes:
+      - ./configs/pki:/etc/pki-configs:ro
+      - ./scripts/pki:/scripts:ro
+      - ./data/certs/pq:/certs
+      - pki-pq-ops-data:/var/lib/pki
+      - pki-pq-ops-logs:/var/log/pki
+      - kryoptic-pq-data:/var/lib/kryoptic:ro
+      - ./containers/kryoptic-hsm/kryoptic.conf:/etc/kryoptic/kryoptic.conf:ro
+    extra_hosts:
+      - "ds-pq-root.cert-lab.local:172.27.0.14"
+      - "ds-pq-intermediate.cert-lab.local:172.27.0.15"
+      - "ds-pq-ops.cert-lab.local:172.27.0.25"
+      - "pq-root-ca.cert-lab.local:172.27.0.12"
+      - "pq-intermediate-ca.cert-lab.local:172.27.0.11"
+      - "pq-ops-ca.cert-lab.local:172.27.0.26"
+    networks:
+      pki-pq-net:
+        ipv4_address: 172.27.0.26
+    ports:
+      - "8460:8443"
+      - "8494:8080"
+    command: ["/bin/bash", "-c", "sleep infinity"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk https://localhost:8443/ca/admin/ca/getStatus 2>/dev/null | grep -q running || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    profiles:
+      - hsm
 
 networks:
   pki-pq-net:
@@ -554,5 +641,8 @@ volumes:
   ds-pq-kra-data:
   pki-pq-kra-data:
   pki-pq-kra-logs:
+  ds-pq-ops-data:
+  pki-pq-ops-data:
+  pki-pq-ops-logs:
   kryoptic-pq-data:
   kryoptic-pq-socket:
