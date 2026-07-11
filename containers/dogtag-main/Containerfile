@@ -38,7 +38,9 @@ RUN git clone --depth 1 --branch $JSS_BRANCH $JSS_REPO . \
 RUN dnf builddep -y --skip-unavailable jss.spec \
     && dnf clean all
 
-RUN ./build.sh --work-dir=build rpm
+# Disable LTO — GCC 16 on Fedora 44 ICEs in the LTO pass on JNI code
+RUN echo '%_lto_cflags %{nil}' >> ~/.rpmmacros \
+    && ./build.sh --work-dir=build rpm
 
 ################################################################################
 # Stage 0b: Lightweight dist holding JSS RPMs
