@@ -25,13 +25,21 @@ fi
 echo "=== Adding Akamu ACME + Kipuka EST to running PQ stack ==="
 
 # Check that the IoT CA is running (enrollment depends on it)
-IOT_STATUS=$(sudo podman inspect --format '{{.State.Status}}' dogtag-pq-iot-ca 2>/dev/null || echo "missing")
-if [ "$IOT_STATUS" != "running" ]; then
-    echo "ERROR: dogtag-pq-iot-ca is not running (status: $IOT_STATUS)"
-    echo "Start the PQ stack first: ./start-lab.sh --pqc"
+# Check for PQ CA — either IoT Sub-CA (full hierarchy) or self-signed CA (minimal)
+CA_CONTAINER=""
+for ctr in dogtag-pq-iot-ca dogtag-pq-ca; do
+    ctr_status=$(sudo podman inspect --format '{{.State.Status}}' "$ctr" 2>/dev/null || echo "missing")
+    if [ "$ctr_status" = "running" ]; then
+        CA_CONTAINER="$ctr"
+        break
+    fi
+done
+if [ -z "$CA_CONTAINER" ]; then
+    echo "ERROR: No PQ CA running (checked dogtag-pq-iot-ca, dogtag-pq-ca)"
+    echo "Start the PQ stack first: ./start-lab.sh --pqc or pki-pq-minimal.yml"
     exit 1
 fi
-echo "✓ IoT CA is running"
+echo "✓ PQ CA running ($CA_CONTAINER)"
 
 # Find the PQ network (podman-compose may or may not prefix project name)
 NETWORK=""
@@ -73,8 +81,9 @@ done
 
 EXTRA_HOSTS=(
     --add-host "pq-root-ca.cert-lab.local:172.27.0.12"
+    --add-host "pq-ca.cert-lab.local:172.27.0.12"
     --add-host "pq-intermediate-ca.cert-lab.local:172.27.0.11"
-    --add-host "pq-iot-ca.cert-lab.local:172.27.0.13"
+    --add-host "pq-iot-ca.cert-lab.local:172.27.0.12"
     --add-host "akamu-pq.cert-lab.local:172.27.0.18"
     --add-host "kipuka-pq.cert-lab.local:172.27.0.19"
     --add-host "pq-ocsp.cert-lab.local:172.27.0.22"
