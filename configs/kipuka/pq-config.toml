@@ -47,6 +47,7 @@ url = "sqlite:///var/lib/kipuka/kipuka.db?mode=rwc"
 # HTTP port 8080 accepts basic auth for ALL endpoints including agent
 # approve, which is required for kipuka's auto-approve flow.
 ca_url          = "http://pq-iot-ca.cert-lab.local:8080"
+kra_url         = "http://pq-kra.cert-lab.local:8080"
 agent_cert_file = "/etc/kipuka/certs/dogtag/agent.pem"
 agent_key_file  = "/etc/kipuka/certs/dogtag/agent-rsa.key.pem"
 ca_cert_file    = "/etc/kipuka/certs/dogtag/ca-chain.pem"
