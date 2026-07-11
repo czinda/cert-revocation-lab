@@ -81,6 +81,7 @@ case "$action" in
         instance=$(echo "$service" | sed "s/pki-tomcatd@//;s/\.service//")
         if [ -n "$instance" ]; then
             echo "Starting PKI instance: $instance using pki-server run" >&2
+            export JAVA_OPTS="${JAVA_OPTS:--Djdk.tls.maxHandshakeMessageSize=64000}"
             nohup pki-server run "$instance" > /var/log/pki/$instance/startup.log 2>&1 &
         fi
         ;;
@@ -141,15 +142,7 @@ pki_admin_key_algorithm = ML-DSA-87
 pki_admin_key_size = 87
 EOFCFG"
 
-    # Patch Tomcat for ML-DSA-87 TLS handshake size
-    sudo podman exec "$CA_CONTAINER" bash -c "
-        TOMCAT_CONF=/usr/share/pki/server/conf/tomcat.conf
-        if ! grep -q 'maxHandshakeMessageSize' \$TOMCAT_CONF 2>/dev/null; then
-            echo 'JAVA_OPTS=\"\${JAVA_OPTS} -Djdk.tls.maxHandshakeMessageSize=64000\"' >> \$TOMCAT_CONF
-        fi
-    "
-
-    # Patch web.xml: CONFIDENTIAL → NONE for HTTP access
+    # Patch web.xml template: CONFIDENTIAL → NONE for HTTP access
     sudo podman exec "$CA_CONTAINER" bash -c "
         WEB_XML=/usr/share/pki/server/conf/web.xml
         if [ -f \$WEB_XML ]; then
@@ -157,14 +150,21 @@ EOFCFG"
         fi
     "
 
-    # Run pkispawn
-    sudo podman exec "$CA_CONTAINER" pkispawn -f /tmp/pq-ca.cfg -s CA -v 2>&1 | tail -5
+    # Run pkispawn with JAVA_OPTS set for ML-DSA-87 TLS handshake size
+    sudo podman exec -e JAVA_OPTS="-Djdk.tls.maxHandshakeMessageSize=64000" \
+        "$CA_CONTAINER" pkispawn -f /tmp/pq-ca.cfg -s CA -v 2>&1 | tail -10
 
-    # Start the CA
-    sudo podman exec "$CA_CONTAINER" bash -c "
-        pki-server start pki-pq-ca &
-        disown
-    "
+    # If pkispawn started the server, it should be running now.
+    # If not (timeout), start manually with the JDK fix.
+    CA_RUNNING=$(sudo podman exec "$CA_CONTAINER" curl -sk https://localhost:8443/ca/admin/ca/getStatus 2>/dev/null || echo "")
+    if ! echo "$CA_RUNNING" | grep -q "running"; then
+        log_info "Starting CA manually with TLS handshake fix..."
+        sudo podman exec "$CA_CONTAINER" bash -c "
+            export JAVA_OPTS='-Djdk.tls.maxHandshakeMessageSize=64000'
+            pki-server run pki-pq-ca &
+            disown
+        "
+    fi
 
     # Wait for CA to come up
     wait_for_ca "$CA_CONTAINER"
@@ -196,6 +196,7 @@ case "$action" in
         instance=$(echo "$service" | sed "s/pki-tomcatd@//;s/\.service//")
         if [ -n "$instance" ]; then
             echo "Starting PKI instance: $instance using pki-server run" >&2
+            export JAVA_OPTS="${JAVA_OPTS:--Djdk.tls.maxHandshakeMessageSize=64000}"
             nohup pki-server run "$instance" > /var/log/pki/$instance/startup.log 2>&1 &
         fi
         ;;
@@ -258,15 +259,7 @@ pki_admin_key_algorithm = ML-DSA-87
 pki_admin_key_size = 87
 EOFCFG"
 
-    # Patch Tomcat for ML-DSA-87 TLS
-    sudo podman exec "$KRA_CONTAINER" bash -c "
-        TOMCAT_CONF=/usr/share/pki/server/conf/tomcat.conf
-        if ! grep -q 'maxHandshakeMessageSize' \$TOMCAT_CONF 2>/dev/null; then
-            echo 'JAVA_OPTS=\"\${JAVA_OPTS} -Djdk.tls.maxHandshakeMessageSize=64000\"' >> \$TOMCAT_CONF
-        fi
-    "
-
-    # Patch web.xml
+    # Patch web.xml template
     sudo podman exec "$KRA_CONTAINER" bash -c "
         WEB_XML=/usr/share/pki/server/conf/web.xml
         if [ -f \$WEB_XML ]; then
@@ -274,14 +267,20 @@ EOFCFG"
         fi
     "
 
-    # Run pkispawn for KRA
-    sudo podman exec "$KRA_CONTAINER" pkispawn -f /tmp/pq-kra.cfg -s KRA -v 2>&1 | tail -5
+    # Run pkispawn for KRA with TLS handshake fix
+    sudo podman exec -e JAVA_OPTS="-Djdk.tls.maxHandshakeMessageSize=64000" \
+        "$KRA_CONTAINER" pkispawn -f /tmp/pq-kra.cfg -s KRA -v 2>&1 | tail -10
 
-    # Start KRA
-    sudo podman exec "$KRA_CONTAINER" bash -c "
-        pki-server start pki-pq-kra &
-        disown
-    "
+    # Start KRA if pkispawn didn't
+    KRA_UP=$(sudo podman exec "$KRA_CONTAINER" curl -sk https://localhost:8443/kra/admin/kra/getStatus 2>/dev/null || echo "")
+    if ! echo "$KRA_UP" | grep -q "running"; then
+        log_info "Starting KRA manually..."
+        sudo podman exec "$KRA_CONTAINER" bash -c "
+            export JAVA_OPTS='-Djdk.tls.maxHandshakeMessageSize=64000'
+            pki-server run pki-pq-kra &
+            disown
+        "
+    fi
 
     # Wait for KRA
     kra_elapsed=0
