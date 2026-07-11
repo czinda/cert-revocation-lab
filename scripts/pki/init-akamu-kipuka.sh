@@ -47,8 +47,14 @@ case "$PKI_TYPE" in
         ALGO_DESC="ECC P-384"
         ;;
     pq)
-        ISSUING_CA_CONTAINER="dogtag-pq-iot-ca"
-        ISSUING_CA_INSTANCE="pki-pq-iot-ca"
+        # Support both full hierarchy (dogtag-pq-iot-ca) and minimal (dogtag-pq-ca)
+        if sudo podman inspect --format '{{.State.Status}}' dogtag-pq-iot-ca 2>/dev/null | grep -q running; then
+            ISSUING_CA_CONTAINER="dogtag-pq-iot-ca"
+            ISSUING_CA_INSTANCE="pki-pq-iot-ca"
+        else
+            ISSUING_CA_CONTAINER="dogtag-pq-ca"
+            ISSUING_CA_INSTANCE="pki-pq-ca"
+        fi
         # HTTP: NSS can't validate ML-DSA-87 cert chains in TLS client auth path
         ISSUING_CA_URL_INSIDE="http://localhost:8080"
         AKAMU_CONTAINER="akamu-pq"
