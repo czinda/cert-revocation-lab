@@ -16,7 +16,7 @@ if [ -f "$SCRIPT_DIR/.venv/bin/python" ]; then
 elif [ -f "$SCRIPT_DIR/venv/bin/python" ]; then
     PYTHON="$SCRIPT_DIR/venv/bin/python"
 else
-    PYTHON="python3"
+    PYTHON="/usr/bin/python3"
 fi
 
 # Run the CLI
