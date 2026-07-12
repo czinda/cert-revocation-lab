@@ -72,6 +72,10 @@ main() {
 
     mkdir -p "${TOKEN_DIR}"
 
+    # Copy the PKCS#11 module into the shared data volume so CA containers
+    # can access it via the kryoptic-pq-data volume mount
+    cp "${PKCS11_MODULE}" /var/lib/kryoptic/libkryoptic_pkcs11.so 2>/dev/null || true
+
     # Check if already initialized
     if [ -f "${STATUS_FILE}" ]; then
         local is_init
