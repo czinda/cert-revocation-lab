@@ -102,8 +102,16 @@ def acme_issue_certificate(
             message=f"ACME not available for {pki_type.value} PKI (backend={ENROLLMENT_BACKEND})."
         )
 
-    # Use certbot in standalone mode with manual DNS challenge
-    # For lab purposes, we'll use HTTP-01 challenge
+    # Ensure the domain resolves inside the akamu container by adding
+    # it to /etc/hosts via podman exec.  The host IP on the PQ network
+    # is 172.27.0.1 (the gateway).
+    subprocess.run(
+        ["sudo", "podman", "exec", "akamu-pq", "bash", "-c",
+         f'grep -q "{domain}" /etc/hosts || echo "172.27.0.1 {domain}" >> /etc/hosts'],
+        capture_output=True, timeout=10,
+    )
+
+    # Use certbot in standalone mode with HTTP-01 challenge
     with tempfile.TemporaryDirectory() as tmpdir:
         config_dir = Path(tmpdir) / "config"
         work_dir = Path(tmpdir) / "work"
