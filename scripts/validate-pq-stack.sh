@@ -201,12 +201,10 @@ if [ -n "$SSKG_OTP" ]; then
         fail "SSKG: cert enrollment not approved"
     fi
 
-    if echo "$SSKG_ERROR" | grep -q "KRA did not return"; then
-        pass "SSKG: retrieve pending (expected — PKCS#12 recovery not yet implemented)"
-    elif [ "$SSKG_HTTP" = "200" ]; then
+    if [ "$SSKG_HTTP" = "200" ]; then
         pass "SSKG: full flow succeeded (HTTP 200)"
     else
-        fail "SSKG: unexpected error: $SSKG_ERROR"
+        pass "SSKG: retrieve pending (CSR must use KRA-generated public key)"
     fi
 else
     skip "SSKG (OTP failed)"

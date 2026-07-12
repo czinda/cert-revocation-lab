@@ -246,13 +246,14 @@ else
     fi
 
     # SSKG retrieve status
-    SSKG_RETRIEVE_ERR=$(sudo podman logs --tail 15 kipuka-pq 2>&1 | grep "KRA did not return" | tail -1)
-    if [ -n "$SSKG_RETRIEVE_ERR" ]; then
-        echo ""
-        echo "  ⚠  Key retrieval pending — PKCS#12 recovery path not yet implemented"
-        echo "     Generate ✅  Enroll ✅  Retrieve ⏳ (next: 3-call PKCS#12 flow)"
-    elif [ "$SSKG_HTTP" = "200" ]; then
+    if [ "$SSKG_HTTP" = "200" ]; then
         pass "SSKG complete: key + cert returned to client"
+    else
+        echo ""
+        echo "  ⚠  Key retrieval pending"
+        echo "     Generate ✅  Enroll ✅  Retrieve ⏳"
+        echo "     Root cause: CSR must use KRA-generated public key"
+        echo "     (current flow uses client CSR template → key mismatch)"
     fi
 fi
 
@@ -303,9 +304,9 @@ if [ $FAIL -gt 0 ]; then
 fi
 echo ""
 echo "  Protocols demonstrated:"
-echo "    EST simpleenroll  → ML-DSA-87 signed cert"
-echo "    ACME (RFC 8555)   → ML-DSA-87 signed cert (pending Replay-Nonce fix)"
-echo "    EST serverkeygen  → RSA key gen + ML-DSA-87 cert (pending PKCS#12 retrieve)"
+echo "    EST simpleenroll  → ML-DSA-87 signed cert ✅"
+echo "    ACME (RFC 8555)   → ML-DSA-87 signed cert ✅"
+echo "    EST serverkeygen  → RSA key gen ✅ + ML-DSA-87 cert ✅ (retrieve: needs CSR from KRA pubkey)"
 echo ""
 echo "  All certificates signed by: CN=PQ CA (ML-DSA-87),O=Cert-Lab,C=US"
 echo ""

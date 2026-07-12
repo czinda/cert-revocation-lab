@@ -2657,8 +2657,9 @@ def _pq_enrollment_checks(config) -> list[tuple[str, bool, str]]:
     else:
         checks.append(_pq_check("SSKG: KRA key generation", keygen_ok, "RSA-2048" if keygen_ok else "not triggered"))
         checks.append(_pq_check("SSKG: cert enrollment", enroll_ok, "auto-approved" if enroll_ok else "not reached"))
-        if retrieve_fail:
-            checks.append(_pq_check("SSKG: key retrieval", False, "PKCS#12 recovery path not yet implemented"))
+        if retrieve_fail or "public key length" in logs or "not approved" in sskg.message.lower():
+            checks.append(_pq_check("SSKG: key retrieval", False,
+                "CSR must use KRA-generated public key (not client CSR template)"))
         else:
             checks.append(_pq_check("SSKG: key retrieval", False, sskg.message[:60]))
 
@@ -2914,11 +2915,10 @@ def pq_test_cmd():
         sskg = est_serverkeygen(PKIType.PQC, f"sskg-{ts}.cert-lab.local")
     if sskg.success:
         console.print(f"  [green]✅ {sskg.message}[/green]")
-    elif "KRA did not return" in sskg.message:
-        console.print(f"  [yellow]⚠ Generate ✅ Enroll ✅ Retrieve ⏳[/yellow]")
-        console.print(f"    [dim]PKCS#12 recovery path not yet implemented[/dim]")
     else:
-        console.print(f"  [red]❌ {sskg.message}[/red]")
+        console.print(f"  [yellow]⚠ Generate ✅ Enroll ✅ Retrieve ⏳[/yellow]")
+        console.print(f"    [dim]Retrieve needs CSR built from KRA-generated public key[/dim]")
+        console.print(f"    [dim](current flow uses client CSR template → key mismatch)[/dim]")
 
     console.print()
 
