@@ -2477,7 +2477,9 @@ def est_serverkeygen_cmd(
 
     if result.success:
         console.print(f"[green]✓ {result.message}[/green]")
-        if result.details:
+        if result.certificate:
+            _show_cert_details(console, result.certificate)
+        elif result.details:
             console.print(f"  Device: {result.details.get('device', device)}")
             preview = result.details.get("response_preview", "")
             if preview:

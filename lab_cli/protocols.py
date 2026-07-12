@@ -1265,9 +1265,33 @@ def est_serverkeygen(
 
         response = result.stdout.strip()
         if "BEGIN" in response or response.startswith("MII") or "estServerKeyGenBoundary" in response or "multipart" in response.lower():
+            # Parse multipart to extract the cert (PKCS#7 part)
+            cert_pem = None
+            if "estServerKeyGenBoundary" in response:
+                parts = response.split("--estServerKeyGenBoundary")
+                for part in parts:
+                    if "pkcs7" in part.lower() or "certs-only" in part.lower():
+                        lines = part.strip().splitlines()
+                        b64_lines = [l for l in lines if l.strip() and not l.strip().startswith("Content-") and ":" not in l.split()[0] if len(l.strip()) > 10]
+                        if b64_lines:
+                            p7_b64 = "".join(b64_lines)
+                            try:
+                                p7_der = base64.b64decode(p7_b64)
+                                # Convert PKCS#7 to PEM cert via container OpenSSL
+                                p7_conv = subprocess.run(
+                                    ["sudo", "podman", "exec", "-i", "dogtag-pq-ca",
+                                     "openssl", "pkcs7", "-inform", "DER", "-print_certs"],
+                                    input=p7_der, capture_output=True, timeout=10,
+                                )
+                                if p7_conv.returncode == 0 and b"BEGIN CERTIFICATE" in p7_conv.stdout:
+                                    cert_pem = p7_conv.stdout.decode(errors="replace")
+                            except Exception:
+                                pass
+
             return ProtocolResult(
                 success=True,
                 message="Server-side key generation completed (cert + key returned)",
+                certificate=cert_pem,
                 details={"device": device_fqdn, "response_size": len(response)},
             )
 
