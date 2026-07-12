@@ -116,18 +116,20 @@ wait_ds() {
     return 1
 }
 
-log_info "Starting Directory Servers..."
-start_ds ds-pq-root 172.27.0.14 pq-root-ca
-start_ds ds-pq-intermediate 172.27.0.15 pq-intermediate-ca
-start_ds ds-pq-iot 172.27.0.16 pq-iot-ca
-start_ds ds-pq-ocsp 172.27.0.21 pq-ocsp
-start_ds ds-pq-kra 172.27.0.24 kra
-echo ""
+# Start DS containers sequentially — parallel startup exhausts entropy
+# during 4096-bit RSA key generation and ns-slapd fails to start
+log_info "Starting Directory Servers (sequential — NSS keygen needs entropy)..."
+DS_LIST="ds-pq-root:172.27.0.14:pq-root-ca
+ds-pq-intermediate:172.27.0.15:pq-intermediate-ca
+ds-pq-iot:172.27.0.16:pq-iot-ca
+ds-pq-ocsp:172.27.0.21:pq-ocsp
+ds-pq-kra:172.27.0.24:kra"
 
-log_info "Waiting for DS health..."
-for ds in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-ocsp ds-pq-kra; do
-    echo -n "  $ds: "
-    wait_ds "$ds"
+for ds_entry in $DS_LIST; do
+    IFS=: read -r ds_name ds_ip ds_suffix <<< "$ds_entry"
+    echo -n "  $ds_name: "
+    start_ds "$ds_name" "$ds_ip" "$ds_suffix"
+    wait_ds "$ds_name"
 done
 
 # Start Kryoptic HSM
