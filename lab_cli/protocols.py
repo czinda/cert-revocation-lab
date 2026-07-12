@@ -126,14 +126,15 @@ def acme_issue_certificate(
             if pip_install.returncode != 0:
                 return _acme_simple_client(acme_url, domain, config)
 
-        # Use certbot
+        # Use certbot — run as root for port 80 binding
         cmd = [
-            "certbot", "certonly",
+            "sudo", "certbot", "certonly",
             "--server", f"{acme_url}/directory",
             "--standalone",
-            "--preferred-challenges", "http",
+            "--key-type", "rsa",
+            "--http-01-port", "80",
             "--agree-tos",
-            "--register-unsafely-without-email",
+            "--email", "test@cert-lab.local",
             "--no-eff-email",
             "--config-dir", str(config_dir),
             "--work-dir", str(work_dir),
@@ -146,8 +147,18 @@ def acme_issue_certificate(
 
         if result.returncode == 0:
             cert_path = config_dir / "live" / domain / "cert.pem"
-            if cert_path.exists():
-                cert_content = cert_path.read_text()
+            fullchain_path = config_dir / "live" / domain / "fullchain.pem"
+            # sudo creates files as root — read with sudo cat
+            cert_content = ""
+            for cp in [cert_path, fullchain_path]:
+                try:
+                    r = subprocess.run(["sudo", "cat", str(cp)], capture_output=True, text=True, timeout=5)
+                    if r.returncode == 0 and "BEGIN CERTIFICATE" in r.stdout:
+                        cert_content = r.stdout
+                        break
+                except Exception:
+                    continue
+            if cert_content:
                 details = {"acme_url": acme_url, "domain": domain}
                 cert_info = subprocess.run(
                     ["openssl", "x509", "-noout", "-subject", "-issuer",
@@ -271,7 +282,13 @@ def est_enroll_certificate(
         csr_path = Path(tmpdir) / "request.csr"
 
         # Generate key based on PKI type
-        if pki_type == PKIType.ECC:
+        if pki_type == PKIType.PQC:
+            key_cmd = [
+                "openssl", "genpkey",
+                "-algorithm", "ML-DSA-87",
+                "-out", str(key_path)
+            ]
+        elif pki_type == PKIType.ECC:
             key_cmd = [
                 "openssl", "ecparam", "-genkey",
                 "-name", "secp384r1",
@@ -516,7 +533,9 @@ def est_reenroll_certificate(
         csr_path = Path(tmpdir) / "request.csr"
 
         # Generate new key based on PKI type
-        if pki_type == PKIType.ECC:
+        if pki_type == PKIType.PQC:
+            key_cmd = ["openssl", "genpkey", "-algorithm", "ML-DSA-87", "-out", str(key_path)]
+        elif pki_type == PKIType.ECC:
             key_cmd = ["openssl", "ecparam", "-genkey", "-name", "secp384r1", "-out", str(key_path)]
         else:
             key_cmd = ["openssl", "genrsa", "-out", str(key_path), "2048"]
@@ -1004,7 +1023,9 @@ def est_serverkeygen(
         key_path = Path(tmpdir) / "key.pem"
         csr_path = Path(tmpdir) / "request.csr"
 
-        if pki_type == PKIType.ECC:
+        if pki_type == PKIType.PQC:
+            key_cmd = ["openssl", "genpkey", "-algorithm", "ML-DSA-87", "-out", str(key_path)]
+        elif pki_type == PKIType.ECC:
             key_cmd = ["openssl", "ecparam", "-genkey", "-name", "secp384r1", "-out", str(key_path)]
         else:
             key_cmd = ["openssl", "genrsa", "-out", str(key_path), "2048"]
