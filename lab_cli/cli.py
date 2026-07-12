@@ -73,6 +73,23 @@ app = typer.Typer(
 console = Console()
 
 
+_PQ_OID_MAP = {
+    "2.16.840.1.101.3.4.3.17": "ML-DSA-44",
+    "2.16.840.1.101.3.4.3.18": "ML-DSA-65",
+    "2.16.840.1.101.3.4.3.19": "ML-DSA-87",
+    "2.16.840.1.101.3.4.4.1": "ML-KEM-512",
+    "2.16.840.1.101.3.4.4.2": "ML-KEM-768",
+    "2.16.840.1.101.3.4.4.3": "ML-KEM-1024",
+}
+
+
+def _resolve_pq_oid(text: str) -> str:
+    """Replace PQ OIDs with human-readable names in a display string."""
+    for oid, name in _PQ_OID_MAP.items():
+        text = text.replace(oid, name)
+    return text
+
+
 def _show_cert_details(con: Console, pem: str) -> None:
     """Display certificate subject, issuer, dates, and algorithms."""
     import subprocess as _sp, tempfile as _tf, os as _os
@@ -88,7 +105,7 @@ def _show_cert_details(con: Console, pem: str) -> None:
         if detail.returncode == 0:
             con.print(f"\n[bold cyan]Certificate Details[/bold cyan]")
             for line in detail.stdout.strip().splitlines():
-                con.print(f"  {line.strip()}")
+                con.print(f"  {_resolve_pq_oid(line.strip())}")
 
         text_out = _sp.run(
             ["openssl", "x509", "-in", cf_path, "-noout", "-text"],
@@ -98,12 +115,12 @@ def _show_cert_details(con: Console, pem: str) -> None:
             for line in text_out.stdout.splitlines():
                 stripped = line.strip()
                 if "Signature Algorithm:" in stripped:
-                    con.print(f"  [yellow]{stripped}[/yellow]")
+                    con.print(f"  [yellow]{_resolve_pq_oid(stripped)}[/yellow]")
                     break
             for line in text_out.stdout.splitlines():
                 stripped = line.strip()
                 if "Public Key Algorithm:" in stripped:
-                    con.print(f"  {stripped}")
+                    con.print(f"  {_resolve_pq_oid(stripped)}")
                     break
     finally:
         _os.unlink(cf_path)
