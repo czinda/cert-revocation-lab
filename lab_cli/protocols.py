@@ -120,7 +120,7 @@ def _get_est_url(pki_type: PKIType) -> Optional[str]:
     return _build_url(pki_type, "est", "/.well-known/est")
 
 
-def _acme_via_akamu_cli(acme_url: str, domain: str, container: str) -> ProtocolResult:
+def _acme_via_akamu_cli(acme_url: str, domain: str, container: str, pki_type: PKIType = PKIType.RSA) -> ProtocolResult:
     """Issue certificate using akamu-cli in a Fedora container with host networking."""
     with tempfile.TemporaryDirectory() as tmpdir:
         certs_dir = Path(tmpdir)
@@ -137,7 +137,7 @@ def _acme_via_akamu_cli(acme_url: str, domain: str, container: str) -> ProtocolR
             "--account-key", "/certs/account.pem",
             "--challenge", "http-01",
             "--http-port", "80",
-            "--cert-key-type", "rsa:2048",
+            "--cert-key-type", "ml-dsa-87" if pki_type == PKIType.PQC else "rsa:2048",
             "--out", f"/certs/{domain}.pem",
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
@@ -236,7 +236,7 @@ def acme_issue_certificate(
         capture_output=True, timeout=5,
     )
     if cli_check.returncode == 0:
-        return _acme_via_akamu_cli(acme_url, domain, akamu_container)
+        return _acme_via_akamu_cli(acme_url, domain, akamu_container, pki_type)
 
     # Fallback: ensure domain resolves inside akamu container for certbot
     subprocess.run(
