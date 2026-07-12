@@ -32,14 +32,13 @@ ocsp_url = "http://pq-ocsp.cert-lab.local:8080/ocsp/ee/ocsp"
 
 [ca.signer]
 type         = "dogtag"
-# HTTP required: akamu uses rustls (not OpenSSL) for its reqwest client.
-# rustls/ring cannot verify ML-DSA-87 server certs from the PQ CA.
-# kipuka uses native-tls (OpenSSL 3.5+) and CAN do HTTPS mTLS.
-url          = "http://stunnel-pq-proxy.cert-lab.local:8080"
-ra_cert_file = "/certs/dogtag/agent.pem"
-ra_key_file  = "/certs/dogtag/agent-rsa.key.pem"
-ca_cert_file = "/certs/dogtag/ca-chain.pem"
-profile_id   = "caServerCert"
+# Direct HTTPS: akamu uses native-tls (OpenSSL 3.5+) which handles
+# ML-DSA-87 cert chains. No stunnel proxy needed.
+url          = "https://pq-ca.cert-lab.local:8443"
+ra_cert_file = "/dev/null"
+ra_key_file  = "/dev/null"
+ca_cert_file = "/certs/ops-ca/ops-ca.cert.pem"
+profile_id   = "labAcmeServerCert"
 timeout_secs = 30
 username     = "caadmin"
 password     = "RedHat123"
