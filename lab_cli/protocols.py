@@ -120,6 +120,82 @@ def _get_est_url(pki_type: PKIType) -> Optional[str]:
     return _build_url(pki_type, "est", "/.well-known/est")
 
 
+def _acme_via_akamu_cli(acme_url: str, domain: str, container: str) -> ProtocolResult:
+    """Issue certificate using akamu-cli inside the akamu container."""
+    cmd = [
+        "sudo", "podman", "exec", container,
+        "/app/akamu-cli", "issue",
+        "--server", acme_url + "/directory",
+        "--domain", domain,
+        "--account-key", "/tmp/acme-account.pem",
+        "--challenge", "http-01",
+        "--http-port", "80",
+        "--cert-key-type", "ec:P-256",
+        "--output-dir", "/tmp/acme-certs",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+
+    if result.returncode == 0:
+        # Read the cert from the container
+        cert_read = subprocess.run(
+            ["sudo", "podman", "exec", container, "cat", f"/tmp/acme-certs/{domain}/cert.pem"],
+            capture_output=True, text=True, timeout=10,
+        )
+        cert_content = cert_read.stdout if cert_read.returncode == 0 else ""
+
+        # Get cert details using container's OpenSSL (handles ML-DSA)
+        details = {"acme_url": acme_url, "domain": domain, "client": "akamu-cli"}
+        if cert_content:
+            info = subprocess.run(
+                ["sudo", "podman", "exec", "-i", container,
+                 "openssl", "x509", "-noout", "-subject", "-issuer", "-serial", "-dates"],
+                input=cert_content, capture_output=True, text=True, timeout=5,
+            )
+            if info.returncode == 0:
+                for line in info.stdout.strip().splitlines():
+                    k, _, v = line.partition("=")
+                    details[k.strip()] = v.strip()
+            sig = subprocess.run(
+                ["sudo", "podman", "exec", "-i", container,
+                 "openssl", "x509", "-noout", "-text"],
+                input=cert_content, capture_output=True, text=True, timeout=5,
+            )
+            if sig.returncode == 0:
+                for line in sig.stdout.splitlines():
+                    if "Signature Algorithm" in line:
+                        raw = line.strip().split(":", 1)[-1].strip()
+                        OID_MAP = {
+                            "2.16.840.1.101.3.4.3.17": "ML-DSA-44",
+                            "2.16.840.1.101.3.4.3.18": "ML-DSA-65",
+                            "2.16.840.1.101.3.4.3.19": "ML-DSA-87",
+                        }
+                        details["signature_algorithm"] = OID_MAP.get(raw, raw)
+                        break
+
+        serial = None
+        s = subprocess.run(
+            ["sudo", "podman", "exec", "-i", container,
+             "openssl", "x509", "-noout", "-serial"],
+            input=cert_content, capture_output=True, text=True, timeout=5,
+        )
+        if s.returncode == 0 and "=" in s.stdout:
+            serial = f"0x{s.stdout.strip().split('=', 1)[1]}"
+
+        return ProtocolResult(
+            success=True,
+            message="Certificate issued via ACME (akamu-cli)",
+            certificate=cert_content,
+            serial=serial,
+            details=details,
+        )
+
+    return ProtocolResult(
+        success=False,
+        message=f"akamu-cli failed: {result.stderr[:300]}",
+        details={"stdout": result.stdout[:200]},
+    )
+
+
 def acme_issue_certificate(
     config: LabConfig,
     domain: str,
@@ -148,16 +224,23 @@ def acme_issue_certificate(
             message=f"ACME not available for {pki_type.value} PKI (backend={ENROLLMENT_BACKEND})."
         )
 
-    # Ensure the domain resolves inside the akamu container by adding
-    # it to /etc/hosts via podman exec.  The host IP on the PQ network
-    # is 172.27.0.1 (the gateway).
+    # Try akamu-cli first (built into the akamu container, supports ML-DSA)
+    akamu_container = "akamu-pq"
+    cli_check = subprocess.run(
+        ["sudo", "podman", "exec", akamu_container, "test", "-x", "/app/akamu-cli"],
+        capture_output=True, timeout=5,
+    )
+    if cli_check.returncode == 0:
+        return _acme_via_akamu_cli(acme_url, domain, akamu_container)
+
+    # Fallback: ensure domain resolves inside akamu container for certbot
     subprocess.run(
-        ["sudo", "podman", "exec", "akamu-pq", "bash", "-c",
+        ["sudo", "podman", "exec", akamu_container, "bash", "-c",
          f'grep -q "{domain}" /etc/hosts || echo "172.27.0.1 {domain}" >> /etc/hosts'],
         capture_output=True, timeout=10,
     )
 
-    # Use certbot in standalone mode with HTTP-01 challenge
+    # Certbot fallback
     with tempfile.TemporaryDirectory() as tmpdir:
         config_dir = Path(tmpdir) / "config"
         work_dir = Path(tmpdir) / "work"
