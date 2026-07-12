@@ -59,7 +59,7 @@ simpleenroll   = true
 simplereenroll = true
 csrattrs       = true
 fullcmc        = false
-serverkeygen   = false
+serverkeygen   = true
 
 # ── OTP Enrollment Authentication ────────────────────────────────────────
 [otp]
