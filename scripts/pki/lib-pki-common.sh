@@ -103,6 +103,24 @@ case "$CMD" in
             export CATALINA_BASE="/var/lib/pki/$INSTANCE"
             export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/jre-17-openjdk}"
 
+            # HSM cleanup: if keys are in internal token but HSM refs remain,
+            # pki-server run crashes with NoSuchTokenException during
+            # export_ca_cert's pki nss-cert-export call. Clean up before start.
+            if grep -q '^hardware-' "$CATALINA_BASE/conf/password.conf" 2>/dev/null; then
+                SUBSYSTEM_CFG=$(find "$CATALINA_BASE/conf" -name CS.cfg -path '*/ca/*' -o -name CS.cfg -path '*/ocsp/*' -o -name CS.cfg -path '*/kra/*' 2>/dev/null | head -1)
+                if [ -n "$SUBSYSTEM_CFG" ]; then
+                    ALL_INTERNAL=true
+                    for tok in $(grep 'tokenname=' "$SUBSYSTEM_CFG" 2>/dev/null | grep -v '#' | cut -d= -f2); do
+                        [ "$tok" != "internal" ] && ALL_INTERNAL=false && break
+                    done
+                    if [ "$ALL_INTERNAL" = "true" ]; then
+                        log_msg "Keys in internal token — removing HSM references from password.conf"
+                        sed -i '/^hardware-/d' "$CATALINA_BASE/conf/password.conf" 2>/dev/null
+                        modutil -delete kryoptic -dbdir "$CATALINA_BASE/alias" -force 2>/dev/null || true
+                    fi
+                fi
+            fi
+
             # Check if already running
             if [ -f "$CATALINA_BASE/conf/tomcat.pid" ]; then
                 PID=$(cat "$CATALINA_BASE/conf/tomcat.pid" 2>/dev/null)
@@ -533,6 +551,13 @@ patch_pq_tomcat_tls() {
         sed -i 's/^JAVA_OPTS="\(.*\)"/JAVA_OPTS="\1 -Djdk.tls.maxHandshakeMessageSize=64000"/' "$tomcat_conf"
     else
         echo 'JAVA_OPTS="-Djdk.tls.maxHandshakeMessageSize=64000"' >> "$tomcat_conf"
+    fi
+
+    # Kryoptic HSM: ensure KRYOPTIC_CONF is in tomcat.conf so the Java
+    # process can find the PKCS#11 token config when JSS loads the module
+    if [ "$HSM_BACKEND" = "kryoptic" ] && ! grep -q 'KRYOPTIC_CONF' "$tomcat_conf" 2>/dev/null; then
+        echo "KRYOPTIC_CONF=${KRYOPTIC_CONF:-/etc/kryoptic/kryoptic.conf}" >> "$tomcat_conf"
+        log_info "Added KRYOPTIC_CONF to tomcat.conf for Kryoptic PKCS#11"
     fi
 
     # NOTE: Do NOT set JAVA_TOOL_OPTIONS or JDK_JAVA_OPTIONS — both print
