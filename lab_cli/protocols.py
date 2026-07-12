@@ -289,13 +289,19 @@ def est_enroll_certificate(
         key_path = Path(tmpdir) / "key.pem"
         csr_path = Path(tmpdir) / "request.csr"
 
-        # Generate key based on PKI type
+        # Generate key based on PKI type.
+        # PQC: try ML-DSA-87 first; fall back to RSA if the host OpenSSL
+        # is < 3.5 (Ubuntu 24.04 ships 3.0 which lacks ML-DSA support).
+        # The cert will still be ML-DSA-87 *signed* by the PQ CA regardless.
         if pki_type == PKIType.PQC:
-            key_cmd = [
-                "openssl", "genpkey",
-                "-algorithm", "ML-DSA-87",
-                "-out", str(key_path)
-            ]
+            probe = subprocess.run(
+                ["openssl", "genpkey", "-algorithm", "ML-DSA-87", "-out", str(key_path)],
+                capture_output=True, text=True, timeout=10,
+            )
+            if probe.returncode != 0:
+                key_cmd = ["openssl", "genrsa", "-out", str(key_path), "2048"]
+            else:
+                key_cmd = None  # already generated
         elif pki_type == PKIType.ECC:
             key_cmd = [
                 "openssl", "ecparam", "-genkey",
@@ -308,12 +314,13 @@ def est_enroll_certificate(
                 "-out", str(key_path),
                 "2048"
             ]
-        result = subprocess.run(key_cmd, capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
-            return ProtocolResult(
-                success=False,
-                message=f"Failed to generate key: {result.stderr}"
-            )
+        if key_cmd is not None:
+            result = subprocess.run(key_cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode != 0:
+                return ProtocolResult(
+                    success=False,
+                    message=f"Failed to generate key: {result.stderr}"
+                )
 
         # Generate CSR with SAN (required by acmeServerCert profile)
         csr_cmd = [
@@ -542,11 +549,21 @@ def est_reenroll_certificate(
 
         # Generate new key based on PKI type
         if pki_type == PKIType.PQC:
-            key_cmd = ["openssl", "genpkey", "-algorithm", "ML-DSA-87", "-out", str(key_path)]
+            probe = subprocess.run(
+                ["openssl", "genpkey", "-algorithm", "ML-DSA-87", "-out", str(key_path)],
+                capture_output=True, text=True, timeout=10)
+            if probe.returncode != 0:
+                key_cmd = ["openssl", "genrsa", "-out", str(key_path), "2048"]
+            else:
+                key_cmd = None
         elif pki_type == PKIType.ECC:
             key_cmd = ["openssl", "ecparam", "-genkey", "-name", "secp384r1", "-out", str(key_path)]
         else:
             key_cmd = ["openssl", "genrsa", "-out", str(key_path), "2048"]
+        if key_cmd is not None:
+            result = subprocess.run(key_cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode != 0:
+                return ProtocolResult(success=False, message=f"Key generation failed: {result.stderr}")
         result = subprocess.run(key_cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
             return ProtocolResult(success=False, message=f"Failed to generate key: {result.stderr}")
@@ -1032,11 +1049,21 @@ def est_serverkeygen(
         csr_path = Path(tmpdir) / "request.csr"
 
         if pki_type == PKIType.PQC:
-            key_cmd = ["openssl", "genpkey", "-algorithm", "ML-DSA-87", "-out", str(key_path)]
+            probe = subprocess.run(
+                ["openssl", "genpkey", "-algorithm", "ML-DSA-87", "-out", str(key_path)],
+                capture_output=True, text=True, timeout=10)
+            if probe.returncode != 0:
+                key_cmd = ["openssl", "genrsa", "-out", str(key_path), "2048"]
+            else:
+                key_cmd = None
         elif pki_type == PKIType.ECC:
             key_cmd = ["openssl", "ecparam", "-genkey", "-name", "secp384r1", "-out", str(key_path)]
         else:
             key_cmd = ["openssl", "genrsa", "-out", str(key_path), "2048"]
+        if key_cmd is not None:
+            result = subprocess.run(key_cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode != 0:
+                return ProtocolResult(success=False, message=f"Key generation failed: {result.stderr}")
         result = subprocess.run(key_cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
             return ProtocolResult(success=False, message=f"Key generation failed: {result.stderr}")
