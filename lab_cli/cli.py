@@ -2667,7 +2667,8 @@ def _pq_trust_checks() -> list[tuple[str, bool, str]]:
     sign_issuer = get_cert_detail("dogtag-pq-ca", ca_nss, "caSigningCert cert-pki-pq-ca CA", "Issuer")
     checks.append(_pq_check("signing cert: PQ CA (ML-DSA)", "PQ CA" in sign_issuer, sign_issuer))
 
-    ops_cert = Path("data/certs/pq/ops-ca/ops-ca.cert.pem")
+    script_dir = Path(__file__).resolve().parent.parent
+    ops_cert = script_dir / "data" / "certs" / "pq" / "ops-ca" / "ops-ca.cert.pem"
     if ops_cert.exists():
         import subprocess
         r = subprocess.run(["openssl", "x509", "-in", str(ops_cert), "-noout", "-subject", "-issuer"],
@@ -2679,7 +2680,7 @@ def _pq_trust_checks() -> list[tuple[str, bool, str]]:
     else:
         checks.append(_pq_check("Ops CA cert exists", False, str(ops_cert)))
 
-    cfg_path = Path("configs/akamu/pq-config.toml")
+    cfg_path = script_dir / "configs" / "akamu" / "pq-config.toml"
     if cfg_path.exists():
         content = cfg_path.read_text()
         signer_url = ""
@@ -2694,7 +2695,7 @@ def _pq_trust_checks() -> list[tuple[str, bool, str]]:
         checks.append(_pq_check("akamu: direct HTTPS (no stunnel)",
                                 signer_url.startswith("https://"), signer_url[:40]))
 
-    kip_cfg = Path("configs/kipuka/pq-config.toml")
+    kip_cfg = script_dir / "configs" / "kipuka" / "pq-config.toml"
     if kip_cfg.exists():
         content = kip_cfg.read_text()
         checks.append(_pq_check("kipuka: skip_mtls=true", "skip_mtls" in content and "true" in content))
@@ -2813,7 +2814,8 @@ def pq_trust_cmd():
         console.print(table)
         console.print()
 
-    ops_cert = Path("data/certs/pq/ops-ca/ops-ca.cert.pem")
+    script_dir = Path(__file__).resolve().parent.parent
+    ops_cert = script_dir / "data" / "certs" / "pq" / "ops-ca" / "ops-ca.cert.pem"
     if ops_cert.exists():
         import subprocess
         r = subprocess.run(["openssl", "x509", "-in", str(ops_cert), "-noout", "-subject", "-issuer"],

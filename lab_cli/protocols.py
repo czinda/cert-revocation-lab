@@ -329,14 +329,29 @@ def est_enroll_certificate(
             f"{est_url}/simpleenroll"
         ]
 
-        # Authentication: client cert > OTP (from CLI) > password fallback
+        # Authentication: client cert > OTP (explicit or auto-generated) > password fallback
         if client_cert and client_key:
             enroll_cmd.extend(["--cert", client_cert, "--key", client_key])
         elif otp:
             enroll_cmd.extend(["-u", f"{device_fqdn}:{otp}"])
         else:
-            est_password = config.pki_admin_password if config else "RedHat123"
-            enroll_cmd.extend(["-u", f"est-client:{est_password}"])
+            # Auto-generate OTP for kipuka backend
+            from .config import ENROLLMENT_BACKEND
+            if ENROLLMENT_BACKEND == "akamu":
+                otp_result = est_generate_otp(pki_type, device_fqdn)
+                if otp_result.success and otp_result.details:
+                    auto_otp = otp_result.details.get("token", "")
+                    if auto_otp:
+                        enroll_cmd.extend(["-u", f"{device_fqdn}:{auto_otp}"])
+                    else:
+                        est_password = config.pki_admin_password if config else "RedHat123"
+                        enroll_cmd.extend(["-u", f"est-client:{est_password}"])
+                else:
+                    est_password = config.pki_admin_password if config else "RedHat123"
+                    enroll_cmd.extend(["-u", f"est-client:{est_password}"])
+            else:
+                est_password = config.pki_admin_password if config else "RedHat123"
+                enroll_cmd.extend(["-u", f"est-client:{est_password}"])
 
         result = subprocess.run(enroll_cmd, capture_output=True, text=True, timeout=60)
 
@@ -1025,9 +1040,21 @@ def est_serverkeygen(
         if otp:
             cmd.extend(["-u", f"{device_fqdn}:{otp}"])
         else:
-            config = LabConfig.load()
-            est_password = config.pki_admin_password if config else "RedHat123"
-            cmd.extend(["-u", f"est-client:{est_password}"])
+            from .config import ENROLLMENT_BACKEND
+            if ENROLLMENT_BACKEND == "akamu":
+                otp_result = est_generate_otp(pki_type, device_fqdn)
+                if otp_result.success and otp_result.details:
+                    auto_otp = otp_result.details.get("token", "")
+                    if auto_otp:
+                        cmd.extend(["-u", f"{device_fqdn}:{auto_otp}"])
+                    else:
+                        cmd.extend(["-u", f"est-client:RedHat123"])
+                else:
+                    cmd.extend(["-u", f"est-client:RedHat123"])
+            else:
+                config = LabConfig.load()
+                est_password = config.pki_admin_password if config else "RedHat123"
+                cmd.extend(["-u", f"est-client:{est_password}"])
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
         if result.returncode != 0:
