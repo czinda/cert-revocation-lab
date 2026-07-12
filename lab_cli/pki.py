@@ -13,6 +13,48 @@ from typing import Optional
 from .config import LabConfig, PKIType, CALevel, CAConfig, CA_CONFIGS
 
 
+def _podman_exec(container: str, cmd: str, timeout: int = 30) -> tuple[int, str]:
+    """Run a command inside a rootful podman container."""
+    result = subprocess.run(
+        ["sudo", "podman", "exec", container, "bash", "-c", cmd],
+        capture_output=True, text=True, timeout=timeout,
+    )
+    return result.returncode, result.stdout.strip()
+
+
+def _podman_status(container: str) -> str:
+    """Get container status (running/exited/not found)."""
+    result = subprocess.run(
+        ["sudo", "podman", "inspect", container, "--format", "{{.State.Status}}"],
+        capture_output=True, text=True, timeout=10,
+    )
+    return result.stdout.strip() if result.returncode == 0 else "not found"
+
+
+def get_nss_certs(container: str, nss_db: str) -> list[dict]:
+    """List certificates in an NSS database with trust flags."""
+    rc, output = _podman_exec(container, f"certutil -L -d {nss_db} 2>/dev/null")
+    if rc != 0:
+        return []
+    certs = []
+    for line in output.splitlines():
+        if not line.strip() or line.startswith("Certificate") or "SSL,S/MIME" in line:
+            continue
+        parts = line.rsplit(None, 1)
+        if len(parts) == 2:
+            certs.append({"nickname": parts[0].strip(), "trust": parts[1].strip()})
+    return certs
+
+
+def get_cert_detail(container: str, nss_db: str, nickname: str, field: str) -> str:
+    """Get a specific field from an NSS certificate (Issuer, Subject, Signature Algorithm)."""
+    rc, output = _podman_exec(
+        container,
+        f'certutil -L -d {nss_db} -n "{nickname}" 2>/dev/null | grep "{field}" | head -1',
+    )
+    return output.split(":", 1)[1].strip().strip('"') if ":" in output else ""
+
+
 @dataclass
 class CAHealthResult:
     """Result of a CA health check."""
