@@ -10,8 +10,8 @@
 # generation happens later when pkispawn calls C_GenerateKeyPair().
 #
 # Environment variables:
-#   HSM_SO_PIN    - Security Officer PIN (default: 12345678)
-#   HSM_USER_PIN  - User PIN (default: 1234)
+#   HSM_SO_PIN    - Security Officer PIN (default: 123456785678)
+#   HSM_USER_PIN  - User PIN (default: 12345678)
 
 set -euo pipefail
 
@@ -21,7 +21,7 @@ TOKEN_DIR="/var/lib/kryoptic/tokens"
 STATUS_FILE="/var/lib/kryoptic/status.json"
 
 SO_PIN="${HSM_SO_PIN:-12345678}"
-USER_PIN="${HSM_USER_PIN:-1234}"
+USER_PIN="${HSM_USER_PIN:-12345678}"
 
 # Slot labels matching kryoptic.conf [[slots]] entries
 SLOT_DEFS=(

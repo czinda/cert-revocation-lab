@@ -138,7 +138,7 @@ podman run -d --name kryoptic-pq-hsm \
     --hostname "hsm-pq.${LAB_DOM}" \
     --net pki-pq-net --ip 172.27.0.20 \
     -e HSM_SO_PIN="${HSM_SO_PIN:-12345678}" \
-    -e HSM_USER_PIN="${HSM_USER_PIN:-1234}" \
+    -e HSM_USER_PIN="${HSM_USER_PIN:-12345678}" \
     -v cert-revocation-lab_kryoptic-pq-data:/var/lib/kryoptic \
     -v cert-revocation-lab_kryoptic-pq-socket:/var/run/kryoptic \
     --health-cmd '[ -f /var/lib/kryoptic/status.json ] && python3 -c "import json,sys; d=json.load(open(\"/var/lib/kryoptic/status.json\")); sys.exit(0 if d.get(\"initialized\") else 1)" || exit 1' \

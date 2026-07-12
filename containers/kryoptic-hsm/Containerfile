@@ -63,7 +63,7 @@ RUN chmod +x /entrypoint.sh
 
 # Environment variables for token PINs
 ENV HSM_SO_PIN=12345678
-ENV HSM_USER_PIN=1234
+ENV HSM_USER_PIN=12345678
 ENV KRYOPTIC_CONF=/etc/kryoptic/kryoptic.conf
 
 # No ports exposed - library-only, used via volume mount
