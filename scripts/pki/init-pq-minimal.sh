@@ -319,11 +319,39 @@ chmod -R 755 "$CERTS_DIR" 2>/dev/null || true
 
 log_ok "Certificates exported to $CERTS_DIR"
 
+# ── Step 5: Create labAcmeServerCert profile ──────────────────────────
+# acmeServerCert with SessionAuthentication + sanToCNDefaultImpl for
+# ACME clients that send SAN-only CSRs (certbot). Created as a NEW
+# profile because file-based ProfileSubsystem doesn't reload modified
+# profiles — only fresh profiles load from file on restart.
+log_info "Creating labAcmeServerCert profile..."
+sudo podman exec "$CA_CONTAINER" bash -c "
+    PROFILE_SRC=/usr/share/pki/ca/profiles/ca/acmeServerCert.cfg
+    PROFILE_DST=/var/lib/pki/pki-pq-ca/ca/profiles/ca/labAcmeServerCert.cfg
+    CS_CFG=/var/lib/pki/pki-pq-ca/conf/ca/CS.cfg
+
+    if [ ! -f \$PROFILE_DST ] && [ -f \$PROFILE_SRC ]; then
+        cp \$PROFILE_SRC \$PROFILE_DST
+        sed -i 's/^profileId=.*/profileId=labAcmeServerCert/' \$PROFILE_DST
+        sed -i 's/^auth.instance_id=.*/auth.instance_id=SessionAuthentication/' \$PROFILE_DST
+        sed -i 's/^name=.*/name=Lab ACME Server Certificate Enrollment/' \$PROFILE_DST
+
+        if ! grep -q labAcmeServerCert \$CS_CFG; then
+            sed -i 's/^profile.list=/profile.list=labAcmeServerCert,/' \$CS_CFG
+            echo 'profile.labAcmeServerCert.class_id=caEnrollImpl' >> \$CS_CFG
+        fi
+        echo 'Created labAcmeServerCert profile'
+    else
+        echo 'labAcmeServerCert already exists or template missing'
+    fi
+" 2>/dev/null || true
+log_ok "labAcmeServerCert profile ready"
+
 # ── Summary ───────────────────────────────────────────────────────────
 echo ""
 log_info "=== Minimal PQ PKI Ready ==="
 echo "  CA:   https://pq-ca.cert-lab.local:8443 (HTTP: :8490)"
 echo "  KRA:  https://pq-kra.cert-lab.local:8443 (HTTP: :8493)"
 echo ""
-echo "  Next: bash scripts/pki/init-akamu-kipuka.sh pq"
-echo "        bash scripts/add-enrollment-servers.sh pq"
+echo "  Next: sudo bash scripts/pki/init-ops-ca.sh"
+echo "        sudo bash scripts/add-enrollment-servers.sh pq"
