@@ -20,6 +20,52 @@ from .config import CA_CONFIGS, ENROLLMENT_BACKEND, LabConfig, PKIType
 KIPUKA_ADMIN_TOKEN = os.getenv("KIPUKA_ADMIN_TOKEN", "cert-lab-kipuka-admin-token")
 
 
+def _generate_pqc_key_and_csr(
+    key_path: Path, csr_path: Path, cn: str, san: str
+) -> Optional[str]:
+    """Generate ML-DSA-87 key + CSR, using the Dogtag container's OpenSSL
+    if the host lacks ML-DSA support. Returns error message or None on success."""
+    # Try host OpenSSL first
+    probe = subprocess.run(
+        ["openssl", "genpkey", "-algorithm", "ML-DSA-87", "-out", str(key_path)],
+        capture_output=True, text=True, timeout=10,
+    )
+    if probe.returncode != 0:
+        # Use Dogtag container's OpenSSL 3.5+
+        key_gen = subprocess.run(
+            ["sudo", "podman", "exec", "dogtag-pq-ca",
+             "openssl", "genpkey", "-algorithm", "ML-DSA-87"],
+            capture_output=True, timeout=15,
+        )
+        if key_gen.returncode != 0 or b"BEGIN" not in key_gen.stdout:
+            return f"ML-DSA key generation failed (host and container): {key_gen.stderr.decode(errors='replace')}"
+        key_path.write_bytes(key_gen.stdout)
+
+    # Generate CSR — also needs container OpenSSL for ML-DSA keys
+    csr_gen = subprocess.run(
+        ["sudo", "podman", "exec", "-i", "dogtag-pq-ca",
+         "openssl", "req", "-new", "-key", "/dev/stdin",
+         "-subj", f"/CN={cn}",
+         "-addext", f"subjectAltName=DNS:{san}"],
+        input=key_path.read_bytes(),
+        capture_output=True, timeout=15,
+    )
+    if csr_gen.returncode == 0 and b"BEGIN" in csr_gen.stdout:
+        csr_path.write_bytes(csr_gen.stdout)
+        return None
+    # Fallback: try host openssl (works for RSA/ECC keys)
+    csr_host = subprocess.run(
+        ["openssl", "req", "-new", "-key", str(key_path),
+         "-out", str(csr_path),
+         "-subj", f"/CN={cn}/O=Cert-Lab/C=US",
+         "-addext", f"subjectAltName=DNS:{san}"],
+        capture_output=True, text=True, timeout=10,
+    )
+    if csr_host.returncode != 0:
+        return f"CSR generation failed: {csr_host.stderr}"
+    return None
+
+
 @dataclass
 class ProtocolResult:
     """Result of a protocol operation."""
@@ -296,19 +342,14 @@ def est_enroll_certificate(
         key_path = Path(tmpdir) / "key.pem"
         csr_path = Path(tmpdir) / "request.csr"
 
-        # Generate key based on PKI type.
-        # PQC: try ML-DSA-87 first; fall back to RSA if the host OpenSSL
-        # is < 3.5 (Ubuntu 24.04 ships 3.0 which lacks ML-DSA support).
-        # The cert will still be ML-DSA-87 *signed* by the PQ CA regardless.
+        # Generate key based on PKI type
+        csr_already_generated = False
         if pki_type == PKIType.PQC:
-            probe = subprocess.run(
-                ["openssl", "genpkey", "-algorithm", "ML-DSA-87", "-out", str(key_path)],
-                capture_output=True, text=True, timeout=10,
-            )
-            if probe.returncode != 0:
-                key_cmd = ["openssl", "genrsa", "-out", str(key_path), "2048"]
-            else:
-                key_cmd = None  # already generated
+            err = _generate_pqc_key_and_csr(key_path, csr_path, device_fqdn, device_fqdn)
+            if err:
+                return ProtocolResult(success=False, message=err)
+            key_cmd = None
+            csr_already_generated = True
         elif pki_type == PKIType.ECC:
             key_cmd = [
                 "openssl", "ecparam", "-genkey",
@@ -330,30 +371,38 @@ def est_enroll_certificate(
                 )
 
         # Generate CSR with SAN (required by acmeServerCert profile)
-        csr_cmd = [
-            "openssl", "req", "-new",
-            "-key", str(key_path),
-            "-out", str(csr_path),
-            "-subj", f"/CN={device_fqdn}/O=Cert-Lab/C=US",
-            "-addext", f"subjectAltName=DNS:{device_fqdn}",
-        ]
-        result = subprocess.run(csr_cmd, capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
-            return ProtocolResult(
-                success=False,
-                message=f"Failed to generate CSR: {result.stderr}"
-            )
+        if not csr_already_generated:
+            csr_cmd = [
+                "openssl", "req", "-new",
+                "-key", str(key_path),
+                "-out", str(csr_path),
+                "-subj", f"/CN={device_fqdn}/O=Cert-Lab/C=US",
+                "-addext", f"subjectAltName=DNS:{device_fqdn}",
+            ]
+            result = subprocess.run(csr_cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode != 0:
+                return ProtocolResult(
+                    success=False,
+                    message=f"Failed to generate CSR: {result.stderr}"
+                )
 
         # Read CSR and convert to base64 DER
         csr_pem = csr_path.read_text()
 
-        # Convert PEM to DER then base64
+        # Convert PEM to DER then base64. For ML-DSA CSRs, host OpenSSL
+        # may not parse them — use container's OpenSSL as fallback.
         der_cmd = ["openssl", "req", "-in", str(csr_path), "-outform", "DER"]
         result = subprocess.run(der_cmd, capture_output=True, timeout=30)
+        if result.returncode != 0 and pki_type == PKIType.PQC:
+            result = subprocess.run(
+                ["sudo", "podman", "exec", "-i", "dogtag-pq-ca",
+                 "openssl", "req", "-inform", "PEM", "-outform", "DER"],
+                input=csr_path.read_bytes(), capture_output=True, timeout=15,
+            )
         if result.returncode != 0:
             return ProtocolResult(
                 success=False,
-                message=f"Failed to convert CSR to DER: {result.stderr}"
+                message=f"Failed to convert CSR to DER: {getattr(result, 'stderr', b'').decode(errors='replace') if isinstance(result.stderr, bytes) else result.stderr}"
             )
 
         csr_base64 = base64.b64encode(result.stdout).decode('ascii')
@@ -1125,11 +1174,18 @@ def est_serverkeygen(
             return ProtocolResult(success=False, message=f"Server keygen failed: {result.stderr}")
 
         response = result.stdout.strip()
-        if "BEGIN" in response or response.startswith("MII"):
+        if "BEGIN" in response or response.startswith("MII") or "estServerKeyGenBoundary" in response or "multipart" in response.lower():
             return ProtocolResult(
                 success=True,
-                message="Server-side key generation completed",
-                details={"device": device_fqdn, "response_preview": response[:300]},
+                message="Server-side key generation completed (cert + key returned)",
+                details={"device": device_fqdn, "response_size": len(response)},
+            )
+
+        if "internal server error" in response.lower() or "not enabled" in response.lower():
+            return ProtocolResult(
+                success=False,
+                message=response[:200],
+                details={"hint": "Check kipuka config: [est] serverkeygen = true"},
             )
 
         return ProtocolResult(
