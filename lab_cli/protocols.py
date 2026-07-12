@@ -184,7 +184,14 @@ def acme_issue_certificate(
                 if sig_info.returncode == 0:
                     for line in sig_info.stdout.splitlines():
                         if "Signature Algorithm" in line:
-                            details["signature_algorithm"] = line.strip().split(":", 1)[-1].strip()
+                            raw_alg = line.strip().split(":", 1)[-1].strip()
+                            # Map OIDs to names for host OpenSSL < 3.5
+                            OID_MAP = {
+                                "2.16.840.1.101.3.4.3.17": "ML-DSA-44",
+                                "2.16.840.1.101.3.4.3.18": "ML-DSA-65",
+                                "2.16.840.1.101.3.4.3.19": "ML-DSA-87",
+                            }
+                            details["signature_algorithm"] = OID_MAP.get(raw_alg, raw_alg)
                             break
                 serial_line = subprocess.run(
                     ["openssl", "x509", "-noout", "-serial"],
