@@ -336,7 +336,7 @@ def est_enroll_certificate(
             enroll_cmd.extend(["-u", f"{device_fqdn}:{otp}"])
         else:
             # Auto-generate OTP for kipuka backend
-            from .config import ENROLLMENT_BACKEND
+
             if ENROLLMENT_BACKEND == "akamu":
                 otp_result = est_generate_otp(pki_type, device_fqdn)
                 if otp_result.success and otp_result.details:
@@ -1040,7 +1040,7 @@ def est_serverkeygen(
         if otp:
             cmd.extend(["-u", f"{device_fqdn}:{otp}"])
         else:
-            from .config import ENROLLMENT_BACKEND
+
             if ENROLLMENT_BACKEND == "akamu":
                 otp_result = est_generate_otp(pki_type, device_fqdn)
                 if otp_result.success and otp_result.details:
