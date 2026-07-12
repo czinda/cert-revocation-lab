@@ -143,11 +143,13 @@ def _acme_via_akamu_cli(acme_url: str, domain: str, container: str, pki_type: PK
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
         cert_content = ""
-        if cert_file.exists():
-            cert_content = subprocess.run(
-                ["sudo", "cat", str(cert_file)],
-                capture_output=True, text=True, timeout=5,
-            ).stdout
+        # File is root-owned (sudo podman) — always use sudo cat
+        cat_result = subprocess.run(
+            ["sudo", "cat", str(cert_file)],
+            capture_output=True, text=True, timeout=5,
+        )
+        if cat_result.returncode == 0 and "BEGIN CERTIFICATE" in cat_result.stdout:
+            cert_content = cat_result.stdout
 
         if result.returncode == 0 and cert_content:
             details = {"acme_url": acme_url, "domain": domain, "client": "akamu-cli"}

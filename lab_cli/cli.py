@@ -493,10 +493,19 @@ def acme_issue(
 
     if result.success:
         console.print(f"\n[green]✓ {result.message}[/green]")
-        if result.details:
-            for key, value in result.details.items():
-                if key != "certificate":
-                    console.print(f"  {key}: {value}")
+        if result.certificate:
+            _show_cert_details(console, result.certificate)
+        elif result.details:
+            OID_MAP = {
+                "2.16.840.1.101.3.4.3.17": "ML-DSA-44",
+                "2.16.840.1.101.3.4.3.18": "ML-DSA-65",
+                "2.16.840.1.101.3.4.3.19": "ML-DSA-87",
+            }
+            for key in ["subject", "issuer", "serial", "notBefore", "notAfter", "signature_algorithm"]:
+                if key in result.details:
+                    val = result.details[key]
+                    val = OID_MAP.get(val, val)
+                    console.print(f"  {key}: {val}")
     else:
         console.print(f"\n[red]✗ ACME issuance failed[/red]")
         console.print(f"  Error: {result.message}")
