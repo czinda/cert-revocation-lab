@@ -1271,13 +1271,20 @@ def est_serverkeygen(
                 parts = response.split("--estServerKeyGenBoundary")
                 for part in parts:
                     if "pkcs7" in part.lower() or "certs-only" in part.lower():
+                        # Skip header lines, collect base64 body after blank line
                         lines = part.strip().splitlines()
-                        b64_lines = [l for l in lines if l.strip() and not l.strip().startswith("Content-") and ":" not in l.split()[0] if len(l.strip()) > 10]
+                        body_started = False
+                        b64_lines = []
+                        for line in lines:
+                            if body_started:
+                                if line.strip():
+                                    b64_lines.append(line.strip())
+                            elif line.strip() == "":
+                                body_started = True
                         if b64_lines:
                             p7_b64 = "".join(b64_lines)
                             try:
                                 p7_der = base64.b64decode(p7_b64)
-                                # Convert PKCS#7 to PEM cert via container OpenSSL
                                 p7_conv = subprocess.run(
                                     ["sudo", "podman", "exec", "-i", "dogtag-pq-ca",
                                      "openssl", "pkcs7", "-inform", "DER", "-print_certs"],
