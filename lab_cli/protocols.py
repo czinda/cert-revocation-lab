@@ -121,31 +121,37 @@ def _get_est_url(pki_type: PKIType) -> Optional[str]:
 
 
 def _acme_via_akamu_cli(acme_url: str, domain: str, container: str) -> ProtocolResult:
-    """Issue certificate using akamu-cli inside the akamu container."""
-    cmd = [
-        "sudo", "podman", "exec", container,
-        "/app/akamu-cli", "issue",
-        "--server", acme_url + "/directory",
-        "--domain", domain,
-        "--account-key", "/tmp/acme-account.pem",
-        "--challenge", "http-01",
-        "--http-port", "80",
-        "--cert-key-type", "ec:P-256",
-        "--output-dir", "/tmp/acme-certs",
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    """Issue certificate using akamu-cli in a Fedora container with host networking."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        certs_dir = Path(tmpdir)
+        cert_file = certs_dir / f"{domain}.pem"
 
-    if result.returncode == 0:
-        # Read the cert from the container
-        cert_read = subprocess.run(
-            ["sudo", "podman", "exec", container, "cat", f"/tmp/acme-certs/{domain}/cert.pem"],
-            capture_output=True, text=True, timeout=10,
-        )
-        cert_content = cert_read.stdout if cert_read.returncode == 0 else ""
+        cmd = [
+            "sudo", "podman", "run", "--rm", "--network", "host",
+            "--entrypoint", "/app/akamu-cli",
+            "-v", f"{tmpdir}:/certs",
+            f"quay.io/czinda/akamu:latest",
+            "issue",
+            "--server", acme_url + "/directory",
+            "--domain", domain,
+            "--account-key", "/certs/account.pem",
+            "--challenge", "http-01",
+            "--http-port", "80",
+            "--cert-key-type", "rsa:2048",
+            "--out", f"/certs/{domain}.pem",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
-        # Get cert details using container's OpenSSL (handles ML-DSA)
-        details = {"acme_url": acme_url, "domain": domain, "client": "akamu-cli"}
-        if cert_content:
+        cert_content = ""
+        if cert_file.exists():
+            cert_content = subprocess.run(
+                ["sudo", "cat", str(cert_file)],
+                capture_output=True, text=True, timeout=5,
+            ).stdout
+
+        if result.returncode == 0 and cert_content:
+            details = {"acme_url": acme_url, "domain": domain, "client": "akamu-cli"}
+            # Use container OpenSSL for cert details (handles ML-DSA OIDs)
             info = subprocess.run(
                 ["sudo", "podman", "exec", "-i", container,
                  "openssl", "x509", "-noout", "-subject", "-issuer", "-serial", "-dates"],
@@ -171,29 +177,28 @@ def _acme_via_akamu_cli(acme_url: str, domain: str, container: str) -> ProtocolR
                         }
                         details["signature_algorithm"] = OID_MAP.get(raw, raw)
                         break
+            serial = None
+            s = subprocess.run(
+                ["sudo", "podman", "exec", "-i", container,
+                 "openssl", "x509", "-noout", "-serial"],
+                input=cert_content, capture_output=True, text=True, timeout=5,
+            )
+            if s.returncode == 0 and "=" in s.stdout:
+                serial = f"0x{s.stdout.strip().split('=', 1)[1]}"
 
-        serial = None
-        s = subprocess.run(
-            ["sudo", "podman", "exec", "-i", container,
-             "openssl", "x509", "-noout", "-serial"],
-            input=cert_content, capture_output=True, text=True, timeout=5,
-        )
-        if s.returncode == 0 and "=" in s.stdout:
-            serial = f"0x{s.stdout.strip().split('=', 1)[1]}"
+            return ProtocolResult(
+                success=True,
+                message="Certificate issued via ACME (akamu-cli)",
+                certificate=cert_content,
+                serial=serial,
+                details=details,
+            )
 
         return ProtocolResult(
-            success=True,
-            message="Certificate issued via ACME (akamu-cli)",
-            certificate=cert_content,
-            serial=serial,
-            details=details,
+            success=False,
+            message=f"akamu-cli: {result.stderr.strip()[:300] or result.stdout.strip()[:300]}",
+            details={"stdout": result.stdout[:200]},
         )
-
-    return ProtocolResult(
-        success=False,
-        message=f"akamu-cli failed: {result.stderr[:300]}",
-        details={"stdout": result.stdout[:200]},
-    )
 
 
 def acme_issue_certificate(
