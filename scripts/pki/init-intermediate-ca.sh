@@ -102,6 +102,19 @@ phase2_install_cert() {
     pkispawn -s CA -f /tmp/step2.cfg --skip-installation -v
     rm -f /tmp/step2.cfg
 
+    # Clean up HSM references if keys ended up in internal token
+    if [ "$HSM_BACKEND" = "kryoptic" ]; then
+        TOKEN_INTERNAL=true
+        for tok in $(grep 'tokenname=' /var/lib/pki/${PKI_INSTANCE}/conf/ca/CS.cfg 2>/dev/null | grep -v '#' | cut -d= -f2); do
+            if [ "$tok" != "internal" ]; then TOKEN_INTERNAL=false; break; fi
+        done
+        if [ "$TOKEN_INTERNAL" = "true" ]; then
+            log_warn "HSM keys fell back to internal token — cleaning HSM references"
+            sed -i '/^hardware-/d' /var/lib/pki/${PKI_INSTANCE}/conf/password.conf 2>/dev/null
+            modutil -delete kryoptic -dbdir /var/lib/pki/${PKI_INSTANCE}/alias -force 2>/dev/null || true
+        fi
+    fi
+
     # Export and create chain
     export_ca_cert "$PKI_INSTANCE" "$CA_CERT" || cp "$SIGNED_CERT" "$CA_CERT"
     create_chain "${CERTS_DIR}/ca-chain.crt" "${CERTS_DIR}/root-ca.crt" "$CA_CERT"

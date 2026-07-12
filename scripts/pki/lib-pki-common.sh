@@ -354,6 +354,36 @@ prepare_config() {
     fi
 }
 
+# Clean up HSM references after pkispawn when keys land in internal token
+# pkispawn with pki_hsm_enable=True adds "hardware-<token>=<pin>" to password.conf
+# and registers the PKCS#11 module in NSS, but if keys end up in the internal token
+# (JSS/Kryoptic compatibility), the server startup crashes trying to access the
+# non-functional HSM token. This function removes those references.
+# Usage: cleanup_hsm_refs <container> <instance>
+cleanup_hsm_refs() {
+    local container="${1:?Container required}"
+    local instance="${2:?Instance required}"
+
+    $PODMAN exec "$container" bash -c "
+        # Check if keys are in internal token (not HSM)
+        TOKEN_INTERNAL=true
+        for tok in \$(grep 'tokenname=' /var/lib/pki/${instance}/conf/ca/CS.cfg 2>/dev/null | grep -v '#' | cut -d= -f2); do
+            if [ \"\$tok\" != 'internal' ]; then
+                TOKEN_INTERNAL=false
+                break
+            fi
+        done
+
+        if [ \"\$TOKEN_INTERNAL\" = true ]; then
+            echo 'Keys are in internal token — cleaning HSM references'
+            # Remove hardware- entries from password.conf
+            sed -i '/^hardware-/d' /var/lib/pki/${instance}/conf/password.conf 2>/dev/null
+            # Remove Kryoptic module from NSS (prevents JSS NoSuchTokenException)
+            modutil -delete kryoptic -dbdir /var/lib/pki/${instance}/alias -force 2>/dev/null || true
+        fi
+    " 2>/dev/null
+}
+
 # Export CA signing certificate
 # Usage: export_ca_cert <instance> <output_file>
 export_ca_cert() {

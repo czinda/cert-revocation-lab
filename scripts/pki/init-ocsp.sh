@@ -91,6 +91,19 @@ deploy_ocsp() {
     pkispawn -s OCSP -f /tmp/ocsp.cfg -v
     rm -f /tmp/ocsp.cfg
 
+    # Clean up HSM references if keys ended up in internal token
+    if [ "$HSM_BACKEND" = "kryoptic" ]; then
+        TOKEN_INTERNAL=true
+        for tok in $(grep 'tokenname=' /var/lib/pki/${PKI_INSTANCE}/conf/ocsp/CS.cfg 2>/dev/null | grep -v '#' | cut -d= -f2); do
+            if [ "$tok" != "internal" ]; then TOKEN_INTERNAL=false; break; fi
+        done
+        if [ "$TOKEN_INTERNAL" = "true" ]; then
+            log_warn "HSM keys fell back to internal token — cleaning HSM references"
+            sed -i '/^hardware-/d' /var/lib/pki/${PKI_INSTANCE}/conf/password.conf 2>/dev/null
+            modutil -delete kryoptic -dbdir /var/lib/pki/${PKI_INSTANCE}/alias -force 2>/dev/null || true
+        fi
+    fi
+
     # Export OCSP signing certificate
     export_ca_cert "$PKI_INSTANCE" "$OCSP_CERT" || true
 

@@ -85,6 +85,20 @@ init_ca() {
     pkispawn -s CA -f /tmp/root-ca.cfg -v
     rm -f /tmp/root-ca.cfg
 
+    # Clean up HSM references if keys ended up in internal token
+    # (JSS/Kryoptic PKCS#11 compatibility — pkispawn may silently fall back)
+    if [ "$HSM_BACKEND" = "kryoptic" ]; then
+        TOKEN_INTERNAL=true
+        for tok in $(grep 'tokenname=' /var/lib/pki/${PKI_INSTANCE}/conf/ca/CS.cfg 2>/dev/null | grep -v '#' | cut -d= -f2); do
+            if [ "$tok" != "internal" ]; then TOKEN_INTERNAL=false; break; fi
+        done
+        if [ "$TOKEN_INTERNAL" = "true" ]; then
+            log_warn "HSM keys fell back to internal token — cleaning HSM references for server startup"
+            sed -i '/^hardware-/d' /var/lib/pki/${PKI_INSTANCE}/conf/password.conf 2>/dev/null
+            modutil -delete kryoptic -dbdir /var/lib/pki/${PKI_INSTANCE}/alias -force 2>/dev/null || true
+        fi
+    fi
+
     # Export certificate
     export_ca_cert "$PKI_INSTANCE" "${CERTS_DIR}/root-ca.crt"
     verify_cert "${CERTS_DIR}/root-ca.crt"
