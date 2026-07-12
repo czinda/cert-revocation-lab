@@ -408,7 +408,8 @@ def est_enroll_certificate(
                 details={
                     "est_url": est_url,
                     "device": device_fqdn,
-                    "pki_type": pki_type.value
+                    "pki_type": pki_type.value,
+                    "response_b64": result.stdout.strip(),
                 }
             )
 

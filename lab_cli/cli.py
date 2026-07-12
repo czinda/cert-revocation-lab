@@ -2595,17 +2595,36 @@ def _pq_infra_checks() -> list[tuple[str, bool, str]]:
 def _pq_enrollment_checks(config) -> list[tuple[str, bool, str]]:
     """Phase 2-4: Live EST, ACME, SSKG checks."""
     from .protocols import est_enroll_certificate, est_serverkeygen
-    import time
+    from .pki import _podman_exec
+    import time, base64, tempfile
     checks = []
     ts = str(int(time.time()))
 
+    # EST simpleenroll
     est = est_enroll_certificate(config, f"pq-val-{ts}.cert-lab.local", pki_type=PKIType.PQC)
     checks.append(_pq_check("EST simpleenroll", est.success, est.message))
-    if est.success and est.certificate:
-        checks.append(_pq_check("EST cert has ML-DSA-87 signature",
-                                "ML-DSA" in (est.details or {}).get("signature", ""),
-                                (est.details or {}).get("signature", "unknown")))
 
+    # Verify cert signature using Dogtag container's OpenSSL (host OpenSSL can't parse ML-DSA)
+    if est.success and est.details and est.details.get("response_b64"):
+        try:
+            p7_der = base64.b64decode(est.details["response_b64"])
+            with tempfile.NamedTemporaryFile(suffix=".der", delete=False) as f:
+                f.write(p7_der)
+                p7_path = f.name
+            import subprocess
+            subprocess.run(["sudo", "podman", "cp", p7_path, "dogtag-pq-ca:/tmp/val-cert.p7.der"],
+                          capture_output=True, timeout=10)
+            rc, sig_out = _podman_exec("dogtag-pq-ca",
+                "openssl pkcs7 -inform DER -in /tmp/val-cert.p7.der -print_certs 2>/dev/null "
+                "| openssl x509 -noout -text 2>/dev/null "
+                "| grep 'Signature Algorithm:' | head -1 | xargs")
+            checks.append(_pq_check("EST cert signature", "ML-DSA" in sig_out, sig_out))
+        except Exception as e:
+            checks.append(_pq_check("EST cert signature", False, str(e)))
+    elif est.success:
+        checks.append(_pq_check("EST cert signature", False, "no response body to inspect"))
+
+    # ACME nonce format
     import httpx
     try:
         r = httpx.head("http://localhost:8486/acme/new-nonce", timeout=5)
@@ -2616,13 +2635,32 @@ def _pq_enrollment_checks(config) -> list[tuple[str, bool, str]]:
     except Exception:
         checks.append(_pq_check("ACME nonce format", False, "unreachable"))
 
+    # EST SSKG — run and then check kipuka logs for granular status
     sskg = est_serverkeygen(PKIType.PQC, f"pq-sskg-{ts}.cert-lab.local")
+    import subprocess
+    logs = subprocess.run(
+        ["sudo", "podman", "logs", "--tail", "15", "kipuka-pq"],
+        capture_output=True, text=True, timeout=10
+    ).stderr + subprocess.run(
+        ["sudo", "podman", "logs", "--tail", "15", "kipuka-pq"],
+        capture_output=True, text=True, timeout=10
+    ).stdout
+
+    keygen_ok = "generating key pair" in logs
+    enroll_ok = "auto-approving" in logs or "review form retrieved" in logs
+    retrieve_fail = "KRA did not return" in logs
+
     if sskg.success:
-        checks.append(_pq_check("EST SSKG complete", True, sskg.message))
-    elif "KRA did not return" in sskg.message or "retrieve" in sskg.message.lower():
-        checks.append(_pq_check("EST SSKG generate+enroll", True, "retrieve pending (expected)"))
+        checks.append(_pq_check("SSKG: KRA key generation", True, "RSA-2048"))
+        checks.append(_pq_check("SSKG: cert enrollment", True, "auto-approved"))
+        checks.append(_pq_check("SSKG: key retrieval", True, "complete"))
     else:
-        checks.append(_pq_check("EST SSKG generate", False, sskg.message))
+        checks.append(_pq_check("SSKG: KRA key generation", keygen_ok, "RSA-2048" if keygen_ok else "not triggered"))
+        checks.append(_pq_check("SSKG: cert enrollment", enroll_ok, "auto-approved" if enroll_ok else "not reached"))
+        if retrieve_fail:
+            checks.append(_pq_check("SSKG: key retrieval", False, "PKCS#12 recovery path not yet implemented"))
+        else:
+            checks.append(_pq_check("SSKG: key retrieval", False, sskg.message[:60]))
 
     return checks
 
