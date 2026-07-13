@@ -553,11 +553,23 @@ patch_pq_tomcat_tls() {
         echo 'JAVA_OPTS="-Djdk.tls.maxHandshakeMessageSize=64000"' >> "$tomcat_conf"
     fi
 
-    # Kryoptic HSM: ensure KRYOPTIC_CONF is in tomcat.conf so the Java
-    # process can find the PKCS#11 token config when JSS loads the module
-    if [ "$HSM_BACKEND" = "kryoptic" ] && ! grep -q 'KRYOPTIC_CONF' "$tomcat_conf" 2>/dev/null; then
-        echo "KRYOPTIC_CONF=${KRYOPTIC_CONF:-/etc/kryoptic/kryoptic.conf}" >> "$tomcat_conf"
-        log_info "Added KRYOPTIC_CONF to tomcat.conf for Kryoptic PKCS#11"
+    # Kryoptic HSM: the PKCS#11 module ignores KRYOPTIC_CONF env var when
+    # loaded through NSS/JSS inside the JVM. It only searches default paths:
+    #   1. $XDG_CONFIG_HOME/kryoptic/token.conf
+    #   2. $HOME/.config/kryoptic/token.conf
+    #   3. $CONFDIR/kryoptic/token.conf (build-time default)
+    # Place the config at the default path so JSS can find the tokens.
+    if [ "$HSM_BACKEND" = "kryoptic" ]; then
+        local kryoptic_src="${KRYOPTIC_CONF:-/etc/kryoptic/kryoptic.conf}"
+        if [ -f "$kryoptic_src" ]; then
+            mkdir -p /root/.config/kryoptic
+            cp "$kryoptic_src" /root/.config/kryoptic/token.conf
+            log_info "Placed Kryoptic config at /root/.config/kryoptic/token.conf"
+        fi
+        # Also set in tomcat.conf as a belt-and-suspenders measure
+        if ! grep -q 'KRYOPTIC_CONF' "$tomcat_conf" 2>/dev/null; then
+            echo "KRYOPTIC_CONF=${kryoptic_src}" >> "$tomcat_conf"
+        fi
     fi
 
     # NOTE: Do NOT set JAVA_TOOL_OPTIONS or JDK_JAVA_OPTIONS — both print
