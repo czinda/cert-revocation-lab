@@ -51,6 +51,8 @@ ca_cert_file    = "/etc/kipuka/certs/dogtag/ca-chain.pem"
 profile_id      = "labMLDSAServerCert"
 username        = "caadmin"
 password        = "RedHat123"
+kra_username    = "kraadmin"
+kra_password    = "RedHat123"
 skip_mtls       = true
 
 # ── EST Protocol ─────────────────────────────────────────────────────────
