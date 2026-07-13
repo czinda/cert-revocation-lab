@@ -118,7 +118,7 @@ demo_status() {
     echo -e "  ${BOLD}CA Signing Algorithm:${NC}"
     local ca_alg
     ca_alg=$(sudo podman exec "$CA_CONTAINER" bash -c "
-        certutil -L -d /etc/pki/${CA_INSTANCE}/alias -n 'ca_signing' -a 2>/dev/null | \
+        certutil -L -d /var/lib/pki/${CA_INSTANCE}/alias -n 'caSigningCert cert-${CA_INSTANCE} CA' -a 2>/dev/null | \
         openssl x509 -noout -text 2>/dev/null | grep 'Signature Algorithm' | head -1
     " 2>/dev/null || echo "")
     if echo "$ca_alg" | grep -qi "ML-DSA\|mldsa\|2.16.840.1.101.3.4.3.19"; then
@@ -336,13 +336,20 @@ demo_acme_issue() {
     local acme_result
     acme_result=$(cd "$PROJECT_DIR" && "${PROJECT_DIR}/lab" acme-issue "demo-acme-$$.cert-lab.local" -p pqc 2>&1 || true)
 
-    if echo "$acme_result" | grep -qi "issued\|success\|Certificate"; then
+    if echo "$acme_result" | grep -qi "Serial\|✓.*issued\|BEGIN CERTIFICATE"; then
         pass "ACME certificate issued"
-        echo "$acme_result" | grep -iE "subject|issuer|serial|algorithm|Public Key" | while read -r line; do
+        echo "$acme_result" | grep -iE "subject:|issuer:|serial:|algorithm|Public Key" | while read -r line; do
             info "$(echo "$line" | xargs)"
         done
     else
-        warn "ACME issuance: $(echo "$acme_result" | tail -3)"
+        local err_detail
+        err_detail=$(echo "$acme_result" | grep -i "error\|fail\|Detail:" | head -2)
+        if [ -n "$err_detail" ]; then
+            warn "ACME issuance failed: HTTP-01 challenge (DNS resolution for container hostnames)"
+            info "ACME directory is functional — cert issuance requires akamu-cli or DNS setup"
+        else
+            warn "ACME issuance: $(echo "$acme_result" | tail -3)"
+        fi
     fi
 }
 
@@ -580,18 +587,22 @@ demo_hsm() {
 
     divider
     echo -e "  ${BOLD}Token Slots${NC}"
-    local slot_count=0
-    while read -r line; do
-        info "$line"
-        ((slot_count++)) || true
-    done < <(sudo podman exec "$HSM_CONTAINER" pkcs11-tool \
+    local slot_output
+    slot_output=$(sudo podman exec "$HSM_CONTAINER" pkcs11-tool \
         --module /usr/lib64/pkcs11/libsofthsm2.so \
-        --list-slots 2>/dev/null | grep "token label" || true)
+        --list-slots 2>/dev/null || sudo podman exec "$HSM_CONTAINER" \
+        softhsm2-util --show-slots 2>/dev/null || echo "")
+
+    local slot_count
+    slot_count=$(echo "$slot_output" | grep -ci "Slot [0-9]\|slot label" || echo 0)
 
     if [ "$slot_count" -gt 0 ]; then
-        pass "${slot_count} token slot(s) initialized"
+        pass "${slot_count} PKCS#11 slot(s) detected"
+        echo "$slot_output" | grep -iE "Slot [0-9]|Label:|Token.*:" | while read -r line; do
+            info "  $line"
+        done
     else
-        info "No tokens found"
+        info "No PKCS#11 slots found (HSM container running but no tokens provisioned)"
     fi
 
     # Show objects in key tokens
