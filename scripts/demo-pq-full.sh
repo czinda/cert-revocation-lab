@@ -677,19 +677,24 @@ echo -e "${BOLD}${CYAN}║   ML-DSA-87 (FIPS 204) + ML-KEM-1024 (FIPS 203)      
 echo -e "${BOLD}${CYAN}║   Kipuka EST · Akamu ACME · Dogtag PKI · SoftHSM2           ║${NC}"
 echo -e "${BOLD}${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
 
+run_section() {
+    local name="$1"
+    "$name" || { fail "Section '$name' failed (continuing)"; ((FAILURES++)) || true; }
+}
+
 if [ "$SECTION" = "all" ]; then
-    demo_status
-    demo_est_enroll
-    demo_est_cacerts
-    demo_acme
-    demo_acme_issue
-    demo_kra
-    demo_sskg
-    demo_ocsp
-    demo_revoke
-    demo_comparison
-    demo_hsm
-    demo_tls_gap
+    run_section demo_status
+    run_section demo_est_enroll
+    run_section demo_est_cacerts
+    run_section demo_acme
+    run_section demo_acme_issue
+    run_section demo_kra
+    run_section demo_sskg
+    run_section demo_ocsp
+    run_section demo_revoke
+    run_section demo_comparison
+    run_section demo_hsm
+    run_section demo_tls_gap
 elif [ "$SECTION" = "--section" ]; then
     case "${2:-}" in
         1)  demo_status ;;
