@@ -620,30 +620,51 @@ demo_tls_gap() {
     divider
     echo -e "  ${BOLD}TLS Library Support for ML-DSA SignatureScheme${NC}"
     echo ""
+
+    # Detect NSS version and ML-DSA TLS support dynamically
+    local nss_ver
+    nss_ver=$(sudo podman exec "$CA_CONTAINER" rpm -q nss --qf '%{VERSION}-%{RELEASE}' 2>/dev/null || echo "unknown")
+    local nss_status nss_impact nss_color
+    if echo "$nss_ver" | grep -q "el10"; then
+        nss_status="Works"
+        nss_impact="RHEL 10 build has ML-DSA TLS patches"
+        nss_color="${GREEN}"
+    else
+        nss_status="Blocked"
+        nss_impact="Upstream NSS lacks ML-DSA TLS patches"
+        nss_color="${RED}"
+    fi
+
     echo -e "  ${BOLD}┌───────────────────┬─────────┬──────────────────────────────────┐${NC}"
     echo -e "  ${BOLD}│ TLS Library       │ Status  │ Impact                           │${NC}"
     echo -e "  ${BOLD}├───────────────────┼─────────┼──────────────────────────────────┤${NC}"
     echo -e "  │ OpenSSL 3.5+       │ ${GREEN}Works${NC}   │ Kipuka EST/Akamu ACME work       │"
-    echo -e "  │ NSS 3.123          │ ${RED}Blocked${NC} │ pki CLI needs HTTP, not HTTPS    │"
+    printf "  │ NSS %-14s │ ${nss_color}%-7s${NC} │ %-32s │\n" "$nss_ver" "$nss_status" "$nss_impact"
     echo -e "  │ rustls (ring)      │ ${RED}Blocked${NC} │ akamu needs native-tls build     │"
     echo -e "  │ JDK/JSSE           │ ${YELLOW}Partial${NC} │ Works with handshake size fix    │"
     echo -e "  ${BOLD}└───────────────────┴─────────┴──────────────────────────────────┘${NC}"
     echo ""
 
-    info "Root cause: NSS lacks ML-DSA TLS SignatureScheme (draft-ietf-tls-mldsa)"
-    info "NSS can generate ML-DSA keys and verify signatures at the crypto layer"
-    info "but cannot negotiate ML-DSA in TLS 1.3 CertificateVerify messages."
+    if [ "$nss_status" = "Works" ]; then
+        pass "NSS $nss_ver includes ML-DSA TLS SignatureScheme patches (nss-3.118-ml-dsa-tls.patch)"
+        pass "pki CLI: HTTPS (:8443) with ML-DSA-87 TLS — no HTTP workaround needed"
+    else
+        info "Root cause: Upstream NSS lacks ML-DSA TLS SignatureScheme (draft-ietf-tls-mldsa)"
+        info "RHEL 10 NSS carries downstream patches (nss-3.118-ml-dsa-tls.patch) that add support."
+        info "pki CLI: HTTP (:8080) with basic auth (workaround for upstream NSS)"
+    fi
     echo ""
 
     divider
-    echo -e "  ${BOLD}Workarounds in This Lab${NC}"
+    echo -e "  ${BOLD}TLS Status in This Lab${NC}"
     pass "Kipuka EST: OpenSSL 3.5+ via native-tls (full PQ mTLS)"
     pass "Akamu ACME: OpenSSL 3.5+ via native-tls (full PQ enrollment)"
     pass "Dogtag CA: JDK TLS fix (-Djdk.tls.maxHandshakeMessageSize=64000)"
-    info "pki CLI: HTTP (:8080) with basic auth (NSS can't do ML-DSA TLS)"
-    echo ""
-    info "When NSS adds draft-ietf-tls-mldsa support, swap sslserver certs"
-    info "to ML-DSA and remove the HTTP/basic-auth workarounds."
+    if [ "$nss_status" = "Works" ]; then
+        pass "pki CLI: HTTPS with ML-DSA-87 TLS (NSS $nss_ver)"
+    else
+        info "pki CLI: HTTP (:8080) with basic auth (upgrade to RHEL 10 NSS for HTTPS)"
+    fi
 }
 
 # =============================================================================
@@ -699,5 +720,5 @@ echo -e "  ${MAGENTA}1.${NC} ML-DSA-87 end-entity keys — true PQ from leaf to 
 echo -e "  ${MAGENTA}2.${NC} Three enrollment protocols — EST, ACME, SSKG (RFC 7030 §4.4)"
 echo -e "  ${MAGENTA}3.${NC} KRA key escrow — ML-KEM-1024 for key transport"
 echo -e "  ${MAGENTA}4.${NC} Full certificate lifecycle — issue, verify, revoke"
-echo -e "  ${MAGENTA}5.${NC} NSS TLS gap documented — workarounds in place, upstream path clear"
+echo -e "  ${MAGENTA}5.${NC} RHEL 10 NSS includes ML-DSA TLS patches — full HTTPS when deployed"
 echo ""
