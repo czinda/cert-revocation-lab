@@ -2619,9 +2619,9 @@ def _pq_enrollment_checks(config) -> list[tuple[str, bool, str]]:
     checks.append(_pq_check("EST simpleenroll", est.success, est.message))
 
     # Verify cert signature using Dogtag container's OpenSSL (host OpenSSL can't parse ML-DSA)
-    if est.success and est.details and est.details.get("response_b64"):
+    if est.success and est.certificate:
         try:
-            p7_der = base64.b64decode(est.details["response_b64"])
+            p7_der = base64.b64decode(est.certificate)
             with tempfile.NamedTemporaryFile(suffix=".der", delete=False) as f:
                 f.write(p7_der)
                 p7_path = f.name

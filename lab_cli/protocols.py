@@ -8,6 +8,7 @@ active ENROLLMENT_BACKEND (akamu or dogtag).  No hardcoded hostnames.
 import base64
 import json
 import os
+import shlex
 import socket
 import subprocess
 import tempfile
@@ -421,25 +422,69 @@ def est_enroll_certificate(
         key_path = Path(tmpdir) / "key.pem"
         csr_path = Path(tmpdir) / "request.csr"
 
-        # Generate key based on PKI type.
-        # PQC EST uses RSA keys by default — the cert is ML-DSA-87 SIGNED
-        # by the PQ CA regardless of end-entity key type. ML-DSA end-entity
-        # keys require caMLDSAServerCert profile on kipuka, which must be
-        # configured separately. Use acme-issue for ML-DSA end-entity keys.
+        # Generate key and CSR based on PKI type.
         csr_already_generated = False
-        if pki_type == PKIType.ECC:
+        if pki_type == PKIType.PQC:
+            # ML-DSA-87 keys require OpenSSL 3.5+ (container has it, host likely doesn't).
+            # Generate key+CSR inside the PQ CA container and copy back.
+            pq_container = "dogtag-pq-iot-ca"
+            result = subprocess.run(
+                ["sudo", "podman", "inspect", "--format", "{{.State.Status}}", pq_container],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode != 0 or "running" not in result.stdout:
+                pq_container = "dogtag-pq-ca"
+
+            safe_fqdn = shlex.quote(device_fqdn)
+            gen_script = (
+                f"openssl genpkey -algorithm ML-DSA-87 -out /tmp/est-mldsa.key 2>&1 && "
+                f"openssl req -new -key /tmp/est-mldsa.key "
+                f"-subj '/CN='{safe_fqdn}'/O=Cert-Lab/C=US' "
+                f"-addext 'subjectAltName=DNS:'{safe_fqdn} "
+                f"-out /tmp/est-mldsa.csr 2>&1 && "
+                f"echo '__KEY_START__' && cat /tmp/est-mldsa.key && "
+                f"echo '__CSR_START__' && cat /tmp/est-mldsa.csr"
+            )
+            result = subprocess.run(
+                ["sudo", "podman", "exec", pq_container, "bash", "-c", gen_script],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode != 0:
+                return ProtocolResult(
+                    success=False,
+                    message=f"Failed to generate ML-DSA-87 key/CSR in container: {result.stderr or result.stdout}"
+                )
+
+            output = result.stdout
+            if "__KEY_START__" not in output or "__CSR_START__" not in output:
+                return ProtocolResult(
+                    success=False,
+                    message=f"ML-DSA-87 key/CSR generation failed: {output}"
+                )
+
+            key_data = output.split("__KEY_START__")[1].split("__CSR_START__")[0].strip()
+            csr_data = output.split("__CSR_START__")[1].strip()
+            key_path.write_text(key_data + "\n")
+            csr_path.write_text(csr_data + "\n")
+            csr_already_generated = True
+        elif pki_type == PKIType.ECC:
             key_cmd = [
                 "openssl", "ecparam", "-genkey",
                 "-name", "secp384r1",
                 "-out", str(key_path)
             ]
+            result = subprocess.run(key_cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode != 0:
+                return ProtocolResult(
+                    success=False,
+                    message=f"Failed to generate key: {result.stderr}"
+                )
         else:
             key_cmd = [
                 "openssl", "genrsa",
                 "-out", str(key_path),
                 "2048"
             ]
-        if key_cmd is not None:
             result = subprocess.run(key_cmd, capture_output=True, text=True, timeout=30)
             if result.returncode != 0:
                 return ProtocolResult(
@@ -447,7 +492,7 @@ def est_enroll_certificate(
                     message=f"Failed to generate key: {result.stderr}"
                 )
 
-        # Generate CSR with SAN (required by acmeServerCert profile)
+        # Generate CSR with SAN (PQC already generated above)
         if not csr_already_generated:
             csr_cmd = [
                 "openssl", "req", "-new",
@@ -574,7 +619,6 @@ def est_enroll_certificate(
                     "est_url": est_url,
                     "device": device_fqdn,
                     "pki_type": pki_type.value,
-                    "response_b64": result.stdout.strip(),
                 }
             )
 
@@ -1194,9 +1238,6 @@ def est_serverkeygen(
             result = subprocess.run(key_cmd, capture_output=True, text=True, timeout=30)
             if result.returncode != 0:
                 return ProtocolResult(success=False, message=f"Key generation failed: {result.stderr}")
-        result = subprocess.run(key_cmd, capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
-            return ProtocolResult(success=False, message=f"Key generation failed: {result.stderr}")
 
         # Generate CSR with SAN (required by acmeServerCert profile)
         csr_cmd = [
@@ -1212,6 +1253,12 @@ def est_serverkeygen(
 
         der_cmd = ["openssl", "req", "-in", str(csr_path), "-outform", "DER"]
         result = subprocess.run(der_cmd, capture_output=True, timeout=30)
+        if result.returncode != 0 and pki_type == PKIType.PQC:
+            result = subprocess.run(
+                ["sudo", "podman", "exec", "-i", "dogtag-pq-ca",
+                 "openssl", "req", "-inform", "PEM", "-outform", "DER"],
+                input=csr_path.read_bytes(), capture_output=True, timeout=15,
+            )
         if result.returncode != 0:
             return ProtocolResult(success=False, message="CSR DER conversion failed")
 
