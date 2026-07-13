@@ -50,6 +50,9 @@ fi
 
 KRA_CONTAINER="dogtag-pq-kra"
 HSM_CONTAINER="kryoptic-pq-hsm"
+DS_CONTAINER="${TOPO:+ds-pq-iot}"
+DS_CONTAINER="${DS_CONTAINER:-ds-pq-ca}"
+if [ "$TOPO" = "minimal" ]; then DS_CONTAINER="ds-pq-ca"; fi
 
 # Detect OCSP container
 if sudo podman inspect --format '{{.State.Status}}' dogtag-pq-ocsp 2>/dev/null | grep -q running; then
@@ -95,7 +98,7 @@ demo_status() {
     echo ""
 
     echo -e "  ${BOLD}PQ Containers:${NC}"
-    for c in ds-pq-ca "$CA_CONTAINER" "$KRA_CONTAINER" ds-pq-kra akamu-pq kipuka-pq "$HSM_CONTAINER"; do
+    for c in "$DS_CONTAINER" "$CA_CONTAINER" "$KRA_CONTAINER" ds-pq-kra akamu-pq kipuka-pq "$HSM_CONTAINER"; do
         local status
         status=$(sudo podman inspect --format '{{.State.Status}}' "$c" 2>/dev/null || echo "missing")
         if [ "$status" = "running" ]; then pass "$c"; else
@@ -199,7 +202,8 @@ demo_est_enroll() {
     # Step 4: Decode and validate — both pubkey AND signature must be ML-DSA
     divider
     echo -e "  ${BOLD}Step 4: Validate Post-Quantum Certificate${NC}"
-    base64 -d "${TMPDIR}/est.resp" > "${TMPDIR}/est.p7.der"
+    # EST response is base64 with possible line folding — strip whitespace before decode
+    tr -d '[:space:]' < "${TMPDIR}/est.resp" | base64 -d > "${TMPDIR}/est.p7.der" 2>/dev/null
     sudo podman cp "${TMPDIR}/est.p7.der" "${CA_CONTAINER}:/tmp/est.p7.der"
     sudo podman exec "$CA_CONTAINER" bash -c "
         openssl pkcs7 -inform DER -in /tmp/est.p7.der -print_certs -out /tmp/est.cert.pem 2>/dev/null
@@ -213,7 +217,7 @@ demo_est_enroll() {
         local subject issuer serial sig_alg pub_alg
         subject=$(echo "$cert_text" | grep "Subject:" | head -1 | sed 's/.*Subject: //')
         issuer=$(echo "$cert_text" | grep "Issuer:" | head -1 | sed 's/.*Issuer: //')
-        serial=$(echo "$cert_text" | grep "Serial Number:" -A1 | tail -1 | xargs)
+        serial=$(echo "$cert_text" | grep "Serial Number:" -A1 | tail -1 | xargs | tr -d ':')
         sig_alg=$(echo "$cert_text" | grep "Signature Algorithm:" | head -1 | awk '{print $3}')
         pub_alg=$(echo "$cert_text" | grep "Public Key Algorithm:" | head -1 | awk '{$1=""; $2=""; $3=""; print}' | xargs)
 
@@ -257,7 +261,7 @@ demo_est_cacerts() {
     resp_head=$(head -c 3 "${TMPDIR}/cacerts.resp")
 
     if [ "$resp_head" = "MII" ]; then
-        base64 -d "${TMPDIR}/cacerts.resp" > "${TMPDIR}/cacerts.p7.der"
+        tr -d '[:space:]' < "${TMPDIR}/cacerts.resp" | base64 -d > "${TMPDIR}/cacerts.p7.der" 2>/dev/null
         sudo podman cp "${TMPDIR}/cacerts.p7.der" "${CA_CONTAINER}:/tmp/cacerts.p7.der"
         sudo podman exec "$CA_CONTAINER" bash -c "
             openssl pkcs7 -inform DER -in /tmp/cacerts.p7.der -print_certs 2>/dev/null
@@ -330,7 +334,7 @@ demo_acme_issue() {
     divider
     echo -e "  ${BOLD}Issuing certificate via ACME protocol${NC}"
     local acme_result
-    acme_result=$(cd "$PROJECT_DIR" && python3 -m lab_cli.main acme-issue -p pqc 2>&1 || true)
+    acme_result=$(cd "$PROJECT_DIR" && "${PROJECT_DIR}/lab" acme-issue "demo-acme-$$.cert-lab.local" -p pqc 2>&1 || true)
 
     if echo "$acme_result" | grep -qi "issued\|success\|Certificate"; then
         pass "ACME certificate issued"
@@ -422,7 +426,7 @@ demo_sskg() {
     divider
     echo -e "  ${BOLD}SSKG via lab CLI${NC}"
     local sskg_result
-    sskg_result=$(cd "$PROJECT_DIR" && python3 -m lab_cli.main est-serverkeygen -p pqc 2>&1 || true)
+    sskg_result=$(cd "$PROJECT_DIR" && "${PROJECT_DIR}/lab" est-serverkeygen -p pqc 2>&1 || true)
 
     if echo "$sskg_result" | grep -qi "success\|certificate\|private key"; then
         pass "SSKG certificate + private key returned"
