@@ -31,6 +31,16 @@ class EventSource(str, Enum):
     SIEM = "siem"
 
 
+PQ_OID_MAP = {
+    "2.16.840.1.101.3.4.3.17": "ML-DSA-44",
+    "2.16.840.1.101.3.4.3.18": "ML-DSA-65",
+    "2.16.840.1.101.3.4.3.19": "ML-DSA-87",
+    "2.16.840.1.101.3.4.4.1": "ML-KEM-512",
+    "2.16.840.1.101.3.4.4.2": "ML-KEM-768",
+    "2.16.840.1.101.3.4.4.3": "ML-KEM-1024",
+}
+
+
 @dataclass
 class CAConfig:
     """Configuration for a Certificate Authority."""

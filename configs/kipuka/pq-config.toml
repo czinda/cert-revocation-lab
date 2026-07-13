@@ -20,7 +20,7 @@ client_auth = "optional"
 
 # ── CA Key Material ──────────────────────────────────────────────────────
 [ca]
-key_file   = "/etc/kipuka/certs/kipuka-pq.cert.pem"
+key_file   = "/etc/kipuka/certs/kipuka-pq.key.pem"
 cert_file  = "/etc/kipuka/certs/kipuka-pq.cert.pem"
 
 # ── HSM / PKCS#11 (SoftHSM2) ────────────────────────────────────────────
@@ -43,7 +43,7 @@ url = "sqlite:///var/lib/kipuka/kipuka.db?mode=rwc"
 # ML-DSA-87-signed agent cert chains during TLS client authentication.
 # skip_mtls=true tells kipuka to connect via HTTPS but NOT present
 # the agent certificate — basic auth handles all REST API authorization.
-ca_url          = "https://pq-ca.cert-lab.local:8443"
+ca_url          = "https://pq-iot-ca.cert-lab.local:8443"
 kra_url         = "https://pq-kra.cert-lab.local:8443"
 agent_cert_file = "/etc/kipuka/certs/dogtag/agent.pem"
 agent_key_file  = "/etc/kipuka/certs/dogtag/agent-rsa.key.pem"

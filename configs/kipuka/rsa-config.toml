@@ -41,7 +41,7 @@ url = "sqlite:///var/lib/kipuka/kipuka.db?mode=rwc"
 [dogtag]
 ca_url         = "https://iot-ca.cert-lab.local:8443"
 agent_cert_file = "/etc/kipuka/certs/dogtag/agent.pem"
-agent_key_file  = "/etc/kipuka/certs/dogtag/agent-key.pem"
+agent_key_file  = "/etc/kipuka/certs/dogtag/agent-rsa.key.pem"
 ca_cert_file    = "/etc/kipuka/certs/dogtag/ca-chain.pem"
 profile_id      = "caServerCert"
 

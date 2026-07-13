@@ -33,6 +33,7 @@ from .config import (
     PKIType,
     CALevel,
     EventSource,
+    PQ_OID_MAP,
     SCENARIOS,
     ADVANCED_SUITES,
     ENROLLMENT_BACKEND,
@@ -73,19 +74,9 @@ app = typer.Typer(
 console = Console()
 
 
-_PQ_OID_MAP = {
-    "2.16.840.1.101.3.4.3.17": "ML-DSA-44",
-    "2.16.840.1.101.3.4.3.18": "ML-DSA-65",
-    "2.16.840.1.101.3.4.3.19": "ML-DSA-87",
-    "2.16.840.1.101.3.4.4.1": "ML-KEM-512",
-    "2.16.840.1.101.3.4.4.2": "ML-KEM-768",
-    "2.16.840.1.101.3.4.4.3": "ML-KEM-1024",
-}
-
-
 def _resolve_pq_oid(text: str) -> str:
     """Replace PQ OIDs with human-readable names in a display string."""
-    for oid, name in _PQ_OID_MAP.items():
+    for oid, name in PQ_OID_MAP.items():
         text = text.replace(oid, name)
     return text
 
@@ -513,15 +504,10 @@ def acme_issue(
         if result.certificate:
             _show_cert_details(console, result.certificate)
         elif result.details:
-            OID_MAP = {
-                "2.16.840.1.101.3.4.3.17": "ML-DSA-44",
-                "2.16.840.1.101.3.4.3.18": "ML-DSA-65",
-                "2.16.840.1.101.3.4.3.19": "ML-DSA-87",
-            }
             for key in ["subject", "issuer", "serial", "notBefore", "notAfter", "signature_algorithm"]:
                 if key in result.details:
                     val = result.details[key]
-                    val = OID_MAP.get(val, val)
+                    val = PQ_OID_MAP.get(val, val)
                     console.print(f"  {key}: {val}")
     else:
         console.print(f"\n[red]✗ ACME issuance failed[/red]")

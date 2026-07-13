@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from .config import CA_CONFIGS, ENROLLMENT_BACKEND, LabConfig, PKIType
+from .config import CA_CONFIGS, ENROLLMENT_BACKEND, LabConfig, PKIType, PQ_OID_MAP
 
 KIPUKA_ADMIN_TOKEN = os.getenv("KIPUKA_ADMIN_TOKEN", "cert-lab-kipuka-admin-token")
 
@@ -172,12 +172,7 @@ def _acme_via_akamu_cli(acme_url: str, domain: str, container: str, pki_type: PK
                 for line in sig.stdout.splitlines():
                     if "Signature Algorithm" in line:
                         raw = line.strip().split(":", 1)[-1].strip()
-                        OID_MAP = {
-                            "2.16.840.1.101.3.4.3.17": "ML-DSA-44",
-                            "2.16.840.1.101.3.4.3.18": "ML-DSA-65",
-                            "2.16.840.1.101.3.4.3.19": "ML-DSA-87",
-                        }
-                        details["signature_algorithm"] = OID_MAP.get(raw, raw)
+                        details["signature_algorithm"] = PQ_OID_MAP.get(raw, raw)
                         break
             serial = None
             s = subprocess.run(
@@ -321,13 +316,7 @@ def acme_issue_certificate(
                     for line in sig_info.stdout.splitlines():
                         if "Signature Algorithm" in line:
                             raw_alg = line.strip().split(":", 1)[-1].strip()
-                            # Map OIDs to names for host OpenSSL < 3.5
-                            OID_MAP = {
-                                "2.16.840.1.101.3.4.3.17": "ML-DSA-44",
-                                "2.16.840.1.101.3.4.3.18": "ML-DSA-65",
-                                "2.16.840.1.101.3.4.3.19": "ML-DSA-87",
-                            }
-                            details["signature_algorithm"] = OID_MAP.get(raw_alg, raw_alg)
+                            details["signature_algorithm"] = PQ_OID_MAP.get(raw_alg, raw_alg)
                             break
                 serial_line = subprocess.run(
                     ["openssl", "x509", "-noout", "-serial"],
@@ -708,9 +697,6 @@ def est_reenroll_certificate(
             result = subprocess.run(key_cmd, capture_output=True, text=True, timeout=30)
             if result.returncode != 0:
                 return ProtocolResult(success=False, message=f"Key generation failed: {result.stderr}")
-        result = subprocess.run(key_cmd, capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
-            return ProtocolResult(success=False, message=f"Failed to generate key: {result.stderr}")
 
         # Generate CSR with SAN (required by acmeServerCert profile)
         csr_cmd = [

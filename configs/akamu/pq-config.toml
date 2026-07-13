@@ -34,11 +34,11 @@ ocsp_url = "http://pq-ocsp.cert-lab.local:8080/ocsp/ee/ocsp"
 type         = "dogtag"
 # Direct HTTPS: akamu uses native-tls (OpenSSL 3.5+) which handles
 # ML-DSA-87 cert chains. No stunnel proxy needed.
-url          = "https://pq-ca.cert-lab.local:8443"
+url          = "https://pq-iot-ca.cert-lab.local:8443"
 ra_cert_file = "/dev/null"
 ra_key_file  = "/dev/null"
-ca_cert_file = "/certs/ops-ca/ops-ca.cert.pem"
-profile_id   = "labAcmeServerCert"
+ca_cert_file = "/certs/dogtag/ca-chain.pem"
+profile_id   = "caServerCert"
 timeout_secs = 30
 username     = "caadmin"
 password     = "RedHat123"
