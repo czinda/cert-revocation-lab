@@ -24,6 +24,13 @@ KRA_INSTANCE="pki-pq-kra"
 ADMIN_PASSWORD="RedHat123"
 CLIENT_DB="/tmp/kra-demo-nssdb"
 
+# Auto-detect topology
+if sudo podman inspect --format '{{.State.Status}}' dogtag-pq-iot-ca 2>/dev/null | grep -q running; then
+    TOPO="full"
+else
+    TOPO="minimal"
+fi
+
 RED='\033[0;31m'; GREEN='\033[0;32m'; BLUE='\033[0;34m'
 YELLOW='\033[1;33m'; BOLD='\033[1m'; NC='\033[0m'
 pass() { echo -e "  ${GREEN}✓${NC} $1"; }
@@ -33,13 +40,8 @@ warn() { echo -e "  ${YELLOW}!${NC} $1"; }
 header() { echo -e "\n${BOLD}$1${NC}"; }
 
 pki_cmd() {
-    echo "y" | sudo podman exec -i "$KRA_CONTAINER" \
-        pki -d "$CLIENT_DB" -c "$ADMIN_PASSWORD" \
-        -n "PKI Administrator for cert-lab.local" \
-        -U "https://localhost:8443" \
-        --ignore-cert-status UNTRUSTED_ISSUER \
-        --ignore-cert-status UNKNOWN_ISSUER \
-        --ignore-cert-status BAD_CERT_DOMAIN \
+    sudo podman exec "$KRA_CONTAINER" \
+        pki -U "http://localhost:8080" -u kraadmin -w "$ADMIN_PASSWORD" \
         "$@" 2>&1 | grep -v "^Trust this certificate\|^WARNING:"
 }
 
@@ -58,15 +60,17 @@ if [[ -z "$KRA_STATUS" ]]; then
     fail "KRA container not found"; exit 1
 fi
 
-# Ensure PKI server is running
-sudo podman exec "$KRA_CONTAINER" pki-server status "$KRA_INSTANCE" 2>/dev/null | grep -q "Active: True" || {
+# Ensure PKI server is running (check HTTP endpoint — pki-server status
+# reports Active: False in non-systemd containers even when Tomcat is up)
+KRA_HTTP=$(sudo podman exec "$KRA_CONTAINER" curl -sk http://localhost:8080/kra/admin/kra/getStatus 2>/dev/null || true)
+if ! echo "$KRA_HTTP" | grep -q '"running"'; then
     info "Starting PKI server..."
     sudo podman exec "$KRA_CONTAINER" pki-server start "$KRA_INSTANCE" 2>/dev/null
-    sleep 10
-}
+    sleep 15
+fi
 pass "KRA server is running"
 
-KRA_INFO=$(sudo podman exec "$KRA_CONTAINER" curl -sk https://localhost:8443/kra/rest/info 2>/dev/null || true)
+KRA_INFO=$(sudo podman exec "$KRA_CONTAINER" curl -sk http://localhost:8080/kra/rest/info 2>/dev/null || true)
 if echo "$KRA_INFO" | grep -q "ArchivalMechanism"; then
     pass "KRA REST API responding"
 else
@@ -107,6 +111,9 @@ TLS_INFO=$(sudo podman exec "$KRA_CONTAINER" curl -skv https://localhost:8443/kr
 if [ -n "$TLS_INFO" ]; then
     pass "Post-Quantum TLS Established"
     info "$TLS_INFO"
+else
+    # HTTPS may not respond if NSS can't negotiate ML-DSA TLS with curl's NSS backend
+    info "TLS probe skipped (NSS curl can't negotiate ML-DSA-87 TLS — using HTTP for REST API)"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -212,25 +219,40 @@ fi
 header "Step 6: PQ Trust Chain Status"
 
 echo ""
-echo "  Root CA (ML-DSA-87, FIPS 204 Level 5)"
-echo "    └── Intermediate CA (ML-DSA-87)"
-echo "        ├── IoT Sub-CA (ML-DSA-87)          — cert issuance"
-echo "        ├── OCSP Responder (ML-DSA-87)      — revocation status"
-echo "        └── KRA                              — key management"
-echo "            ├── Storage Cert (ML-KEM-1024)   — archived key encryption"
-echo "            └── Transport Cert (ML-KEM-1024) — key transit encryption"
-echo ""
-
-for CA_NAME in "dogtag-pq-root-ca" "dogtag-pq-intermediate-ca" "dogtag-pq-iot-ca" "dogtag-pq-ocsp" "$KRA_CONTAINER"; do
-    STATUS=$(sudo podman ps --format '{{.Status}}' --filter name="^${CA_NAME}$" 2>/dev/null || true)
-    if [[ "$STATUS" == *"healthy"* ]]; then
-        pass "$CA_NAME: healthy"
-    elif [[ -n "$STATUS" ]]; then
-        info "$CA_NAME: ${STATUS%% (*}"
-    else
-        fail "$CA_NAME: not running"
-    fi
-done
+if [ "$TOPO" = "full" ]; then
+    echo "  Root CA (ML-DSA-87, FIPS 204 Level 5)"
+    echo "    └── Intermediate CA (ML-DSA-87)"
+    echo "        ├── IoT Sub-CA (ML-DSA-87)          — cert issuance"
+    echo "        ├── OCSP Responder (ML-DSA-87)      — revocation status"
+    echo "        └── KRA                              — key management"
+    echo "            ├── Storage Cert (ML-KEM-1024)   — archived key encryption"
+    echo "            └── Transport Cert (ML-KEM-1024) — key transit encryption"
+    echo ""
+    for CA_NAME in "dogtag-pq-root-ca" "dogtag-pq-intermediate-ca" "dogtag-pq-iot-ca" "dogtag-pq-ocsp" "$KRA_CONTAINER"; do
+        STATUS=$(sudo podman ps --format '{{.Status}}' --filter name="^${CA_NAME}$" 2>/dev/null || true)
+        if [[ "$STATUS" == *"healthy"* ]]; then
+            pass "$CA_NAME: healthy"
+        elif [[ -n "$STATUS" ]]; then
+            info "$CA_NAME: ${STATUS%% (*}"
+        else
+            fail "$CA_NAME: not running"
+        fi
+    done
+else
+    echo "  PQ CA (ML-DSA-87, FIPS 204 Level 5) — minimal topology"
+    echo "    └── KRA                              — key management"
+    echo "        ├── Storage Cert (ML-KEM-1024)   — archived key encryption"
+    echo "        └── Transport Cert (ML-KEM-1024) — key transit encryption"
+    echo ""
+    for CA_NAME in "dogtag-pq-ca" "$KRA_CONTAINER"; do
+        STATUS=$(sudo podman ps --format '{{.Status}}' --filter name="^${CA_NAME}$" 2>/dev/null || true)
+        if [[ -n "$STATUS" ]]; then
+            pass "$CA_NAME: running"
+        else
+            fail "$CA_NAME: not running"
+        fi
+    done
+fi
 
 # Cleanup
 sudo podman exec "$KRA_CONTAINER" rm -rf "$CLIENT_DB" 2>/dev/null || true
