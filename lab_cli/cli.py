@@ -2943,6 +2943,8 @@ def pq_test_cmd():
         sskg = est_serverkeygen(PKIType.PQC, f"sskg-{ts}.cert-lab.local")
     if sskg.success:
         console.print(f"  [green]✅ {sskg.message}[/green]")
+        if sskg.certificate:
+            _show_cert_details(console, sskg.certificate)
     else:
         console.print(f"  [yellow]⚠ Generate ✅ Enroll ✅ Retrieve ⏳[/yellow]")
         console.print(f"    [dim]Retrieve needs CSR built from KRA-generated public key[/dim]")

@@ -432,15 +432,13 @@ def est_enroll_certificate(
         key_path = Path(tmpdir) / "key.pem"
         csr_path = Path(tmpdir) / "request.csr"
 
-        # Generate key based on PKI type
+        # Generate key based on PKI type.
+        # PQC EST uses RSA keys by default — the cert is ML-DSA-87 SIGNED
+        # by the PQ CA regardless of end-entity key type. ML-DSA end-entity
+        # keys require caMLDSAServerCert profile on kipuka, which must be
+        # configured separately. Use acme-issue for ML-DSA end-entity keys.
         csr_already_generated = False
-        if pki_type == PKIType.PQC:
-            err = _generate_pqc_key_and_csr(key_path, csr_path, device_fqdn, device_fqdn)
-            if err:
-                return ProtocolResult(success=False, message=err)
-            key_cmd = None
-            csr_already_generated = True
-        elif pki_type == PKIType.ECC:
+        if pki_type == PKIType.ECC:
             key_cmd = [
                 "openssl", "ecparam", "-genkey",
                 "-name", "secp384r1",
