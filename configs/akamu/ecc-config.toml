@@ -4,7 +4,7 @@
 # Reference: https://akamu.dev/doc/user/configuration.html#casigner
 
 listen_addr = "0.0.0.0:8080"
-base_url    = "http://localhost:8496"
+base_url    = "http://akamu-ecc.cert-lab.local:8496"
 
 [database]
 url = "sqlite:///app/data/akamu.db"

@@ -14,7 +14,7 @@ listen_addr = "0.0.0.0:8080"
 # account, order, certificate URLs). Must match what clients use to reach
 # the server. For the lab, clients run on the host where port 8486 maps
 # to container port 8080.
-base_url = "http://localhost:8486"
+base_url = "http://akamu-pq.cert-lab.local:8486"
 
 [database]
 url = "sqlite:///app/data/akamu.db"
