@@ -382,10 +382,34 @@ main() {
                 log_warn "Could not get cert ID for agent cert (non-fatal)"
             fi
         else
-            log_warn "Agent cert request failed (non-fatal): $submit_result"
+            log_warn "Agent cert request via pki CLI failed, trying admin P12 extraction..."
+            # Fallback: extract agent cert/key from the admin PKCS#12
+            sudo podman exec "$ISSUING_CA_CONTAINER" bash -c "
+                openssl pkcs12 -in /root/.dogtag/${ISSUING_CA_INSTANCE}/ca_admin_cert.p12 \
+                    -passin pass:${PKI_PASSWORD} -nokeys -clcerts \
+                    -out /certs/dogtag/agent.pem 2>/dev/null && \
+                openssl pkcs12 -in /root/.dogtag/${ISSUING_CA_INSTANCE}/ca_admin_cert.p12 \
+                    -passin pass:${PKI_PASSWORD} -nocerts -nodes \
+                    -out /certs/dogtag/agent-rsa.key.pem 2>/dev/null
+            " && log_info "Agent cert extracted from admin P12" \
+              || log_warn "Admin P12 extraction also failed (non-fatal)"
         fi
 
         rm -f /tmp/agent.csr
+    fi
+
+    # Verify agent cert exists; last-resort fallback
+    if [ ! -f "${agent_dir}/agent.pem" ]; then
+        log_warn "Agent cert missing after all attempts — trying admin P12 fallback..."
+        sudo podman exec "$ISSUING_CA_CONTAINER" bash -c "
+            openssl pkcs12 -in /root/.dogtag/${ISSUING_CA_INSTANCE}/ca_admin_cert.p12 \
+                -passin pass:${PKI_PASSWORD} -nokeys -clcerts \
+                -out /certs/dogtag/agent.pem 2>/dev/null && \
+            openssl pkcs12 -in /root/.dogtag/${ISSUING_CA_INSTANCE}/ca_admin_cert.p12 \
+                -passin pass:${PKI_PASSWORD} -nocerts -nodes \
+                -out /certs/dogtag/agent-rsa.key.pem 2>/dev/null
+        " && log_info "Agent cert recovered from admin P12" \
+          || log_warn "All agent cert methods failed — akamu/kipuka mTLS will not work"
     fi
 
     # Copy CA chain for Dogtag TLS trust
@@ -409,6 +433,15 @@ main() {
     # SELinux: containers need container_file_t label
     if command -v chcon &>/dev/null; then
         chcon -R -t container_file_t "${CERTS_DIR}" 2>/dev/null || true
+    fi
+
+    # Fix akamu data volume ownership (runs as uid 1001, volume created as root)
+    local akamu_vol
+    akamu_vol=$(sudo podman volume inspect "cert-revocation-lab_akamu-${PKI_TYPE}-data" --format '{{.Mountpoint}}' 2>/dev/null \
+             || sudo podman volume inspect "akamu-${PKI_TYPE}-data" --format '{{.Mountpoint}}' 2>/dev/null)
+    if [ -n "$akamu_vol" ]; then
+        chown 1001:1001 "$akamu_vol" 2>/dev/null || true
+        log_info "Fixed akamu data volume ownership (uid 1001)"
     fi
 
     echo
