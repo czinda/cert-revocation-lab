@@ -2676,12 +2676,12 @@ def _pq_infra_checks() -> list[tuple[str, bool, str]]:
     from .pki import _podman_exec, _podman_status, get_nss_certs, get_cert_detail
     checks = []
 
-    for ctr, label in [("dogtag-pq-ca", "CA"), ("dogtag-pq-kra", "KRA")]:
+    for ctr, label in [("dogtag-pq-root-ca", "Root CA"), ("dogtag-pq-intermediate-ca", "Intermediate CA"), ("dogtag-pq-iot-ca", "IoT Sub-CA"), ("dogtag-pq-ocsp", "OCSP"), ("dogtag-pq-kra", "KRA")]:
         status = _podman_status(ctr)
         checks.append(_pq_check(f"{label} container", status == "running", status))
 
     for ctr, path, ep in [
-        ("dogtag-pq-ca", "/ca/admin/ca/getStatus", "CA REST"),
+        ("dogtag-pq-iot-ca", "/ca/admin/ca/getStatus", "IoT CA REST"),
         ("dogtag-pq-kra", "/kra/admin/kra/getStatus", "KRA REST"),
     ]:
         rc, out = _podman_exec(ctr, f"curl -sk https://localhost:8443{path} 2>/dev/null")
@@ -2701,19 +2701,9 @@ def _pq_infra_checks() -> list[tuple[str, bool, str]]:
     except Exception:
         checks.append(_pq_check("akamu ACME responding", False, "connection failed"))
 
-    ca_nss = "/var/lib/pki/pki-pq-ca/alias"
-    ca_alg = get_cert_detail("dogtag-pq-ca", ca_nss, "caSigningCert cert-pki-pq-ca CA", "Signature Algorithm")
-    checks.append(_pq_check("CA signing: ML-DSA-87", "ML-DSA-87" in ca_alg, ca_alg))
-
-    ssl_issuer = get_cert_detail("dogtag-pq-ca", ca_nss, "Server-Cert cert-pki-pq-ca", "Issuer")
-    checks.append(_pq_check("sslserver signed by Ops CA", "Ops CA" in ssl_issuer, ssl_issuer))
-
-    certs = get_nss_certs("dogtag-pq-ca", ca_nss)
-    ops = [c for c in certs if "Ops" in c["nickname"]]
-    if ops:
-        checks.append(_pq_check("Ops CA trust: CT,C,C", ops[0]["trust"] == "CT,C,C", ops[0]["trust"]))
-    else:
-        checks.append(_pq_check("Ops CA in NSS", False, "not found"))
+    iot_nss = "/var/lib/pki/pki-pq-iot/alias"
+    ca_alg = get_cert_detail("dogtag-pq-iot-ca", iot_nss, "caSigningCert cert-pki-pq-iot CA", "Signature Algorithm")
+    checks.append(_pq_check("IoT CA signing: ML-DSA-87", "ML-DSA-87" in ca_alg, ca_alg))
 
     return checks
 
@@ -2915,10 +2905,17 @@ def pq_status_cmd():
     table.add_column("Status")
 
     containers = [
-        ("CA (ML-DSA-87)", "dogtag-pq-ca"),
+        ("Root CA", "dogtag-pq-root-ca"),
+        ("Intermediate CA", "dogtag-pq-intermediate-ca"),
+        ("IoT Sub-CA (ML-DSA-87)", "dogtag-pq-iot-ca"),
+        ("OCSP Responder", "dogtag-pq-ocsp"),
         ("KRA (ML-KEM-1024)", "dogtag-pq-kra"),
-        ("DS (CA)", "ds-pq-ca"),
+        ("DS (Root)", "ds-pq-root"),
+        ("DS (Intermediate)", "ds-pq-intermediate"),
+        ("DS (IoT)", "ds-pq-iot"),
+        ("DS (OCSP)", "ds-pq-ocsp"),
         ("DS (KRA)", "ds-pq-kra"),
+        ("HSM (SoftHSM2)", "kryoptic-pq-hsm"),
         ("EST (kipuka)", "kipuka-pq"),
         ("ACME (akamu)", "akamu-pq"),
     ]
@@ -2929,16 +2926,19 @@ def pq_status_cmd():
     console.print(table)
 
     console.print("\n[bold]Algorithms[/bold]")
-    ca_nss = "/var/lib/pki/pki-pq-ca/alias"
-    ca_alg = get_cert_detail("dogtag-pq-ca", ca_nss, "caSigningCert cert-pki-pq-ca CA", "Signature Algorithm")
-    ssl_alg = get_cert_detail("dogtag-pq-ca", ca_nss, "Server-Cert cert-pki-pq-ca", "Signature Algorithm")
-    console.print(f"  CA signing:    [bold]{ca_alg or 'unknown'}[/bold]")
-    console.print(f"  CA sslserver:  [bold]{ssl_alg or 'unknown'}[/bold]")
+    iot_nss = "/var/lib/pki/pki-pq-iot/alias"
+    ca_alg = get_cert_detail("dogtag-pq-iot-ca", iot_nss, "caSigningCert cert-pki-pq-iot CA", "Signature Algorithm")
+    ssl_alg = get_cert_detail("dogtag-pq-iot-ca", iot_nss, "Server-Cert cert-pki-pq-iot", "Signature Algorithm")
+    console.print(f"  IoT CA signing:  [bold]{ca_alg or 'unknown'}[/bold]")
+    console.print(f"  IoT CA TLS:      [bold]{ssl_alg or 'unknown'}[/bold]")
 
-    console.print("\n[bold]Trust Architecture[/bold]")
-    console.print("  [cyan]Issuance plane[/cyan]:   ML-DSA-87 CA → end-entity certs")
-    console.print("  [yellow]Operations plane[/yellow]: RSA Ops CA → sslserver, subsystem, agent")
-    console.print("  Two independent roots (no cross-signing)\n")
+    console.print("\n[bold]PKI Hierarchy[/bold]")
+    console.print("  Root CA (ML-DSA-87)")
+    console.print("    └── Intermediate CA (ML-DSA-87)")
+    console.print("          ├── IoT Sub-CA (ML-DSA-87) ← issuing CA")
+    console.print("          ├── OCSP Responder")
+    console.print("          └── KRA (ML-KEM-1024)")
+    console.print("  Enrollment: Akamu (ACME) + Kipuka (EST) → IoT Sub-CA\n")
 
 
 @app.command("pq-trust")
@@ -2949,7 +2949,9 @@ def pq_trust_cmd():
     console.print("\n[bold cyan]PQ Trust Architecture[/bold cyan]\n")
 
     for ctr, inst, label in [
-        ("dogtag-pq-ca", "pki-pq-ca", "CA"),
+        ("dogtag-pq-root-ca", "pki-pq-root", "Root CA"),
+        ("dogtag-pq-intermediate-ca", "pki-pq-intermediate", "Intermediate CA"),
+        ("dogtag-pq-iot-ca", "pki-pq-iot", "IoT Sub-CA"),
         ("dogtag-pq-kra", "pki-pq-kra", "KRA"),
     ]:
         nss_db = f"/var/lib/pki/{inst}/alias"
