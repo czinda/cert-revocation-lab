@@ -121,6 +121,43 @@ def _get_est_url(pki_type: PKIType) -> Optional[str]:
     return _build_url(pki_type, "est", "/.well-known/est")
 
 
+def _get_acme_container(pki_type: PKIType) -> str:
+    """Resolve the akamu container name from CA_CONFIGS for the given PKI type."""
+    pki = pki_type.value
+    if pki in CA_CONFIGS and "acme" in CA_CONFIGS[pki]:
+        return CA_CONFIGS[pki]["acme"].container
+    return "akamu-pq"  # legacy fallback
+
+
+def _get_container_gateway_ip(container: str) -> Optional[str]:
+    """Get the gateway IP for a container's network (host IP from inside).
+
+    The gateway IP is the host's address on the podman bridge, reachable
+    from inside the container.  Certbot binds to 0.0.0.0:80 on the host,
+    so akamu can reach it via this IP for HTTP-01 challenge validation.
+    """
+    try:
+        result = subprocess.run(
+            ["sudo", "podman", "inspect", "--format",
+             "{{range .NetworkSettings.Networks}}{{.Gateway}}{{end}}",
+             container],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            gw = result.stdout.strip()
+            if gw:
+                return gw
+    except (subprocess.TimeoutExpired, Exception):
+        pass
+    # Static fallback based on known lab network topology
+    _GATEWAY_MAP = {
+        "akamu-rsa": "172.26.0.1",
+        "akamu-ecc": "172.28.0.1",
+        "akamu-pq": "172.27.0.1",
+    }
+    return _GATEWAY_MAP.get(container)
+
+
 def _acme_via_akamu_cli(acme_url: str, domain: str, container: str, pki_type: PKIType = PKIType.RSA) -> ProtocolResult:
     """Issue certificate using akamu-cli in a Fedora container with host networking."""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -227,8 +264,10 @@ def acme_issue_certificate(
             message=f"ACME not available for {pki_type.value} PKI (backend={ENROLLMENT_BACKEND})."
         )
 
+    # Resolve the correct akamu container for this PKI type
+    akamu_container = _get_acme_container(pki_type)
+
     # Try akamu-cli first (built into the akamu container, supports ML-DSA)
-    akamu_container = "akamu-pq"
     cli_check = subprocess.run(
         ["sudo", "podman", "exec", akamu_container, "test", "-x", "/app/akamu-cli"],
         capture_output=True, timeout=5,
@@ -236,12 +275,25 @@ def acme_issue_certificate(
     if cli_check.returncode == 0:
         return _acme_via_akamu_cli(acme_url, domain, akamu_container, pki_type)
 
-    # Fallback: ensure domain resolves inside akamu container for certbot
-    subprocess.run(
-        ["sudo", "podman", "exec", akamu_container, "bash", "-c",
-         f'grep -q "{domain}" /etc/hosts || echo "172.27.0.1 {domain}" >> /etc/hosts'],
-        capture_output=True, timeout=10,
-    )
+    # Fallback: ensure domain resolves inside akamu container for certbot.
+    # Certbot runs on the HOST at port 80.  Akamu validates the HTTP-01
+    # challenge from INSIDE its container, so the domain must resolve to
+    # the host's gateway IP on the container's podman network.
+    host_ip = _get_container_gateway_ip(akamu_container)
+    if host_ip:
+        subprocess.run(
+            ["sudo", "podman", "exec", akamu_container, "bash", "-c",
+             f'grep -q "{domain}" /etc/hosts || echo "{host_ip} {domain}" >> /etc/hosts'],
+            capture_output=True, timeout=10,
+        )
+    else:
+        import sys
+        print(
+            f"WARNING: Could not determine host gateway IP for {akamu_container}. "
+            f"HTTP-01 challenge validation may fail because akamu cannot "
+            f"resolve {domain} to the host running certbot.",
+            file=sys.stderr,
+        )
 
     # Certbot fallback
     with tempfile.TemporaryDirectory() as tmpdir:
