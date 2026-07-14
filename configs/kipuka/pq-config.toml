@@ -39,12 +39,11 @@ url = "sqlite:///var/lib/kipuka/kipuka.db?mode=rwc"
 
 # ── Dogtag PKI Backend ───────────────────────────────────────────────────
 [dogtag]
-# HTTPS with basic auth (no mTLS): Dogtag's NSS can't validate
-# ML-DSA-87-signed agent cert chains during TLS client authentication.
-# skip_mtls=true tells kipuka to connect via HTTPS but NOT present
-# the agent certificate — basic auth handles all REST API authorization.
-ca_url          = "https://pq-iot-ca.cert-lab.local:8443"
-kra_url         = "https://pq-kra.cert-lab.local:8443"
+# HTTP for PQ: Dogtag's HTTPS connector requires client cert auth
+# from external connections, but ML-DSA-87 agent certs can't satisfy it
+# (NSS clientAuth path). HTTP with basic auth works reliably.
+ca_url          = "http://pq-iot-ca.cert-lab.local:8080"
+kra_url         = "http://pq-kra.cert-lab.local:8080"
 agent_cert_file = "/etc/kipuka/certs/dogtag/agent.pem"
 agent_key_file  = "/etc/kipuka/certs/dogtag/agent-rsa.key.pem"
 ca_cert_file    = "/etc/kipuka/certs/dogtag/ca-chain.pem"
@@ -83,7 +82,7 @@ bearer_token = "cert-lab-kipuka-admin-token"
 # Requires kipuka built with --features gssapi.
 [admin.gssapi]
 keytab_file = "/etc/krb5.keytab"
-require_crypto_verification = false
+require_crypto_verification = true
 
 # ── Audit ────────────────────────────────────────────────────────────────
 [audit]
