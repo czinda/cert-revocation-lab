@@ -20,6 +20,7 @@ services:
     container_name: freeipa
     hostname: ipa.${LAB_DOMAIN:-cert-lab.local}
     privileged: true
+    pids_limit: -1
     networks:
       freeipa-net:
         ipv4_address: 172.25.0.10
