@@ -130,6 +130,19 @@ phase2_install_cert() {
     # Configure caServerCert profile for non-RSA key types (ECC, PQ)
     configure_server_cert_profile "$PKI_INSTANCE" "$PKI_TYPE"
 
+    # Disable CSRF nonce protection for HTTP basic auth enrollment (lab mode).
+    # Nonces are tied to the agent's TLS client cert session; over HTTP there's
+    # no client cert, so nonce lookups fail with "Nonce does not exist".
+    local cs_cfg="/var/lib/pki/${PKI_INSTANCE}/conf/ca/CS.cfg"
+    if [ -f "$cs_cfg" ]; then
+        if grep -q "ca.enableNonces" "$cs_cfg"; then
+            sed -i "s/ca.enableNonces=.*/ca.enableNonces=false/" "$cs_cfg"
+        else
+            echo "ca.enableNonces=false" >> "$cs_cfg"
+        fi
+        log_info "Disabled CSRF nonces (ca.enableNonces=false) for HTTP enrollment"
+    fi
+
     # Note: EST is served by the separate EST Sub-CA
     log_info "Note: EST is served by the separate ${CONFIG_PREFIX}EST Sub-CA"
 
