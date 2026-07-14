@@ -310,6 +310,9 @@ services:
     volumes:
       - ./configs/akamu/pq-config.toml:/app/conf/config.toml:ro,z
       - ./data/certs/pq:/certs:ro,z
+      - ./data/certs/akamu-pq.keytab:/etc/krb5.keytab:ro,z
+      - ./configs/krb5.conf:/etc/krb5.conf:ro,z
+      - ./data/certs/ipa-ca.pem:/etc/pki/tls/certs/ipa-ca.pem:ro,z
       - akamu-pq-data:/app/data
       - kryoptic-pq-socket:/var/run/kryoptic:ro
     extra_hosts:
@@ -319,6 +322,7 @@ services:
       - "akamu-pq.cert-lab.local:172.27.0.18"
       - "kipuka-pq.cert-lab.local:172.27.0.19"
       - "pq-ocsp.cert-lab.local:172.27.0.22"
+      - "ipa.cert-lab.local:172.27.0.1"
     networks:
       pki-pq-net:
         ipv4_address: 172.27.0.18
@@ -351,6 +355,9 @@ services:
     volumes:
       - ./configs/kipuka/pq-config.toml:/etc/kipuka/kipuka.toml:ro
       - ./data/certs/pq:/etc/kipuka/certs:ro
+      - ./data/certs/kipuka-pq.keytab:/etc/krb5.keytab:ro
+      - ./configs/krb5.conf:/etc/krb5.conf:ro
+      - ./data/certs/ipa-ca.pem:/etc/pki/tls/certs/ipa-ca.pem:ro
       - kipuka-pq-data:/var/lib/kipuka
       - kryoptic-pq-data:/var/lib/softhsm:ro
       - kryoptic-pq-socket:/var/run/kryoptic:ro
@@ -361,6 +368,7 @@ services:
       - "akamu-pq.cert-lab.local:172.27.0.18"
       - "kipuka-pq.cert-lab.local:172.27.0.19"
       - "pq-ocsp.cert-lab.local:172.27.0.22"
+      - "ipa.cert-lab.local:172.27.0.1"
     networks:
       pki-pq-net:
         ipv4_address: 172.27.0.19

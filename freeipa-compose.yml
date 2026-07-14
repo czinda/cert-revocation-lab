@@ -16,7 +16,7 @@ version: "3.8"
 
 services:
   freeipa:
-    image: quay.io/freeipa/freeipa-server:${IPA_VERSION:-fedora-43}
+    image: quay.io/freeipa/freeipa-server:${IPA_VERSION:-fedora-rawhide}
     container_name: freeipa
     hostname: ipa.${LAB_DOMAIN:-cert-lab.local}
     privileged: true
