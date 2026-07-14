@@ -168,9 +168,18 @@ is_rootful_running() {
     [ "$status" = "running" ]
 }
 
+# Build network create arguments (adds --disable-dns when NO_DNS=true)
+_net_create_args() {
+    local subnet=$1 gateway=$2 name=$3
+    local args="--subnet $subnet --gateway $gateway"
+    [ "$NO_DNS" = true ] && args="$args --disable-dns"
+    echo "$args $name"
+}
+
 # Setup and validate podman networks
 setup_networks() {
     log_info "Checking container networks..."
+    [ "$NO_DNS" = true ] && log_info "CNI DNS disabled (--no-dns): using host DNS server"
 
     # Detect if we're running as root
     local running_as_root=false
@@ -202,12 +211,12 @@ setup_networks() {
                     else
                         log_warn "$net_name has wrong subnet: $current_subnet (expected $expected_subnet)"
                         podman network rm -f "$net_name" 2>/dev/null || true
-                        podman network create --subnet "$expected_subnet" --gateway "$expected_gateway" "$net_name"
+                        podman network create $(_net_create_args "$expected_subnet" "$expected_gateway" "$net_name")
                         log_success "$net_name recreated"
                     fi
                 else
                     log_info "Creating network $net_name..."
-                    podman network create --subnet "$expected_subnet" --gateway "$expected_gateway" "$net_name" 2>/dev/null || true
+                    podman network create $(_net_create_args "$expected_subnet" "$expected_gateway" "$net_name") 2>/dev/null || true
                     log_success "$net_name created"
                 fi
             elif sudo -n true 2>/dev/null; then
@@ -218,12 +227,12 @@ setup_networks() {
                     else
                         log_warn "$net_name has wrong subnet, recreating..."
                         sudo podman network rm -f "$net_name" 2>/dev/null || true
-                        sudo podman network create --subnet "$expected_subnet" --gateway "$expected_gateway" "$net_name"
+                        sudo podman network create $(_net_create_args "$expected_subnet" "$expected_gateway" "$net_name")
                         log_success "$net_name recreated"
                     fi
                 else
                     log_info "Creating network $net_name..."
-                    sudo podman network create --subnet "$expected_subnet" --gateway "$expected_gateway" "$net_name" 2>/dev/null || true
+                    sudo podman network create $(_net_create_args "$expected_subnet" "$expected_gateway" "$net_name") 2>/dev/null || true
                     log_success "$net_name created"
                 fi
             else
@@ -243,12 +252,12 @@ setup_networks() {
                     else
                         log_warn "$net_name has wrong subnet, recreating..."
                         podman network rm -f "$net_name" 2>/dev/null || true
-                        podman network create --subnet "$expected_subnet" --gateway "$expected_gateway" "$net_name"
+                        podman network create $(_net_create_args "$expected_subnet" "$expected_gateway" "$net_name")
                         log_success "$net_name recreated"
                     fi
                 else
                     log_info "Creating network $net_name..."
-                    podman network create --subnet "$expected_subnet" --gateway "$expected_gateway" "$net_name" 2>/dev/null || true
+                    podman network create $(_net_create_args "$expected_subnet" "$expected_gateway" "$net_name") 2>/dev/null || true
                     log_success "$net_name created"
                 fi
             fi
@@ -1666,6 +1675,7 @@ main() {
     local do_clean=false
     local do_quick=false
     local do_yes=false
+    NO_DNS=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --clean)
@@ -1703,6 +1713,10 @@ main() {
                 START_PQ_PKI=true
                 shift
                 ;;
+            --no-dns)
+                NO_DNS=true
+                shift
+                ;;
             --enrollment-backend)
                 shift
                 ENROLLMENT_BACKEND="$1"
@@ -1726,6 +1740,8 @@ main() {
                 echo "               Select ACME/EST enrollment backend (default: akamu)"
                 echo "               akamu  = Akamu ACME reverse proxy + Kipuka EST dashboard"
                 echo "               dogtag = Dogtag native ACME/EST Registration Authorities"
+                echo "  --no-dns   Disable CNI dnsname on podman networks (use when host"
+                echo "               has its own DNS server, e.g. Technitium, Pi-hole)"
                 echo "  --help     Show this help message"
                 echo ""
                 echo "Examples:"
