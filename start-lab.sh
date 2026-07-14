@@ -172,14 +172,18 @@ is_rootful_running() {
 _net_create_args() {
     local subnet=$1 gateway=$2 name=$3
     local args="--subnet $subnet --gateway $gateway"
-    [ "$NO_DNS" = true ] && args="$args --disable-dns"
+    if [ "$NO_DNS" = true ]; then
+        args="$args --disable-dns"
+    fi
     echo "$args $name"
 }
 
 # Setup and validate podman networks
 setup_networks() {
     log_info "Checking container networks..."
-    [ "$NO_DNS" = true ] && log_info "CNI DNS disabled (--no-dns): using host DNS server"
+    if [ "$NO_DNS" = true ]; then
+        log_info "CNI DNS disabled (--no-dns): using host DNS server"
+    fi
 
     # Detect if we're running as root
     local running_as_root=false

@@ -85,7 +85,7 @@ all:
         intermediate: dogtag-intermediate-ca
         iot: dogtag-iot-ca
         est: "{{ (enrollment_backend == 'akamu') | ternary('kipuka-rsa', 'dogtag-est-ca') }}"
-        acme: "{{ (enrollment_backend == 'akamu') | ternary('kipuka-rsa', 'dogtag-acme-ca') }}"
+        acme: "{{ (enrollment_backend == 'akamu') | ternary('akamu-rsa', 'dogtag-acme-ca') }}"
         ocsp: dogtag-ocsp
         kra: dogtag-kra
       ecc:
@@ -93,6 +93,7 @@ all:
         intermediate: dogtag-ecc-intermediate-ca
         iot: dogtag-ecc-iot-ca
         est: "{{ (enrollment_backend == 'akamu') | ternary('kipuka-ecc', 'dogtag-ecc-est-ca') }}"
+        acme: "{{ (enrollment_backend == 'akamu') | ternary('akamu-ecc', 'dogtag-ecc-acme-ca') }}"
         ocsp: dogtag-ecc-ocsp
         kra: dogtag-ecc-kra
       pq:

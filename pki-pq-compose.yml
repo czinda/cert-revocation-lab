@@ -587,7 +587,7 @@ services:
       - ds-pq-ops-data:/data
     networks:
       pki-pq-net:
-        ipv4_address: 172.27.0.25
+        ipv4_address: 172.27.0.26
     healthcheck:
       test: ["CMD-SHELL", "/usr/libexec/dirsrv/dscontainer -H || ldapsearch -x -H ldap://localhost:3389 -b '' -s base > /dev/null 2>&1"]
       interval: 10s
@@ -631,7 +631,7 @@ services:
     extra_hosts:
       - "ds-pq-root.cert-lab.local:172.27.0.14"
       - "ds-pq-intermediate.cert-lab.local:172.27.0.15"
-      - "ds-pq-ops.cert-lab.local:172.27.0.25"
+      - "ds-pq-ops.cert-lab.local:172.27.0.26"
       - "pq-root-ca.cert-lab.local:172.27.0.12"
       - "pq-intermediate-ca.cert-lab.local:172.27.0.11"
       - "pq-ops-ca.cert-lab.local:172.27.0.26"
