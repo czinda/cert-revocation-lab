@@ -28,7 +28,7 @@ client_auth = "optional"
 # kipuka TLS cert/key — actual certificate signing is done by Dogtag.
 [ca]
 key_file  = "/etc/kipuka/certs/kipuka-rsa.key.pem"
-cert_file = "/etc/kipuka/certs/ca-chain.crt"
+cert_file = "/etc/kipuka/certs/iot-ca-chain.crt"
 
 # ── Database ─────────────────────────────────────────────────────────────
 [database]

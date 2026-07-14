@@ -21,7 +21,7 @@ client_auth = "optional"
 # ── CA Key Material ──────────────────────────────────────────────────────
 [ca]
 key_file   = "/etc/kipuka/certs/kipuka-pq.key.pem"
-cert_file  = "/etc/kipuka/certs/ca-chain.crt"
+cert_file  = "/etc/kipuka/certs/iot-ca-chain.crt"
 
 # ── HSM / PKCS#11 (SoftHSM2) ────────────────────────────────────────────
 # SoftHSM2 module loaded directly (shared token volume from kryoptic-pq-hsm).
