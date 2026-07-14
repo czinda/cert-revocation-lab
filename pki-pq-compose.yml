@@ -308,8 +308,8 @@ services:
       dogtag-pq-intermediate-ca:
         condition: service_healthy
     volumes:
-      - ./configs/akamu/pq-config.toml:/app/conf/config.toml:ro
-      - ./data/certs/pq:/certs:ro
+      - ./configs/akamu/pq-config.toml:/app/conf/config.toml:ro,z
+      - ./data/certs/pq:/certs:ro,z
       - akamu-pq-data:/app/data
       - kryoptic-pq-socket:/var/run/kryoptic:ro
     extra_hosts:

@@ -251,8 +251,8 @@ services:
       dogtag-ecc-intermediate-ca:
         condition: service_healthy
     volumes:
-      - ./configs/akamu/ecc-config.toml:/app/conf/config.toml:ro
-      - ./data/certs/ecc:/certs:ro
+      - ./configs/akamu/ecc-config.toml:/app/conf/config.toml:ro,z
+      - ./data/certs/ecc:/certs:ro,z
       - akamu-ecc-data:/app/data
     extra_hosts:
       - "ecc-root-ca.cert-lab.local:172.28.0.12"

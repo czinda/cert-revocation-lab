@@ -234,8 +234,8 @@ services:
       dogtag-intermediate-ca:
         condition: service_healthy
     volumes:
-      - ./configs/akamu/rsa-config.toml:/app/conf/config.toml:ro
-      - ./data/certs/rsa:/certs:ro
+      - ./configs/akamu/rsa-config.toml:/app/conf/config.toml:ro,z
+      - ./data/certs/rsa:/certs:ro,z
       - akamu-rsa-data:/app/data
     extra_hosts:
       - "root-ca.cert-lab.local:172.26.0.12"
