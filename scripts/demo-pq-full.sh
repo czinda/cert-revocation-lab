@@ -690,7 +690,7 @@ echo -e "${BOLD}${CYAN}╚══════════════════
 
 run_section() {
     local name="$1"
-    "$name" || { fail "Section '$name' failed (continuing)"; ((FAILURES++)) || true; }
+    "$name" || fail "Section '$name' failed (continuing)"
 }
 
 if [ "$SECTION" = "all" ]; then
