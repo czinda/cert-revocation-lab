@@ -51,3 +51,12 @@ dns_resolver_addr = "172.27.0.2:53"
 
 [profiles]
 refresh_interval_secs = 3600
+
+[star]
+# RFC 8739 — Short-Term Automatic Renewal
+# Akamu auto-renews STAR certificates before expiry; clients fetch
+# a rolling URL that always returns a fresh cert.
+enabled = true
+min_lifetime_secs = 3600        # 1 hour minimum cert lifetime
+max_duration_secs = 604800      # 7 day max subscription duration
+allow_certificate_get = true    # allow unauthenticated GET on star cert URL

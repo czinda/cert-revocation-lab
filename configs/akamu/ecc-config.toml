@@ -30,3 +30,10 @@ validate_dnssec = false
 
 [profiles]
 refresh_interval_secs = 3600
+
+[star]
+# RFC 8739 — Short-Term Automatic Renewal
+enabled = true
+min_lifetime_secs = 3600
+max_duration_secs = 604800
+allow_certificate_get = true
