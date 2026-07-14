@@ -47,6 +47,7 @@ password     = "RedHat123"
 http_validation_allow_private_ips = true
 http_validation_port = 80
 validate_dnssec = false
+dns_resolver_addr = "172.27.0.2:53"
 
 [profiles]
 refresh_interval_secs = 3600

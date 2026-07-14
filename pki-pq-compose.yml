@@ -258,6 +258,20 @@ services:
   # Activate with: ENROLLMENT_BACKEND=akamu (default)
   # Rust-based ACME CA + EST server, delegating to Dogtag PQ Intermediate CA.
 
+  # ── DNS for ACME HTTP-01 validation ────────────────────────────────────────
+  # Resolves *.cert-lab.local to the host gateway (172.27.0.1) so akamu can
+  # reach certbot's HTTP-01 challenge server running on the host.
+  dnsmasq-pq:
+    profiles: [akamu]
+    image: docker.io/drpsychick/dnsmasq:latest
+    container_name: dnsmasq-pq
+    hostname: dns-pq.${LAB_DOMAIN:-cert-lab.local}
+    command: ["--address=/cert-lab.local/172.27.0.1", "--log-queries", "--no-daemon"]
+    networks:
+      pki-pq-net:
+        ipv4_address: 172.27.0.2
+    restart: unless-stopped
+
   # ── Kryoptic HSM (PKCS#11 Software Token) ─────────────────────────────────
   # Provides HSM-backed key storage for kipuka and akamu via p11-kit socket.
   # Client containers mount kryoptic-socket and use p11-kit-client.so.
