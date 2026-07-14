@@ -50,6 +50,8 @@ from .protocols import (
     acme_get_status,
     acme_list_certs,
     acme_revoke_cert,
+    acme_get_eab,
+    acme_star_status,
     est_enroll_certificate,
     est_get_cacerts,
     est_get_csrattrs,
@@ -2338,6 +2340,116 @@ def acme_profiles_cmd(
         desc = pinfo if isinstance(pinfo, str) else pinfo.get("description", str(pinfo))
         table.add_row(pid, desc)
     console.print(table)
+
+
+@app.command("eab-get")
+def eab_get(
+    pki_type: PKIType = typer.Option(PKIType.RSA, "--pki-type", "-p", help="PKI type"),
+    negotiate: bool = typer.Option(False, "--negotiate", "-n", help="Use Kerberos SPNEGO auth"),
+):
+    """Get External Account Binding (EAB) credentials from ACME server.
+
+    EAB provides a way to bind ACME account registration to an existing
+    account on the CA. The EAB credentials (kid and hmac_key) are used
+    during ACME account creation.
+
+    Example:
+        lab eab-get --pki-type rsa
+        lab eab-get --pki-type pqc --negotiate
+    """
+    console.print(f"\n[bold cyan]ACME External Account Binding — {pki_type.value.upper()} PKI[/bold cyan]\n")
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        progress.add_task("Fetching EAB credentials...", total=None)
+        result = acme_get_eab(pki_type, use_negotiate=negotiate)
+
+    if not result.success:
+        console.print(f"[red]✗ {result.message}[/red]")
+        if result.details and result.details.get("hint"):
+            console.print(f"  [yellow]Hint: {result.details['hint']}[/yellow]")
+        if result.details and result.details.get("curl_command"):
+            console.print(f"\n[dim]Manual command:[/dim]")
+            console.print(f"  [dim]{result.details['curl_command']}[/dim]")
+        raise typer.Exit(1)
+
+    d = result.details
+    console.print(f"[green]✓ {result.message}[/green]\n")
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Key ID (kid)", d.get("kid", ""))
+    table.add_row("HMAC Key", d.get("hmac_key", "")[:50] + "..." if len(d.get("hmac_key", "")) > 50 else d.get("hmac_key", ""))
+    table.add_row("EAB URL", d.get("eab_url", ""))
+    console.print(table)
+
+    if d.get("curl_command"):
+        console.print(f"\n[dim]Manual command:[/dim]")
+        console.print(f"  [dim]{d['curl_command']}[/dim]")
+
+
+@app.command("star-status")
+def star_status(
+    pki_type: PKIType = typer.Option(PKIType.RSA, "--pki-type", "-p", help="PKI type"),
+):
+    """Check STAR (Short-Term Auto Renewal) status from ACME directory.
+
+    STAR (RFC 8739) allows ACME clients to request short-lived certificates
+    that automatically renew for a specified lifetime without client interaction.
+
+    Example:
+        lab star-status --pki-type rsa
+    """
+    console.print(f"\n[bold cyan]ACME STAR Status — {pki_type.value.upper()} PKI[/bold cyan]\n")
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        progress.add_task("Checking STAR status...", total=None)
+        result = acme_star_status(pki_type)
+
+    if not result.success:
+        console.print(f"[red]✗ {result.message}[/red]")
+        raise typer.Exit(1)
+
+    d = result.details
+    star_enabled = d.get("star_enabled", False)
+
+    if not star_enabled:
+        console.print(f"[yellow]STAR not enabled on this ACME server[/yellow]")
+        console.print(f"  ACME URL: {d.get('acme_url', '')}")
+        return
+
+    console.print(f"[green]✓ STAR is enabled[/green]\n")
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Parameter", style="cyan")
+    table.add_column("Value")
+
+    if d.get("min_lifetime"):
+        table.add_row("Min Lifetime", str(d["min_lifetime"]))
+    if d.get("max_lifetime"):
+        table.add_row("Max Lifetime", str(d["max_lifetime"]))
+    if "allow_certificate_get" in d:
+        table.add_row("Allow Certificate Get", str(d["allow_certificate_get"]))
+
+    # Show full STAR config if it's a dict
+    star_config = d.get("star_config")
+    if isinstance(star_config, dict):
+        for key, value in star_config.items():
+            if key not in ["min-cert-lifetime", "max-cert-lifetime", "allow-certificate-get"]:
+                table.add_row(key, str(value))
+
+    console.print(table)
+    console.print(f"\n  ACME URL: {d.get('acme_url', '')}")
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# PQ PKI Full Demo — 12 Sections
+# PQ PKI Full Demo — 15 Sections
 # =============================================================================
 # Comprehensive showcase of the ML-DSA-87 post-quantum PKI stack:
 #
@@ -16,9 +16,12 @@
 #  10.  Cross-Algorithm Comparison  — RSA vs ML-DSA cert side-by-side
 #  11.  HSM Token Inventory         — SoftHSM2 PKCS#11 tokens
 #  12.  PQ TLS Gap Analysis         — NSS vs OpenSSL mTLS status
+#  13.  Kerberos + EAB              — External Account Binding with GSSAPI
+#  14.  STAR Auto-Renewal           — Short-Term Automatic Renewal (RFC 8739)
+#  15.  Kerberos EST Enrollment     — GSSAPI-authenticated EST simpleenroll
 #
 # Usage:
-#   sudo bash scripts/demo-pq-full.sh              # Full demo (all 12 sections)
+#   sudo bash scripts/demo-pq-full.sh              # Full demo (all 15 sections)
 #   sudo bash scripts/demo-pq-full.sh --section 2  # Just EST enrollment
 #   sudo bash scripts/demo-pq-full.sh --section 5  # Just ACME issuance
 #
@@ -28,7 +31,9 @@ set -euo pipefail
 
 # ── Config ────────────────────────────────────────────────────────────────────
 EST_URL="https://localhost:8456"
+EST_PORT=8456
 ACME_URL="http://localhost:8486"
+ACME_PORT=8486
 ADMIN_TOKEN="cert-lab-kipuka-admin-token"
 ADMIN_PASSWORD="RedHat123"
 TMPDIR=$(mktemp -d /tmp/pq-demo.XXXXXX)
@@ -679,11 +684,162 @@ demo_tls_gap() {
 }
 
 # =============================================================================
+# Section 13: Kerberos + External Account Binding (EAB)
+# =============================================================================
+demo_eab() {
+    header "Section 13: Kerberos + External Account Binding (EAB)"
+    info "EAB binds ACME accounts to Kerberos identities"
+    info "Flow: kinit → GET /acme/eab (Negotiate) → ACME account with EAB"
+    echo ""
+
+    # Check if FreeIPA / Kerberos is available
+    divider
+    echo -e "  ${BOLD}Kerberos Environment${NC}"
+
+    # Try to get a ticket (may fail if FreeIPA not deployed)
+    local krb_available=false
+    if command -v kinit >/dev/null 2>&1; then
+        # Check for existing ticket
+        if klist -s 2>/dev/null; then
+            local principal
+            principal=$(klist 2>/dev/null | grep "Default principal:" | awk '{print $3}')
+            pass "Kerberos ticket: $principal"
+            krb_available=true
+        else
+            info "No Kerberos ticket (kinit required for EAB with GSSAPI)"
+        fi
+    else
+        info "kinit not available — showing EAB concepts without live Kerberos"
+    fi
+
+    divider
+    echo -e "  ${BOLD}EAB Credential Flow${NC}"
+    echo ""
+    echo "  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐"
+    echo "  │  1. kinit        │ →  │  2. GET /eab     │ →  │  3. ACME Account │"
+    echo "  │  (Kerberos TGT)  │    │  (Negotiate)     │    │  (with EAB)      │"
+    echo "  └─────────────────┘    └─────────────────┘    └─────────────────┘"
+    echo ""
+    info "Step 1: Client obtains Kerberos TGT via kinit user@CERT-LAB.LOCAL"
+    info "Step 2: GET /acme/eab with Authorization: Negotiate header"
+    info "        → Server validates SPNEGO token via gss_accept_sec_context"
+    info "        → HKDF-SHA256(master_secret, principal) derives (kid, hmac_key)"
+    info "Step 3: Client uses (kid, hmac_key) in ACME newAccount externalAccountBinding"
+    info "        → Every certificate traces to the Kerberos principal"
+    echo ""
+
+    # Check ACME directory for EAB requirement
+    divider
+    echo -e "  ${BOLD}ACME EAB Configuration${NC}"
+    local dir_out
+    dir_out=$(curl -s "http://localhost:${ACME_PORT}/acme/directory" 2>/dev/null || echo "{}")
+    local has_eab
+    has_eab=$(echo "$dir_out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('meta',{}).get('externalAccountRequired','false'))" 2>/dev/null || echo "false")
+
+    if [ "$has_eab" = "true" ] || [ "$has_eab" = "True" ]; then
+        pass "EAB required: ACME accounts must present external binding"
+    else
+        info "EAB not enforced (external_account_required = false in config)"
+        info "Enable with: external_account_required = true in akamu config"
+    fi
+
+    # Try EAB endpoint if available
+    if [ "$krb_available" = true ]; then
+        local eab_out
+        eab_out=$(curl -s --negotiate -u : "http://localhost:${ACME_PORT}/acme/eab" 2>/dev/null || echo "")
+        if echo "$eab_out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('kid',''))" 2>/dev/null | grep -q .; then
+            pass "EAB credentials obtained via Kerberos"
+            local kid hmac
+            kid=$(echo "$eab_out" | python3 -c "import sys,json; print(json.load(sys.stdin)['kid'])" 2>/dev/null)
+            hmac=$(echo "$eab_out" | python3 -c "import sys,json; print(json.load(sys.stdin)['hmac_key'][:20])" 2>/dev/null)
+            info "kid:      ${kid}"
+            info "hmac_key: ${hmac}... (truncated)"
+        else
+            info "EAB endpoint not configured or GSSAPI not available to akamu"
+        fi
+    fi
+}
+
+# =============================================================================
+# Section 14: STAR — Short-Term Auto Renewal
+# =============================================================================
+demo_star() {
+    header "Section 14: STAR — Short-Term Automatic Renewal (RFC 8739)"
+    info "STAR certificates auto-renew before expiry — no client action needed"
+    info "Use case: CDN edge certs, IoT devices with limited renewal capability"
+    echo ""
+
+    divider
+    echo -e "  ${BOLD}STAR Capabilities${NC}"
+
+    local dir_out
+    dir_out=$(curl -s "http://localhost:${ACME_PORT}/acme/directory" 2>/dev/null || echo "{}")
+    local star_enabled
+    star_enabled=$(echo "$dir_out" | python3 -c "import sys,json; d=json.load(sys.stdin); ar=d.get('meta',{}).get('auto-renewal',{}); print('true' if ar else 'false')" 2>/dev/null || echo "false")
+
+    if [ "$star_enabled" = "true" ]; then
+        pass "STAR enabled in ACME directory"
+        local star_meta
+        star_meta=$(echo "$dir_out" | python3 -c "import sys,json; d=json.load(sys.stdin); ar=d.get('meta',{}).get('auto-renewal',{}); print(f'min-lifetime: {ar.get(\"min-lifetime\",\"?\")}s, max-duration: {ar.get(\"max-duration\",\"?\")}s')" 2>/dev/null)
+        info "Parameters: $star_meta"
+    else
+        info "STAR not enabled (add star_min_lifetime_secs to akamu config)"
+    fi
+
+    echo ""
+    echo "  ┌────────────────────────────────────────────────────────┐"
+    echo "  │ STAR Certificate Lifecycle (RFC 8739)                  │"
+    echo "  ├────────────────────────────────────────────────────────┤"
+    echo "  │ Order created → cert issued (1h lifetime)              │"
+    echo "  │           ↓                                            │"
+    echo "  │ 45 min later → akamu auto-renews (new cert, same URL)  │"
+    echo "  │           ↓                                            │"
+    echo "  │ Client fetches rolling URL → always gets fresh cert    │"
+    echo "  │           ↓                                            │"
+    echo "  │ Subscription cancelled or max-duration reached → stop  │"
+    echo "  └────────────────────────────────────────────────────────┘"
+}
+
+# =============================================================================
+# Section 15: Kerberos-Authenticated EST Enrollment
+# =============================================================================
+demo_gssapi_est() {
+    header "Section 15: Kerberos-Authenticated EST Enrollment"
+    info "EST simpleenroll with Authorization: Negotiate (no OTP needed)"
+    info "Flow: kinit → EST simpleenroll (SPNEGO) → ML-DSA-87 cert"
+    echo ""
+
+    divider
+    echo -e "  ${BOLD}Kipuka GSSAPI Support${NC}"
+
+    # Check if kipuka has GSSAPI enabled
+    local kipuka_health
+    kipuka_health=$(curl -sk "https://localhost:${EST_PORT}/health" 2>/dev/null || echo "{}")
+    if echo "$kipuka_health" | grep -qi "gssapi\|negotiate"; then
+        pass "Kipuka EST supports GSSAPI authentication"
+    else
+        info "Kipuka GSSAPI requires --features gssapi build + keytab config"
+    fi
+
+    echo ""
+    echo "  ┌──────────────────────────────────────────────────────────┐"
+    echo "  │ EST Authentication Methods (kipuka)                      │"
+    echo "  ├──────────────────────────────────────────────────────────┤"
+    echo "  │  1. mTLS (client certificate)  — PKI-native              │"
+    echo "  │  2. OTP (HTTP Basic)           — one-time password       │"
+    echo "  │  3. GSSAPI (Negotiate)         — Kerberos principal      │"
+    echo "  └──────────────────────────────────────────────────────────┘"
+    echo ""
+    info "GSSAPI enrollment binds the certificate to the Kerberos principal"
+    info "No pre-provisioned OTP needed — identity comes from the KDC"
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 echo ""
 echo -e "${BOLD}${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BOLD}${CYAN}║   Post-Quantum PKI Full Demo — 12 Sections                  ║${NC}"
+echo -e "${BOLD}${CYAN}║   Post-Quantum PKI Full Demo — 15 Sections                  ║${NC}"
 echo -e "${BOLD}${CYAN}║   ML-DSA-87 (FIPS 204) + ML-KEM-1024 (FIPS 203)            ║${NC}"
 echo -e "${BOLD}${CYAN}║   Kipuka EST · Akamu ACME · Dogtag PKI · SoftHSM2           ║${NC}"
 echo -e "${BOLD}${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
@@ -706,6 +862,9 @@ if [ "$SECTION" = "all" ]; then
     run_section demo_comparison
     run_section demo_hsm
     run_section demo_tls_gap
+    run_section demo_eab
+    run_section demo_star
+    run_section demo_gssapi_est
 elif [ "$SECTION" = "--section" ]; then
     case "${2:-}" in
         1)  demo_status ;;
@@ -720,10 +879,13 @@ elif [ "$SECTION" = "--section" ]; then
         10) demo_comparison ;;
         11) demo_hsm ;;
         12) demo_tls_gap ;;
-        *)  echo "Usage: $0 [--section 1-12]"; exit 1 ;;
+        13) demo_eab ;;
+        14) demo_star ;;
+        15) demo_gssapi_est ;;
+        *)  echo "Usage: $0 [--section 1-15]"; exit 1 ;;
     esac
 else
-    echo "Usage: $0 [--section 1-12]"
+    echo "Usage: $0 [--section 1-15]"
     exit 1
 fi
 

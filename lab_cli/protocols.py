@@ -1444,6 +1444,139 @@ def est_get_csrattrs(pki_type: PKIType) -> ProtocolResult:
     )
 
 
+def acme_get_eab(pki_type: PKIType, use_negotiate: bool = False) -> ProtocolResult:
+    """Get External Account Binding credentials from akamu ACME server.
+
+    Fetches EAB key identifier (kid) and HMAC key from the EAB endpoint.
+    Supports both basic auth and Kerberos SPNEGO (--negotiate).
+
+    Args:
+        pki_type: PKI type (rsa, ecc, pqc)
+        use_negotiate: Use Kerberos SPNEGO authentication (requires kinit)
+
+    Returns:
+        ProtocolResult with kid and hmac_key in details
+    """
+    base = _get_acme_base_url(pki_type)
+    if base is None:
+        return ProtocolResult(success=False, message=f"ACME not available for {pki_type.value}")
+
+    eab_url = f"{base}/acme/eab"
+
+    if use_negotiate:
+        # For Kerberos SPNEGO, use curl with --negotiate flag
+        # Requires an active Kerberos ticket (kinit)
+        cmd = [
+            "curl", "-sk", "--connect-timeout", "5",
+            "--negotiate", "-u", ":",
+            eab_url,
+        ]
+    else:
+        # Basic auth fallback — akamu may allow anonymous EAB fetch or require credentials
+        cmd = ["curl", "-sk", "--connect-timeout", "5", eab_url]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except subprocess.TimeoutExpired:
+        return ProtocolResult(success=False, message="Timeout fetching EAB credentials")
+
+    if result.returncode != 0:
+        return ProtocolResult(
+            success=False,
+            message=f"Failed to fetch EAB: {result.stderr.strip()}",
+            details={"hint": "EAB endpoint may require authentication or not be enabled"},
+        )
+
+    # Parse JSON response
+    try:
+        eab_data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        # Check if response indicates auth required
+        if "401" in result.stdout or "Unauthorized" in result.stdout:
+            return ProtocolResult(
+                success=False,
+                message="EAB endpoint requires authentication",
+                details={
+                    "hint": "Try --negotiate for Kerberos auth, or configure EAB credentials",
+                    "curl_command": " ".join(cmd),
+                },
+            )
+        return ProtocolResult(success=False, message=f"Invalid response: {result.stdout[:200]}")
+
+    kid = eab_data.get("kid") or eab_data.get("key_id") or eab_data.get("keyIdentifier", "")
+    hmac_key = eab_data.get("hmac_key") or eab_data.get("hmacKey") or eab_data.get("key", "")
+
+    if not kid or not hmac_key:
+        return ProtocolResult(
+            success=False,
+            message="EAB response missing kid or hmac_key",
+            details={"response": eab_data},
+        )
+
+    return ProtocolResult(
+        success=True,
+        message="EAB credentials retrieved",
+        details={
+            "kid": kid,
+            "hmac_key": hmac_key,
+            "eab_url": eab_url,
+            "curl_command": " ".join(cmd),
+        },
+    )
+
+
+def acme_star_status(pki_type: PKIType) -> ProtocolResult:
+    """Check STAR (Short-Term Auto Renewal) status from ACME directory.
+
+    STAR is an ACME extension that allows clients to request short-lived
+    certificates that automatically renew for a specified lifetime.
+
+    Args:
+        pki_type: PKI type (rsa, ecc, pqc)
+
+    Returns:
+        ProtocolResult with STAR configuration details
+    """
+    dir_result = acme_get_directory(pki_type)
+    if not dir_result.success:
+        return dir_result
+
+    directory = dir_result.details.get("directory", {})
+    meta = directory.get("meta", {})
+
+    # STAR uses the "auto-renewal" meta field (RFC 8739)
+    star_config = meta.get("auto-renewal")
+
+    if star_config is None:
+        return ProtocolResult(
+            success=True,
+            message="STAR not enabled",
+            details={
+                "star_enabled": False,
+                "acme_url": dir_result.details.get("acme_url", ""),
+            },
+        )
+
+    # Parse STAR configuration
+    details = {
+        "star_enabled": True,
+        "acme_url": dir_result.details.get("acme_url", ""),
+        "star_config": star_config,
+    }
+
+    # Extract common STAR fields if present
+    if isinstance(star_config, dict):
+        details["min_lifetime"] = star_config.get("min-cert-lifetime")
+        details["max_lifetime"] = star_config.get("max-cert-lifetime")
+        details["allow_certificate_get"] = star_config.get("allow-certificate-get", False)
+
+    return ProtocolResult(
+        success=True,
+        message="STAR enabled",
+        details=details,
+    )
+
+
 def enrollment_check_all() -> dict[str, dict[str, ProtocolResult]]:
     """Check health of all enrollment endpoints across all PKI types."""
     results: dict[str, dict[str, ProtocolResult]] = {}
