@@ -31,6 +31,14 @@ validate_dnssec = false
 [profiles]
 refresh_interval_secs = 3600
 
+# ── EAB / Kerberos Binding ───────────────────────────────────────────────
+# External Account Binding ties ACME accounts to Kerberos principals.
+# Requires FreeIPA running with a keytab for HTTP/akamu-rsa.cert-lab.local.
+[eab]
+enabled = false
+# external_account_required = true  # Uncomment to enforce EAB on all accounts
+# keytab_file = "/etc/krb5.keytab"
+
 [star]
 # RFC 8739 — Short-Term Automatic Renewal
 enabled = true

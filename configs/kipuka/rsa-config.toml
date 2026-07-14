@@ -69,6 +69,14 @@ enabled      = true
 auth_method  = "basic"
 bearer_token = "cert-lab-kipuka-admin-token"
 
+# ── GSSAPI / Kerberos Authentication ────────────────────────────────────
+# Enables EST enrollment via Kerberos (SPNEGO). Clients authenticate
+# with a Kerberos ticket; kipuka validates against the keytab.
+# Requires kipuka built with --features gssapi and FreeIPA running.
+[admin.gssapi]
+keytab_file = "/etc/krb5.keytab"
+require_crypto_verification = true
+
 # ── Audit ────────────────────────────────────────────────────────────────
 [audit]
 enabled    = true
