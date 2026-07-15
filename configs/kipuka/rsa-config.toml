@@ -17,7 +17,7 @@ listen_addr = "0.0.0.0:9443"
 enabled   = true
 cert_file = "/etc/kipuka/certs/kipuka-rsa.cert.pem"
 key_file  = "/etc/kipuka/certs/kipuka-rsa.key.pem"
-ca_file   = "/etc/kipuka/certs/ca-chain.crt"
+ca_file   = "/etc/kipuka/certs/iot-ca-chain.crt"
 
 # Accept but don't require client certificates — enrollment can fall
 # back to OTP authentication via HTTP Basic.
