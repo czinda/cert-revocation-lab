@@ -266,7 +266,23 @@ services:
     image: docker.io/drpsychick/dnsmasq:latest
     container_name: dnsmasq-pq
     hostname: dns-pq.${LAB_DOMAIN:-cert-lab.local}
-    command: ["--address=/cert-lab.local/172.27.0.1", "--log-queries", "--no-daemon"]
+    command:
+      - "--address=/pq-root-ca.cert-lab.local/172.27.0.12"
+      - "--address=/pq-intermediate-ca.cert-lab.local/172.27.0.11"
+      - "--address=/pq-iot-ca.cert-lab.local/172.27.0.13"
+      - "--address=/ds-pq-root.cert-lab.local/172.27.0.14"
+      - "--address=/ds-pq-intermediate.cert-lab.local/172.27.0.15"
+      - "--address=/ds-pq-iot.cert-lab.local/172.27.0.16"
+      - "--address=/akamu-pq.cert-lab.local/172.27.0.18"
+      - "--address=/kipuka-pq.cert-lab.local/172.27.0.19"
+      - "--address=/ds-pq-ocsp.cert-lab.local/172.27.0.21"
+      - "--address=/pq-ocsp.cert-lab.local/172.27.0.22"
+      - "--address=/pq-kra.cert-lab.local/172.27.0.23"
+      - "--address=/ds-pq-kra.cert-lab.local/172.27.0.24"
+      - "--address=/hsm-pq.cert-lab.local/172.27.0.25"
+      - "--address=/cert-lab.local/172.27.0.1"
+      - "--log-queries"
+      - "--no-daemon"
     cap_add:
       - NET_ADMIN
     networks:
@@ -324,7 +340,10 @@ services:
       - "akamu-pq.cert-lab.local:172.27.0.18"
       - "kipuka-pq.cert-lab.local:172.27.0.19"
       - "pq-ocsp.cert-lab.local:172.27.0.22"
+      - "pq-kra.cert-lab.local:172.27.0.23"
       - "ipa.cert-lab.local:172.27.0.1"
+    dns:
+      - 172.27.0.2
     networks:
       pki-pq-net:
         ipv4_address: 172.27.0.18
@@ -358,9 +377,6 @@ services:
     volumes:
       - ./configs/kipuka/pq-config.toml:/etc/kipuka/kipuka.toml:ro
       - ./data/certs/pq:/etc/kipuka/certs:ro
-      - ./data/certs/kipuka-pq.keytab:/etc/krb5.keytab:ro
-      - ./configs/krb5.conf:/etc/krb5.conf:ro
-      - ./data/certs/ipa-ca.pem:/etc/pki/tls/certs/ipa-ca.pem:ro
       - kipuka-pq-data:/var/lib/kipuka
       - kryoptic-pq-data:/var/lib/softhsm:ro
       - kryoptic-pq-socket:/var/run/kryoptic:ro
@@ -371,7 +387,10 @@ services:
       - "akamu-pq.cert-lab.local:172.27.0.18"
       - "kipuka-pq.cert-lab.local:172.27.0.19"
       - "pq-ocsp.cert-lab.local:172.27.0.22"
+      - "pq-kra.cert-lab.local:172.27.0.23"
       - "ipa.cert-lab.local:172.27.0.1"
+    dns:
+      - 172.27.0.2
     networks:
       pki-pq-net:
         ipv4_address: 172.27.0.19
