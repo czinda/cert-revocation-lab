@@ -293,6 +293,47 @@ export_intermediate_ca_cert() {
     else
         log_warn "Could not export IoT Sub-CA signing cert (non-fatal)"
     fi
+
+    # Build the full CA chain (Root + Intermediate + IoT) for akamu/kipuka trust
+    local chain_file="${CERTS_DIR}/iot-ca-chain.crt"
+    if [ ! -f "$chain_file" ]; then
+        log_info "Building IoT CA chain file..."
+        local nss_db="/var/lib/pki/${ISSUING_CA_INSTANCE}/alias"
+        local chain_built=false
+
+        # Try exporting each cert from the IoT CA's NSS database (it has the full chain imported)
+        local tmp_chain
+        tmp_chain=$(mktemp)
+        for nick in "Root CA - Cert-Lab" "Root CA (ML-DSA-87) - Cert-Lab" \
+                    "Intermediate CA - Cert-Lab" "Intermediate CA (ML-DSA-87) - Cert-Lab" \
+                    "caSigningCert cert-${ISSUING_CA_INSTANCE} CA"; do
+            local cert
+            cert=$(sudo podman exec "$ISSUING_CA_CONTAINER" \
+                certutil -L -d "$nss_db" -a -n "$nick" 2>/dev/null) || continue
+            if [ -n "$cert" ]; then
+                echo "$cert" >> "$tmp_chain"
+            fi
+        done
+
+        local cert_count
+        cert_count=$(grep -c 'BEGIN CERTIFICATE' "$tmp_chain" 2>/dev/null || echo 0)
+        if [ "$cert_count" -ge 2 ]; then
+            cp "$tmp_chain" "$chain_file"
+            log_info "IoT CA chain built: ${chain_file} (${cert_count} certs)"
+            chain_built=true
+        fi
+        rm -f "$tmp_chain"
+
+        if [ "$chain_built" = false ]; then
+            # Fallback: use the dogtag ca-chain.pem if it exists
+            if [ -f "${CERTS_DIR}/dogtag/ca-chain.pem" ]; then
+                cp "${CERTS_DIR}/dogtag/ca-chain.pem" "$chain_file"
+                log_info "IoT CA chain copied from dogtag/ca-chain.pem"
+            else
+                log_warn "Could not build IoT CA chain file (akamu [ca].cert_file will be missing)"
+            fi
+        fi
+    fi
 }
 
 # ==========================================================================
