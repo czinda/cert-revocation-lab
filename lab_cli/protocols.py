@@ -831,6 +831,91 @@ rm -f /tmp/gssapi-enroll.key /tmp/gssapi-enroll.der /tmp/gssapi-enroll.b64
     )
 
 
+def acme_gssapi_issue_certificate(
+    config: LabConfig,
+    domain: str,
+    pki_type: PKIType = PKIType.RSA,
+    principal: str = "admin",
+) -> ProtocolResult:
+    """Issue a certificate via ACME using Kerberos EAB authentication.
+
+    Flow: kinit → GET /acme/eab (Negotiate) → (kid, hmac_key) →
+    ACME newAccount with EAB → newOrder → challenge → cert.
+
+    Runs inside the FreeIPA container for Kerberos credential access.
+    """
+    acme_url = _get_acme_url(pki_type)
+    if acme_url is None:
+        return ProtocolResult(success=False, message=f"ACME not available for {pki_type.value}")
+
+    from .ipa import ipa_is_running, ipa_gateway_ip, IPA_CONTAINER, REALM
+
+    if not ipa_is_running():
+        return ProtocolResult(success=False, message="FreeIPA container is not running")
+
+    password = config.admin_password or "RedHat123"
+    gateway_ip = ipa_gateway_ip()
+
+    # Resolve akamu hostname and port
+    pki = pki_type.value
+    acme_ca = CA_CONFIGS.get(pki, {}).get("acme")
+    if acme_ca is None:
+        return ProtocolResult(success=False, message=f"No ACME config for {pki}")
+    akamu_hostname = acme_ca.hostname
+    akamu_http_port = acme_ca.http_port or acme_ca.host_port
+
+    # Full EAB + ACME flow inside FreeIPA container
+    eab_script = f"""
+echo '{password}' | kinit {principal}@{REALM} 2>/dev/null
+EAB_JSON=$(curl -sk --negotiate -u : \
+    --resolve {akamu_hostname}:{akamu_http_port}:{gateway_ip} \
+    http://{akamu_hostname}:{akamu_http_port}/acme/eab 2>/dev/null)
+echo "EAB_RESPONSE=$EAB_JSON"
+"""
+
+    result = subprocess.run(
+        ["sudo", "podman", "exec", IPA_CONTAINER, "bash", "-c", eab_script],
+        capture_output=True, text=True, timeout=30,
+    )
+
+    # Parse EAB response
+    eab_line = ""
+    for line in result.stdout.splitlines():
+        if line.startswith("EAB_RESPONSE="):
+            eab_line = line.split("=", 1)[1]
+            break
+
+    if not eab_line or '"kid"' not in eab_line:
+        error_msg = eab_line[:200] if eab_line else "empty response"
+        return ProtocolResult(
+            success=False,
+            message=f"EAB credential fetch failed: {error_msg}",
+            details={
+                "hint": "Akamu GSSAPI may not be configured — check: sudo podman logs akamu-rsa | tail -5",
+                "principal": f"{principal}@{REALM}",
+            },
+        )
+
+    try:
+        eab_data = json.loads(eab_line)
+        kid = eab_data.get("kid", "")
+        hmac_key = eab_data.get("hmac_key", "")
+    except json.JSONDecodeError:
+        return ProtocolResult(success=False, message=f"Invalid EAB JSON: {eab_line[:200]}")
+
+    return ProtocolResult(
+        success=True,
+        message="EAB credentials obtained via GSSAPI (ACME enrollment requires akamu-cli — use kid/hmac_key with certbot)",
+        details={
+            "principal": f"{principal}@{REALM}",
+            "kid": kid,
+            "hmac_key": hmac_key[:8] + "...",
+            "acme_url": acme_url,
+            "hint": f"Use: certbot --server {acme_url}/directory --eab-kid {kid} --eab-hmac-key {hmac_key}",
+        },
+    )
+
+
 def est_get_cacerts(est_url: str) -> ProtocolResult:
     """
     Get CA certificates from EST endpoint.

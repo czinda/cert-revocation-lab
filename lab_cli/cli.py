@@ -831,6 +831,281 @@ fi
         console.print("  [yellow]Try: sudo podman exec freeipa bash -c 'echo NewPass123 | kinit <user>'[/yellow]")
 
 
+# ── FreeIPA User Management ──────────────────────────────────────────────
+
+
+@app.command("ipa-user-add")
+def ipa_user_add_cmd(
+    users: str = typer.Option(
+        ..., "--users", "-u",
+        help="Comma-separated list of usernames to create"
+    ),
+):
+    """Create test users in FreeIPA for Kerberos enrollment demos.
+
+    Creates users with the lab default password (RedHat123) so they can
+    be used with kinit for GSSAPI EST/ACME enrollment.
+
+    Example:
+        lab ipa-user-add -u sensor-admin,iot-gateway,factory-controller
+    """
+    from .ipa import ipa_is_running, ipa_user_add, REALM
+
+    if not ipa_is_running():
+        console.print("[red]FreeIPA container is not running[/red]")
+        raise typer.Exit(1)
+
+    user_list = [u.strip() for u in users.split(",") if u.strip()]
+    console.print(f"\n[bold cyan]FreeIPA User Management[/bold cyan]\n")
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("User")
+    table.add_column("Principal")
+    table.add_column("Status")
+
+    for user in user_list:
+        success, status = ipa_user_add(user)
+        color = "green" if success else "red"
+        icon = "✓" if status == "created" else ("=" if status == "exists" else "✗")
+        table.add_row(user, f"{user}@{REALM}", f"[{color}]{icon} {status}[/{color}]")
+
+    console.print(table)
+
+
+@app.command("ipa-user-list")
+def ipa_user_list_cmd():
+    """List FreeIPA users and their Kerberos principals.
+
+    Example:
+        lab ipa-user-list
+    """
+    from .ipa import ipa_is_running, ipa_user_list
+
+    if not ipa_is_running():
+        console.print("[red]FreeIPA container is not running[/red]")
+        raise typer.Exit(1)
+
+    users = ipa_user_list()
+    if not users:
+        console.print("\n  No users found (besides admin)\n")
+        return
+
+    console.print(f"\n[bold cyan]FreeIPA Users[/bold cyan]\n")
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Login")
+    table.add_column("Principal")
+
+    for u in users:
+        table.add_row(u["login"], u["principal"])
+
+    console.print(table)
+
+
+# ── Kerberos Enrollment ─────────────────────────────────────────────────
+
+
+@app.command("kerberos-enroll")
+def kerberos_enroll(
+    device: str = typer.Option(
+        None, "--device", "-d",
+        help="Device ID (auto-generated if not specified)"
+    ),
+    pki_type: PKIType = typer.Option(
+        PKIType.RSA, "--pki-type", "-p",
+        help="PKI type (rsa, ecc, pqc)"
+    ),
+    principal: str = typer.Option(
+        "admin", "--principal", "-u",
+        help="Kerberos principal"
+    ),
+    protocol: str = typer.Option(
+        "est", "--protocol",
+        help="Enrollment protocol: est, acme, or both"
+    ),
+):
+    """Enroll a certificate using Kerberos authentication.
+
+    Unified command supporting both EST (GSSAPI SPNEGO) and ACME (EAB from
+    Kerberos principal) enrollment protocols.
+
+    Example:
+        lab kerberos-enroll -d my-device -p rsa --protocol est -u admin
+        lab kerberos-enroll -d my-device -p rsa --protocol acme -u admin
+        lab kerberos-enroll -d my-device -p rsa --protocol both -u admin
+    """
+    from .ipa import ipa_is_running, REALM
+
+    if not ipa_is_running():
+        console.print("[red]FreeIPA container is not running[/red]")
+        raise typer.Exit(1)
+
+    config = LabConfig()
+    if device is None:
+        device = f"krb-device-{random.randint(1000, 9999)}"
+    device_fqdn = f"{device}.{config.lab_domain}"
+
+    protocols_to_run = []
+    if protocol in ("est", "both"):
+        protocols_to_run.append("est")
+    if protocol in ("acme", "both"):
+        protocols_to_run.append("acme")
+    if not protocols_to_run:
+        console.print(f"[red]Unknown protocol: {protocol} (use est, acme, or both)[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold cyan]Kerberos Certificate Enrollment[/bold cyan]\n")
+    console.print(f"  Device:    [bold]{device_fqdn}[/bold]")
+    console.print(f"  PKI:       [bold]{pki_type.value.upper()}[/bold]")
+    console.print(f"  Principal: [bold]{principal}@{REALM}[/bold]")
+    console.print(f"  Protocol:  [bold]{protocol.upper()}[/bold]\n")
+
+    for proto in protocols_to_run:
+        if proto == "est":
+            est_url = _get_est_url(pki_type)
+            if est_url is None:
+                console.print(f"  [red]✗ EST not available for {pki_type.value}[/red]")
+                continue
+
+            with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console, transient=True) as progress:
+                progress.add_task(description=f"  Enrolling via EST (GSSAPI)...", total=None)
+                result = est_gssapi_enroll_certificate(config=config, device_fqdn=device_fqdn, pki_type=pki_type, principal=principal)
+
+            if result.success:
+                console.print(f"  [green]✓ EST: {result.message}[/green]")
+                if result.serial:
+                    console.print(f"    Serial: {result.serial}")
+                if result.certificate:
+                    _show_cert_details(console, result.certificate)
+            else:
+                console.print(f"  [red]✗ EST: {result.message}[/red]")
+
+        elif proto == "acme":
+            from .protocols import acme_gssapi_issue_certificate
+            acme_url = _get_acme_url(pki_type)
+            if acme_url is None:
+                console.print(f"  [red]✗ ACME not available for {pki_type.value}[/red]")
+                continue
+
+            with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console, transient=True) as progress:
+                progress.add_task(description=f"  Enrolling via ACME (EAB+GSSAPI)...", total=None)
+                result = acme_gssapi_issue_certificate(config=config, domain=device_fqdn, pki_type=pki_type, principal=principal)
+
+            if result.success:
+                console.print(f"  [green]✓ ACME: {result.message}[/green]")
+                if result.serial:
+                    console.print(f"    Serial: {result.serial}")
+                if result.certificate:
+                    _show_cert_details(console, result.certificate)
+            else:
+                console.print(f"  [red]✗ ACME: {result.message}[/red]")
+                if result.details and "hint" in result.details:
+                    console.print(f"    [yellow]{result.details['hint']}[/yellow]")
+
+
+@app.command("kerberos-demo")
+def kerberos_demo(
+    pki_type: PKIType = typer.Option(
+        PKIType.RSA, "--pki-type", "-p",
+        help="PKI type"
+    ),
+    users: str = typer.Option(
+        "sensor-admin,iot-gateway,factory-controller,edge-node",
+        "--users", "-u",
+        help="Comma-separated list of test users"
+    ),
+    protocol: str = typer.Option(
+        "est", "--protocol",
+        help="Enrollment protocol: est, acme, or both"
+    ),
+):
+    """Demo: multi-user Kerberos certificate enrollment.
+
+    Creates FreeIPA test users (if needed) and enrolls certificates for each
+    using Kerberos authentication. Shows a summary table with principal,
+    protocol, serial, and status.
+
+    Example:
+        lab kerberos-demo -p rsa
+        lab kerberos-demo -u alice,bob,charlie --protocol est
+        lab kerberos-demo -p rsa --protocol both
+    """
+    from .ipa import ipa_is_running, ipa_user_add, REALM
+
+    if not ipa_is_running():
+        console.print("[red]FreeIPA container is not running[/red]")
+        raise typer.Exit(1)
+
+    config = LabConfig()
+    user_list = [u.strip() for u in users.split(",") if u.strip()]
+
+    protocols_to_run = []
+    if protocol in ("est", "both"):
+        protocols_to_run.append("est")
+    if protocol in ("acme", "both"):
+        protocols_to_run.append("acme")
+
+    console.print(f"\n[bold cyan]Kerberos Multi-User Enrollment Demo[/bold cyan]\n")
+    console.print(f"  PKI:       [bold]{pki_type.value.upper()}[/bold]")
+    console.print(f"  Realm:     [bold]{REALM}[/bold]")
+    console.print(f"  Protocol:  [bold]{protocol.upper()}[/bold]")
+    console.print(f"  Users:     [bold]{', '.join(user_list)}[/bold]\n")
+
+    # Step 1: Ensure users exist
+    console.print("[bold]Step 1:[/bold] Ensuring FreeIPA users exist...\n")
+    for user in user_list:
+        success, status = ipa_user_add(user)
+        icon = "[green]+[/]" if status == "created" else "[yellow]=[/]"
+        console.print(f"  {icon} {user}@{REALM} ({status})")
+
+    # Step 2: Enroll certificates
+    console.print(f"\n[bold]Step 2:[/bold] Enrolling certificates...\n")
+
+    results_table = Table(title="Kerberos Enrollment Results", show_header=True, header_style="bold")
+    results_table.add_column("Principal")
+    results_table.add_column("Device")
+    results_table.add_column("Protocol")
+    results_table.add_column("Serial")
+    results_table.add_column("Subject")
+    results_table.add_column("Status")
+
+    success_count = 0
+    fail_count = 0
+
+    for user in user_list:
+        for proto in protocols_to_run:
+            device = f"{user}-device"
+            device_fqdn = f"{device}.{config.lab_domain}"
+
+            with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console, transient=True) as progress:
+                progress.add_task(description=f"  {user}@{REALM} via {proto.upper()}...", total=None)
+
+                if proto == "est":
+                    result = est_gssapi_enroll_certificate(config=config, device_fqdn=device_fqdn, pki_type=pki_type, principal=user)
+                else:
+                    from .protocols import acme_gssapi_issue_certificate
+                    result = acme_gssapi_issue_certificate(config=config, domain=device_fqdn, pki_type=pki_type, principal=user)
+
+            if result.success:
+                serial = result.serial or "—"
+                subject = "—"
+                if result.certificate:
+                    sr = subprocess.run(
+                        ["openssl", "x509", "-noout", "-subject"],
+                        input=result.certificate, capture_output=True, text=True, timeout=5,
+                    )
+                    if sr.returncode == 0:
+                        subject = sr.stdout.strip().replace("subject=", "").strip()
+                results_table.add_row(f"{user}@{REALM}", device_fqdn, proto.upper(), serial, subject, "[green]✓[/green]")
+                success_count += 1
+            else:
+                results_table.add_row(f"{user}@{REALM}", device_fqdn, proto.upper(), "—", "—", f"[red]✗[/red]")
+                fail_count += 1
+
+    console.print()
+    console.print(results_table)
+    console.print(f"\n  [green]{success_count} enrolled[/green], [red]{fail_count} failed[/red]\n")
+
+
 @app.command("est-cacerts")
 def est_cacerts(
     pki_type: PKIType = typer.Option(
