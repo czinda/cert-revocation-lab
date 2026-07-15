@@ -385,6 +385,7 @@ main() {
             log_warn "Agent cert request via pki CLI failed, trying admin P12 extraction..."
             # Fallback: extract agent cert/key from the admin PKCS#12
             sudo podman exec "$ISSUING_CA_CONTAINER" bash -c "
+                mkdir -p /certs/dogtag && \
                 openssl pkcs12 -in /root/.dogtag/${ISSUING_CA_INSTANCE}/ca_admin_cert.p12 \
                     -passin pass:${PKI_PASSWORD} -nokeys -clcerts \
                     -out /certs/dogtag/agent.pem 2>/dev/null && \
