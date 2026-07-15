@@ -685,6 +685,152 @@ def est_enroll_certificate(
         )
 
 
+def est_gssapi_enroll_certificate(
+    config: LabConfig,
+    device_fqdn: str,
+    pki_type: PKIType = PKIType.RSA,
+    principal: str = "admin",
+) -> ProtocolResult:
+    """Issue a certificate via EST using GSSAPI (Kerberos SPNEGO) authentication.
+
+    Runs kinit + CSR generation + curl --negotiate inside the FreeIPA
+    container, routing through the host gateway to reach kipuka's mapped port.
+    """
+    est_url = _get_est_url(pki_type)
+    if est_url is None:
+        return ProtocolResult(success=False, message=f"EST not available for {pki_type.value} PKI")
+
+    ipa_container = "freeipa"
+    try:
+        status = subprocess.run(
+            ["sudo", "podman", "inspect", "--format", "{{.State.Status}}", ipa_container],
+            capture_output=True, text=True, timeout=5,
+        )
+        if status.returncode != 0 or status.stdout.strip() != "running":
+            return ProtocolResult(success=False, message="FreeIPA container is not running")
+    except Exception:
+        return ProtocolResult(success=False, message="Cannot reach FreeIPA container")
+
+    # Resolve kipuka hostname and port from CA_CONFIGS
+    pki = pki_type.value
+    est_ca = CA_CONFIGS.get(pki, {}).get("est")
+    if est_ca is None:
+        return ProtocolResult(success=False, message=f"No EST config for {pki}")
+    kipuka_hostname = est_ca.hostname
+    kipuka_port = est_ca.host_port
+
+    # Gateway IP: how the FreeIPA container reaches the host's mapped ports
+    gw_result = subprocess.run(
+        ["sudo", "podman", "inspect", "--format",
+         "{{range .NetworkSettings.Networks}}{{.Gateway}}{{end}}", ipa_container],
+        capture_output=True, text=True, timeout=5,
+    )
+    gateway_ip = gw_result.stdout.strip()[:15] if gw_result.returncode == 0 else "172.25.0.1"
+
+    password = config.admin_password or "RedHat123"
+    realm = "CERT-LAB.LOCAL"
+
+    # Run the full GSSAPI enrollment flow inside the FreeIPA container
+    enroll_script = f"""
+echo '{password}' | kinit {principal}@{realm} 2>/dev/null
+openssl genrsa -out /tmp/gssapi-enroll.key 2048 2>/dev/null
+openssl req -new -key /tmp/gssapi-enroll.key -out /tmp/gssapi-enroll.der -outform DER \
+    -subj '/CN={device_fqdn}/O=Cert-Lab/C=US' 2>/dev/null
+base64 /tmp/gssapi-enroll.der > /tmp/gssapi-enroll.b64
+HTTP_CODE=$(curl -sk --negotiate -u : \
+    --data-binary @/tmp/gssapi-enroll.b64 \
+    -H 'Content-Type: application/pkcs10' \
+    --resolve {kipuka_hostname}:{kipuka_port}:{gateway_ip} \
+    https://{kipuka_hostname}:{kipuka_port}/.well-known/est/simpleenroll \
+    -o /tmp/gssapi-enroll-resp.p7 -w '%{{http_code}}')
+echo "HTTP_CODE=$HTTP_CODE"
+if [ "$HTTP_CODE" = "200" ]; then
+    cat /tmp/gssapi-enroll-resp.p7
+fi
+rm -f /tmp/gssapi-enroll.key /tmp/gssapi-enroll.der /tmp/gssapi-enroll.b64
+"""
+
+    result = subprocess.run(
+        ["sudo", "podman", "exec", ipa_container, "bash", "-c", enroll_script],
+        capture_output=True, text=True, timeout=60,
+    )
+
+    stdout = result.stdout.strip()
+    lines = stdout.splitlines()
+
+    # Extract HTTP code
+    http_code = None
+    response_body = ""
+    for line in lines:
+        if line.startswith("HTTP_CODE="):
+            http_code = line.split("=", 1)[1]
+        elif line.startswith("Password for"):
+            continue
+        elif http_code == "200":
+            response_body += line + "\n"
+
+    if http_code != "200":
+        return ProtocolResult(
+            success=False,
+            message=f"GSSAPI EST enrollment failed (HTTP {http_code or 'unknown'})",
+            details={
+                "principal": f"{principal}@{realm}",
+                "hint": "Check: sudo podman logs kipuka-rsa | tail -5",
+            },
+        )
+
+    response_body = response_body.strip()
+    if not response_body:
+        return ProtocolResult(
+            success=False,
+            message="GSSAPI EST enrollment returned empty response",
+        )
+
+    # Decode PKCS#7 response to PEM cert
+    serial = None
+    cert_pem = ""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".b64", delete=False) as f:
+        f.write(response_body)
+        b64_path = f.name
+
+    try:
+        # base64 decode → DER → PKCS7 → PEM certs
+        dec = subprocess.run(
+            ["bash", "-c", f"base64 -d {b64_path} | openssl pkcs7 -inform DER -print_certs"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if dec.returncode == 0 and "BEGIN CERTIFICATE" in dec.stdout:
+            cert_pem = dec.stdout
+            sr = subprocess.run(
+                ["openssl", "x509", "-serial", "-noout"],
+                input=cert_pem, capture_output=True, text=True, timeout=10,
+            )
+            if sr.returncode == 0 and "=" in sr.stdout:
+                serial = f"0x{sr.stdout.strip().split('=', 1)[1].strip().upper()}"
+    finally:
+        Path(b64_path).unlink(missing_ok=True)
+
+    if cert_pem:
+        return ProtocolResult(
+            success=True,
+            message="Certificate enrolled via EST (GSSAPI)",
+            certificate=cert_pem,
+            serial=serial,
+            details={
+                "est_url": est_url,
+                "device": device_fqdn,
+                "principal": f"{principal}@{realm}",
+                "auth_method": "GSSAPI (Kerberos SPNEGO)",
+                "pki_type": pki_type.value,
+            },
+        )
+
+    return ProtocolResult(
+        success=False,
+        message=f"Could not parse GSSAPI EST response: {response_body[:200]}",
+    )
+
+
 def est_get_cacerts(est_url: str) -> ProtocolResult:
     """
     Get CA certificates from EST endpoint.

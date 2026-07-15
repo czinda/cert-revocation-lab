@@ -53,6 +53,7 @@ from .protocols import (
     acme_get_eab,
     acme_star_status,
     est_enroll_certificate,
+    est_gssapi_enroll_certificate,
     est_get_cacerts,
     est_get_csrattrs,
     est_get_status,
@@ -624,6 +625,80 @@ def est_enroll(
                 console.print(f"  [yellow]Hint: {result.details['hint']}[/yellow]")
             if "note" in result.details:
                 console.print(f"  Note: {result.details['note']}")
+        raise typer.Exit(1)
+
+
+@app.command("est-gssapi-enroll")
+def est_gssapi_enroll(
+    device: str = typer.Option(
+        None, "--device", "-d",
+        help="Device ID (auto-generated if not specified)"
+    ),
+    pki_type: PKIType = typer.Option(
+        PKIType.RSA,
+        "--pki-type", "-p",
+        help="PKI type (rsa, ecc, pqc)"
+    ),
+    principal: str = typer.Option(
+        "admin", "--principal", "-u",
+        help="Kerberos principal (default: admin)"
+    ),
+):
+    """Enroll for a certificate using EST with GSSAPI (Kerberos) authentication.
+
+    Uses the FreeIPA container to obtain a Kerberos ticket, then enrolls
+    via EST simpleenroll with SPNEGO Negotiate auth. No OTP required —
+    identity comes from the Kerberos principal.
+
+    Requires FreeIPA running and kipuka keytab provisioned
+    (run: sudo bash scripts/setup-ipa-client.sh).
+
+    Example:
+        lab est-gssapi-enroll -d my-device -p rsa
+        lab est-gssapi-enroll -d server01 -u svc-account
+    """
+    config = LabConfig()
+    est_url = _get_est_url(pki_type)
+    if est_url is None:
+        console.print(f"\n[red]EST not available for {pki_type.value} PKI[/red]")
+        raise typer.Exit(1)
+
+    if device is None:
+        device = f"gssapi-device-{random.randint(1000, 9999)}"
+    device_fqdn = f"{device}.{config.lab_domain}"
+    realm = "CERT-LAB.LOCAL"
+
+    console.print(f"\n[bold cyan]EST GSSAPI Certificate Enrollment[/bold cyan]\n")
+    console.print(f"  Device:    [bold]{device_fqdn}[/bold]")
+    console.print(f"  PKI:       [bold]{pki_type.value.upper()}[/bold]")
+    console.print(f"  Backend:   [bold]{ENROLLMENT_BACKEND}[/bold]")
+    console.print(f"  Endpoint:  [bold]{est_url}[/bold]")
+    console.print(f"  Principal: [bold]{principal}@{realm}[/bold]")
+    console.print(f"  Auth:      [bold]GSSAPI (Kerberos SPNEGO)[/bold]")
+
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+        progress.add_task(description="Enrolling via EST (GSSAPI)...", total=None)
+        result = est_gssapi_enroll_certificate(
+            config=config,
+            device_fqdn=device_fqdn,
+            pki_type=pki_type,
+            principal=principal,
+        )
+
+    if result.success:
+        console.print(f"\n[green]✓ {result.message}[/green]")
+        if result.details:
+            for key, value in result.details.items():
+                if key not in ("certificate", "hint"):
+                    console.print(f"  {key}: {value}")
+        if result.certificate:
+            _show_cert_details(console, result.certificate)
+    else:
+        console.print(f"\n[red]✗ GSSAPI EST enrollment failed[/red]")
+        console.print(f"  Error: {result.message}")
+        if result.details:
+            if "hint" in result.details:
+                console.print(f"  [yellow]Hint: {result.details['hint']}[/yellow]")
         raise typer.Exit(1)
 
 
