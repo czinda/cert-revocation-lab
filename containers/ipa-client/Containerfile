@@ -1,0 +1,4 @@
+FROM registry.fedoraproject.org/fedora:43
+RUN dnf install -y krb5-workstation openssl curl bind-utils && dnf clean all
+COPY krb5.conf /etc/krb5.conf
+ENTRYPOINT ["sleep", "infinity"]
