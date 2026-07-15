@@ -17,6 +17,7 @@ Usage:
 """
 
 import random
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -700,6 +701,134 @@ def est_gssapi_enroll(
             if "hint" in result.details:
                 console.print(f"  [yellow]Hint: {result.details['hint']}[/yellow]")
         raise typer.Exit(1)
+
+
+@app.command("est-gssapi-demo")
+def est_gssapi_demo(
+    pki_type: PKIType = typer.Option(
+        PKIType.RSA,
+        "--pki-type", "-p",
+        help="PKI type (rsa, ecc, pqc)"
+    ),
+    users: str = typer.Option(
+        "sensor-admin,iot-gateway,factory-controller,edge-node",
+        "--users", "-u",
+        help="Comma-separated list of test users to create and enroll"
+    ),
+):
+    """Demo: create FreeIPA users and enroll certificates via GSSAPI EST.
+
+    Creates multiple test users in FreeIPA, then enrolls a certificate for
+    each using Kerberos SPNEGO authentication. Shows a summary table of
+    all issued certificates with their Kerberos principal bindings.
+
+    Example:
+        lab est-gssapi-demo -p rsa
+        lab est-gssapi-demo -u alice,bob,charlie -p rsa
+    """
+    config = LabConfig()
+    est_url = _get_est_url(pki_type)
+    if est_url is None:
+        console.print(f"\n[red]EST not available for {pki_type.value} PKI[/red]")
+        raise typer.Exit(1)
+
+    user_list = [u.strip() for u in users.split(",") if u.strip()]
+    realm = "CERT-LAB.LOCAL"
+    password = config.admin_password or "RedHat123"
+    ipa_container = "freeipa"
+
+    console.print(f"\n[bold cyan]GSSAPI EST Multi-User Enrollment Demo[/bold cyan]\n")
+    console.print(f"  PKI:       [bold]{pki_type.value.upper()}[/bold]")
+    console.print(f"  Endpoint:  [bold]{est_url}[/bold]")
+    console.print(f"  Realm:     [bold]{realm}[/bold]")
+    console.print(f"  Users:     [bold]{', '.join(user_list)}[/bold]\n")
+
+    # Step 1: Create test users in FreeIPA
+    console.print("[bold]Step 1:[/bold] Creating test users in FreeIPA...\n")
+
+    for user in user_list:
+        create_script = f"""
+echo '{password}' | kinit admin 2>/dev/null
+if ipa user-show {user} >/dev/null 2>&1; then
+    echo 'exists'
+else
+    ipa user-add {user} --first={user.replace('-', ' ').title().split()[0]} --last=Test --random >/dev/null 2>&1
+    # Set password to the lab default via ldappasswd (non-interactive)
+    ldappasswd -x -H ldap://localhost:389 -D "cn=Directory Manager" \
+        -w '{password}' -s '{password}' "uid={user},cn=users,cn=accounts,dc=cert-lab,dc=local" 2>/dev/null
+    echo 'created'
+fi
+"""
+        create_result = subprocess.run(
+            ["sudo", "podman", "exec", ipa_container, "bash", "-c", create_script],
+            capture_output=True, text=True, timeout=30,
+        )
+        status = "created" if "created" in create_result.stdout else "exists"
+        icon = "[green]+" if status == "created" else "[yellow]="
+        console.print(f"  {icon}[/] {user}@{realm} ({status})")
+
+    # Step 2: Enroll certificates for each user
+    console.print(f"\n[bold]Step 2:[/bold] Enrolling certificates via GSSAPI EST...\n")
+
+    results_table = Table(title="GSSAPI EST Enrollment Results", show_header=True, header_style="bold")
+    results_table.add_column("Principal")
+    results_table.add_column("Device")
+    results_table.add_column("Serial")
+    results_table.add_column("Subject")
+    results_table.add_column("Status")
+
+    success_count = 0
+    fail_count = 0
+
+    for user in user_list:
+        device = f"{user}-device"
+        device_fqdn = f"{device}.{config.lab_domain}"
+
+        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console, transient=True) as progress:
+            progress.add_task(description=f"  Enrolling {user}@{realm}...", total=None)
+            result = est_gssapi_enroll_certificate(
+                config=config,
+                device_fqdn=device_fqdn,
+                pki_type=pki_type,
+                principal=user,
+            )
+
+        if result.success:
+            serial = result.serial or "—"
+            subject = "—"
+            if result.certificate:
+                sr = subprocess.run(
+                    ["openssl", "x509", "-noout", "-subject"],
+                    input=result.certificate, capture_output=True, text=True, timeout=5,
+                )
+                if sr.returncode == 0:
+                    subject = sr.stdout.strip().replace("subject=", "").strip()
+
+            results_table.add_row(
+                f"{user}@{realm}",
+                device_fqdn,
+                serial,
+                subject,
+                "[green]✓ issued[/green]",
+            )
+            success_count += 1
+        else:
+            results_table.add_row(
+                f"{user}@{realm}",
+                device_fqdn,
+                "—",
+                "—",
+                f"[red]✗ {result.message[:40]}[/red]",
+            )
+            fail_count += 1
+
+    console.print()
+    console.print(results_table)
+    console.print(f"\n  [green]{success_count} enrolled[/green], [red]{fail_count} failed[/red]\n")
+
+    if fail_count > 0:
+        console.print("  [yellow]Note: New FreeIPA users may need a password reset before kinit.[/yellow]")
+        console.print("  [yellow]Try: sudo podman exec freeipa bash -c 'echo NewPass123 | kinit <user>'[/yellow]")
 
 
 @app.command("est-cacerts")
