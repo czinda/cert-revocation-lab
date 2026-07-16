@@ -428,6 +428,9 @@ def verify(
     """Verify the status of a certificate."""
     config = LabConfig.load()
 
+    if not serial.startswith("0x") and not serial.startswith("0X"):
+        serial = f"0x{serial}"
+
     console.print(f"\n[bold cyan]Verifying Certificate Status[/bold cyan]\n")
     console.print(f"  Serial: {serial}")
     console.print(f"  PKI:    {pki_type.value.upper()}")
@@ -2092,6 +2095,9 @@ def ct_verify(
     """Verify a certificate against the CT log."""
     import httpx
 
+    if not serial.startswith("0x") and not serial.startswith("0X"):
+        serial = f"0x{serial}"
+
     console.print(f"Verifying serial [bold]{serial}[/bold] against CT log...")
 
     try:
@@ -2378,6 +2384,9 @@ def crl_check(
     """Check if a serial number appears in a CRL from the CDP server."""
     import subprocess
     import tempfile
+
+    if not serial.startswith("0x") and not serial.startswith("0X"):
+        serial = f"0x{serial}"
 
     try:
         import httpx
