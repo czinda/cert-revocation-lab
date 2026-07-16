@@ -1251,14 +1251,12 @@ def est_reenroll(
                 cert_text = f"-----BEGIN CERTIFICATE-----\n{cert_text}\n-----END CERTIFICATE-----\n"
             f.write(cert_text)
 
-        # We need the key from the enrollment — re-generate matching key
-        # (EST enrollment already generated a key internally, but we need it saved)
-        # Re-generate a new key for re-enrollment CSR
-        import subprocess
-        subprocess.run(
-            ["openssl", "genrsa", "-out", key_path, "2048"],
-            capture_output=True, timeout=30,
-        )
+        # Use the key from the initial enrollment (returned by est_enroll_certificate)
+        if not enroll_result.key_pem:
+            console.print("  [red]Enrollment did not return the private key — cannot re-enroll[/red]")
+            raise typer.Exit(1)
+        with open(key_path, "w") as f:
+            f.write(enroll_result.key_pem)
     else:
         console.print("[dim]Using provided cert/key for re-enrollment[/dim]")
 

@@ -75,6 +75,7 @@ class ProtocolResult:
     certificate: Optional[str] = None
     serial: Optional[str] = None
     details: Optional[dict] = None
+    key_pem: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -560,6 +561,9 @@ def est_enroll_certificate(
                     message=f"Failed to generate CSR: {result.stderr}"
                 )
 
+        # Preserve key material for callers that need it (e.g. simplereenroll)
+        enrolled_key_pem = key_path.read_text()
+
         # Read CSR and convert to base64 DER
         csr_pem = csr_path.read_text()
 
@@ -667,6 +671,7 @@ def est_enroll_certificate(
                 message="Certificate enrolled via EST",
                 certificate=response,
                 serial=serial,
+                key_pem=enrolled_key_pem,
                 details={
                     "est_url": est_url,
                     "device": device_fqdn,
@@ -1098,13 +1103,11 @@ def est_reenroll_certificate(
 
         csr_base64 = base64.b64encode(result.stdout).decode('ascii')
 
-        # Submit to simplereenroll with client cert + Basic auth
-        # Dogtag EST RA requires both TLS client cert and HTTP Basic auth
-        est_password = config.pki_admin_password if config else "RedHat123"
+        # Submit to simplereenroll with client cert for mTLS authentication
         enroll_cmd = [
             "curl", "-sk",
+            "-w", "\n%{http_code}",
             "-X", "POST",
-            "-u", f"est-client:{est_password}",
             "-H", "Content-Type: application/pkcs10",
             "-H", "Content-Transfer-Encoding: base64",
             "--cert", client_cert,
@@ -1118,19 +1121,31 @@ def est_reenroll_certificate(
         if result.returncode != 0:
             return ProtocolResult(success=False, message=f"EST re-enrollment failed: {result.stderr}")
 
-        response = result.stdout.strip()
+        output = result.stdout.strip()
+        lines = output.rsplit("\n", 1)
+        response = lines[0].strip() if len(lines) > 1 else output
+        http_code = lines[-1].strip() if len(lines) > 1 else ""
 
         if "BEGIN CERTIFICATE" in response or response.startswith("MII"):
+            serial = None
+            sr = subprocess.run(
+                ["openssl", "x509", "-serial", "-noout"],
+                input=response, capture_output=True, text=True, timeout=10,
+            )
+            if sr.returncode == 0 and "=" in sr.stdout:
+                serial = f"0x{sr.stdout.strip().split('=', 1)[1].strip().upper()}"
             return ProtocolResult(
                 success=True,
                 message="Certificate re-enrolled via EST",
                 certificate=response,
+                serial=serial,
                 details={"est_url": est_url, "device": device_fqdn}
             )
 
+        status_hint = f" (HTTP {http_code})" if http_code else ""
         return ProtocolResult(
             success=False,
-            message=f"EST re-enrollment failed: {response[:200]}"
+            message=f"EST re-enrollment failed{status_hint}: {response[:200]}"
         )
 
 
