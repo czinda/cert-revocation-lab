@@ -1360,6 +1360,27 @@ def est_reenroll(
         if reenroll_result.serial:
             console.print(f"  New serial: {reenroll_result.serial}")
 
+        if reenroll_result.certificate:
+            import subprocess as _sp
+            ci = _sp.run(
+                ["openssl", "x509", "-noout", "-subject", "-issuer", "-dates", "-text"],
+                input=reenroll_result.certificate, capture_output=True, text=True, timeout=5,
+            )
+            if ci.returncode == 0:
+                for line in ci.stdout.splitlines():
+                    line = line.strip()
+                    if line.startswith("subject="):
+                        console.print(f"  Subject:   {line.split('=', 1)[1].strip()}")
+                    elif line.startswith("issuer="):
+                        console.print(f"  Issuer:    {line.split('=', 1)[1].strip()}")
+                    elif line.startswith("notBefore="):
+                        console.print(f"  Valid from: {line.split('=', 1)[1].strip()}")
+                    elif line.startswith("notAfter="):
+                        console.print(f"  Valid to:   {line.split('=', 1)[1].strip()}")
+                    elif line.startswith("Signature Algorithm:"):
+                        console.print(f"  Algorithm: {line.split(':', 1)[1].strip()}")
+                        break
+
         # Save output if requested
         if output_dir:
             from pathlib import Path
