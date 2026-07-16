@@ -31,14 +31,14 @@ check_prerequisites() {
 
     if ! command -v podman &> /dev/null; then
         log_error "podman is not installed. Run ./setup-prerequisites.sh first."
-        ((missing++))
+        missing=$((missing + 1))
     else
         log_success "podman $(podman --version | awk '{print $3}')"
     fi
 
     if ! command -v podman-compose &> /dev/null; then
         log_error "podman-compose is not installed. Run ./setup-prerequisites.sh first."
-        ((missing++))
+        missing=$((missing + 1))
     else
         log_success "podman-compose installed"
     fi
@@ -168,6 +168,26 @@ is_rootful_running() {
     [ "$status" = "running" ]
 }
 
+# Run podman-compose with a timeout to prevent indefinite hangs.
+# CNI + podman-compose can hang during container reconciliation.
+_compose_run() {
+    local compose_timeout="${COMPOSE_TIMEOUT:-180}"
+    if ! timeout "$compose_timeout" "$@" 2>&1; then
+        log_error "podman-compose timed out after ${compose_timeout}s: $*"
+        return 1
+    fi
+}
+
+# Start a container with error checking (not silent)
+_podman_start() {
+    local ctr="$1"
+    if is_running_as_root; then
+        podman start "$ctr" || { log_error "Failed to start $ctr"; return 1; }
+    else
+        sudo podman start "$ctr" || { log_error "Failed to start $ctr"; return 1; }
+    fi
+}
+
 # Build network create arguments (adds --disable-dns when NO_DNS=true)
 _net_create_args() {
     local subnet=$1 gateway=$2 name=$3
@@ -187,7 +207,7 @@ setup_networks() {
 
     # Detect if we're running as root
     local running_as_root=false
-    [ "$(id -u)" = "0" ] && running_as_root=true
+    if [ "$(id -u)" = "0" ]; then running_as_root=true; fi
 
     # Network configurations
     declare -A NETWORKS
@@ -202,7 +222,7 @@ setup_networks() {
 
         # Determine if this is a rootful or rootless network
         local is_rootful=false
-        [[ "$net_name" == "pki-net" || "$net_name" == "freeipa-net" || "$net_name" == "pki-pq-net" || "$net_name" == "pki-ecc-net" ]] && is_rootful=true
+        if [[ "$net_name" == "pki-net" || "$net_name" == "freeipa-net" || "$net_name" == "pki-pq-net" || "$net_name" == "pki-ecc-net" ]]; then is_rootful=true; fi
 
         if [ "$is_rootful" = true ]; then
             # Rootful network - use sudo or direct if already root
@@ -275,7 +295,7 @@ setup_volumes() {
 
     # Detect if we're running as root
     local running_as_root=false
-    [ "$(id -u)" = "0" ] && running_as_root=true
+    if [ "$(id -u)" = "0" ]; then running_as_root=true; fi
 
     # Rootless volumes (main compose)
     ROOTLESS_VOLUMES=(
@@ -387,10 +407,10 @@ wait_for_container() {
         # Check if container is at least running
         if podman inspect "$container" --format '{{.State.Status}}' 2>/dev/null | grep -q "running"; then
             sleep $interval
-            ((elapsed += interval))
+            elapsed=$((elapsed + interval))
         else
             sleep $interval
-            ((elapsed += interval))
+            elapsed=$((elapsed + interval))
         fi
     done
 
@@ -413,7 +433,7 @@ wait_for_service() {
             return 0
         fi
         sleep 5
-        ((elapsed += 5))
+        elapsed=$((elapsed + 5))
     done
 
     log_warn "$name not responding after ${max_wait}s"
@@ -509,7 +529,7 @@ start_base_infrastructure() {
             run_as_user podman wait --condition=running "$svc" 2>/dev/null || sleep 30
         else
             local wait_time=60
-            [ "$svc" = "redis" ] && wait_time=30
+            if [ "$svc" = "redis" ]; then wait_time=30; fi
             wait_for_container "$svc" "$wait_time"
         fi
     done
@@ -580,91 +600,102 @@ start_pki_hierarchy() {
     if [ "$all_running" = true ]; then
         log_success "All PKI containers already running"
     else
-        # PKI requires privileged containers with systemd support
         log_info "Starting PKI containers (requires sudo for privileged mode)..."
 
-        # Start PKI containers with rootful podman
+        # Step 1: Create ALL containers in one compose call (no start).
+        # This avoids the compose reconciliation bug where starting one service
+        # causes compose to stop/recreate dependency containers.
+        log_info "Creating all RSA containers (single compose call)..."
         if is_running_as_root; then
-            podman-compose -f pki-compose.yml $COMPOSE_PROFILE up -d
+            timeout 180 podman-compose -f pki-compose.yml $COMPOSE_PROFILE up --no-start 2>&1 || {
+                log_error "podman-compose up --no-start failed or timed out"
+                return 1
+            }
         else
-            sudo podman-compose -f pki-compose.yml $COMPOSE_PROFILE up -d
+            timeout 180 sudo podman-compose -f pki-compose.yml $COMPOSE_PROFILE up --no-start 2>&1 || {
+                log_error "podman-compose up --no-start failed or timed out"
+                return 1
+            }
         fi
 
-        # Wait for all containers to be running
-        log_info "Waiting for PKI containers to start..."
-        for ctr in ds-root ds-intermediate ds-iot ds-ocsp ds-kra dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-kra akamu-rsa kipuka-rsa; do
+        # Step 2: Start DS containers ONE AT A TIME with podman start.
+        # Never use podman-compose up for individual services — it reconciles
+        # the entire project and SIGKILLs running containers.
+        log_info "Starting RSA Directory Servers sequentially (avoiding init race)..."
+        for ds in ds-root ds-intermediate ds-iot ds-ocsp ds-kra; do
+            log_info "Starting $ds..."
+            _podman_start "$ds" || {
+                log_error "Failed to start $ds"
+                return 1
+            }
+
+            # Wait for this DS to become healthy before starting the next
             local elapsed=0
-            while [ $elapsed -lt 60 ]; do
-                local status=""
+            local max_wait=180
+            while [ $elapsed -lt $max_wait ]; do
+                local health=""
                 if is_running_as_root; then
-                    status=$(podman inspect --format '{{.State.Status}}' "$ctr" 2>/dev/null || echo "missing")
+                    health=$(podman inspect --format '{{.State.Health.Status}}' "$ds" 2>/dev/null || echo "none")
                 else
-                    status=$(sudo podman inspect --format '{{.State.Status}}' "$ctr" 2>/dev/null || echo "missing")
+                    health=$(sudo podman inspect --format '{{.State.Health.Status}}' "$ds" 2>/dev/null || echo "none")
                 fi
-                if [ "$status" = "running" ]; then
-                    log_success "$ctr is running"
+                if [ "$health" = "healthy" ]; then
+                    log_success "$ds is healthy"
                     break
                 fi
-                sleep 3
-                ((elapsed += 3)) || true
-            done
-            if [ $elapsed -ge 60 ]; then
-                log_warn "$ctr did not start within 60s"
-            fi
-        done
-
-        # Wait for 389DS to be healthy (able to respond to LDAP queries).
-        # Auto-restart crashed DS containers — the 389ds image frequently fails
-        # on first boot when multiple instances initialize simultaneously.
-        log_info "Waiting for Directory Servers to be ready..."
-        for ds in ds-root ds-intermediate ds-iot ds-ocsp ds-kra; do
-            local elapsed=0
-            local restarts=0
-            while [ $elapsed -lt 300 ]; do
-                # Check if container exited (crashed) and restart it
-                local ds_state
+                # Check if container exited (crashed) — wipe volume and restart
+                local state=""
                 if is_running_as_root; then
-                    ds_state=$(podman inspect "$ds" --format '{{.State.Status}}' 2>/dev/null || echo "missing")
+                    state=$(podman inspect --format '{{.State.Status}}' "$ds" 2>/dev/null || echo "missing")
                 else
-                    ds_state=$(sudo podman inspect "$ds" --format '{{.State.Status}}' 2>/dev/null || echo "missing")
+                    state=$(sudo podman inspect --format '{{.State.Status}}' "$ds" 2>/dev/null || echo "missing")
                 fi
-                if [ "$ds_state" = "exited" ] || [ "$ds_state" = "stopped" ]; then
-                    if [ $restarts -lt 3 ]; then
-                        ((restarts++)) || true
-                        log_warn "$ds crashed (attempt $restarts/3), restarting..."
-                        if is_running_as_root; then
-                            podman restart "$ds" &>/dev/null || true
-                        else
-                            sudo podman restart "$ds" &>/dev/null || true
-                        fi
-                        sleep 10
-                        ((elapsed += 10)) || true
-                        continue
+                if [ "$state" = "exited" ]; then
+                    log_warn "$ds crashed during init, wiping volume and restarting..."
+                    if is_running_as_root; then
+                        podman rm -f "$ds" 2>/dev/null
+                        podman volume rm -f "cert-revocation-lab_${ds}-data" 2>/dev/null
+                        timeout 60 podman-compose -f pki-compose.yml $COMPOSE_PROFILE up --no-start "$ds" 2>/dev/null || true
+                        _podman_start "$ds" || true
                     else
-                        log_error "$ds failed after $restarts restart attempts"
-                        break
-                    fi
-                fi
-
-                # Check LDAP readiness
-                if is_running_as_root; then
-                    if podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
-                        log_success "$ds is ready"
-                        break
-                    fi
-                else
-                    if sudo podman exec "$ds" ldapsearch -x -H ldap://localhost:3389 -b '' -s base &>/dev/null; then
-                        log_success "$ds is ready"
-                        break
+                        sudo podman rm -f "$ds" 2>/dev/null
+                        sudo podman volume rm -f "cert-revocation-lab_${ds}-data" 2>/dev/null
+                        timeout 60 sudo podman-compose -f pki-compose.yml $COMPOSE_PROFILE up --no-start "$ds" 2>/dev/null || true
+                        sudo podman start "$ds" 2>/dev/null || true
                     fi
                 fi
                 sleep 5
-                ((elapsed += 5)) || true
+                elapsed=$((elapsed + 5))
+                if [ $((elapsed % 30)) -eq 0 ]; then
+                    log_info "Waiting for $ds... (${elapsed}s)"
+                fi
             done
-            if [ $elapsed -ge 300 ]; then
-                log_warn "$ds not ready after 300s — continuing anyway"
+            if [ $elapsed -ge $max_wait ]; then
+                log_warn "$ds not healthy after ${max_wait}s — continuing"
             fi
         done
+
+        # Step 3: Start CA containers (depend on healthy DS)
+        log_info "Starting RSA CA containers..."
+        for ca in dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-kra; do
+            if is_rootful_running "$ca"; then
+                log_success "$ca already running"
+            else
+                _podman_start "$ca" || log_warn "Failed to start $ca"
+            fi
+        done
+
+        # Step 4: Start enrollment servers (akamu/kipuka)
+        if [ "$ENROLLMENT_BACKEND" = "akamu" ]; then
+            log_info "Starting enrollment servers (akamu + kipuka)..."
+            for svc in dnsmasq-rsa kryoptic-hsm akamu-rsa kipuka-rsa; do
+                if is_rootful_running "$svc"; then
+                    log_success "$svc already running"
+                else
+                    _podman_start "$svc" || log_warn "Failed to start $svc (non-fatal)"
+                fi
+            done
+        fi
     fi
 
     # Initialize PKI hierarchy automatically
@@ -982,7 +1013,7 @@ start_ecc_pki_hierarchy() {
                     fi
                 fi
                 sleep 5
-                ((elapsed += 5)) || true
+                elapsed=$((elapsed + 5)) || true
             done
             if [ $elapsed -ge 300 ]; then
                 log_warn "$ds not ready after 300s — continuing anyway"
@@ -1087,7 +1118,7 @@ start_freeipa() {
         local max_attempts=60
         while [ ! -f "data/freeipa/ipa.csr" ] && [ $attempt -lt $max_attempts ]; do
             sleep 5
-            ((attempt++))
+            attempt=$((attempt + 1))
         done
 
         if [ ! -f "data/freeipa/ipa.csr" ]; then
@@ -1166,7 +1197,7 @@ start_freeipa() {
             return
         fi
         sleep 5
-        ((attempt++))
+        attempt=$((attempt + 1))
     done
 
     if [ $attempt -ge $max_attempts ]; then
@@ -1504,9 +1535,9 @@ print_summary() {
     echo ""
     echo "View logs:"
     echo "  podman-compose logs -f <service-name>"
-    [ "$START_RSA_PKI" = true ] && echo "  sudo podman-compose -f pki-compose.yml logs -f <service-name>"
-    [ "$START_ECC_PKI" = true ] && echo "  sudo podman-compose -f pki-ecc-compose.yml logs -f <service-name>"
-    [ "$START_PQ_PKI" = true ] && echo "  sudo podman-compose -f pki-pq-compose.yml logs -f <service-name>"
+    if [ "$START_RSA_PKI" = true ]; then echo "  sudo podman-compose -f pki-compose.yml logs -f <service-name>"; fi
+    if [ "$START_ECC_PKI" = true ]; then echo "  sudo podman-compose -f pki-ecc-compose.yml logs -f <service-name>"; fi
+    if [ "$START_PQ_PKI" = true ]; then echo "  sudo podman-compose -f pki-pq-compose.yml logs -f <service-name>"; fi
     echo ""
     echo -e "${GREEN}========================================================================${NC}"
 }
@@ -1799,10 +1830,12 @@ main() {
 
     # Show which PKI types will be started
     log_info "PKI Types to start:"
-    [ "$START_RSA_PKI" = true ] && echo "  - RSA-4096 (ports 8443-8445)"
-    [ "$START_ECC_PKI" = true ] && echo "  - ECC P-384 (ports 8463-8465)"
-    [ "$START_PQ_PKI" = true ] && echo "  - ML-DSA-87 (ports 8453-8455)"
-    echo "  Enrollment: ${ENROLLMENT_BACKEND} ($([ "$ENROLLMENT_BACKEND" = "akamu" ] && echo "Akamu ACME + Kipuka EST" || echo "Dogtag ACME/EST RA"))"
+    if [ "$START_RSA_PKI" = true ]; then echo "  - RSA-4096 (ports 8443-8445)"; fi
+    if [ "$START_ECC_PKI" = true ]; then echo "  - ECC P-384 (ports 8463-8465)"; fi
+    if [ "$START_PQ_PKI" = true ]; then echo "  - ML-DSA-87 (ports 8453-8455)"; fi
+    local backend_desc="Dogtag ACME/EST RA"
+    if [ "$ENROLLMENT_BACKEND" = "akamu" ]; then backend_desc="Akamu ACME + Kipuka EST"; fi
+    echo "  Enrollment: ${ENROLLMENT_BACKEND} (${backend_desc})"
     echo ""
 
     # Run startup sequence
@@ -1817,9 +1850,9 @@ main() {
     start_directory_servers
 
     # Start selected PKI hierarchies
-    [ "$START_RSA_PKI" = true ] && start_pki_hierarchy
-    [ "$START_ECC_PKI" = true ] && start_ecc_pki_hierarchy
-    [ "$START_PQ_PKI" = true ] && start_pq_pki_hierarchy
+    if [ "$START_RSA_PKI" = true ]; then start_pki_hierarchy; fi
+    if [ "$START_ECC_PKI" = true ]; then start_ecc_pki_hierarchy; fi
+    if [ "$START_PQ_PKI" = true ]; then start_pq_pki_hierarchy; fi
 
     start_freeipa
     start_awx
