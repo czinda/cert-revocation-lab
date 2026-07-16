@@ -153,6 +153,29 @@ Step 6: Kipuka returns the certificate
   certificate. The certificate subject matches the CSR, signed by
   the IoT Sub-CA, with the Kerberos principal as the authenticated
   identity in kipuka's audit log.
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │ Issued Certificate                                          │
+  ├─────────────────────────────────────────────────────────────┤
+  │ Subject:    CN=sensor-admin-device.cert-lab.local,          │
+  │             O=Cert-Lab, C=US                                │
+  │ Issuer:     C=US, O=Cert-Lab, CN=IoT Sub-CA                │
+  │ Serial:     9E0262D811AE409BA25F71163BCE44E3                │
+  │ Not Before: Jul 15 21:30:09 2026 GMT                        │
+  │ Not After:  Jul  4 21:30:09 2028 GMT                        │
+  │ Signature:  sha512WithRSAEncryption                         │
+  │ Public Key: rsaEncryption (2048 bit)                        │
+  │                                                             │
+  │ Auth:       GSSAPI (sensor-admin@CERT-LAB.LOCAL)            │
+  │ Protocol:   EST simpleenroll (RFC 7030)                     │
+  │ RA:         kipuka-rsa (Dogtag agent delegation)            │
+  └─────────────────────────────────────────────────────────────┘
+
+  Key observation: the certificate itself contains NO Kerberos
+  information — the principal binding exists only in kipuka's
+  audit log. The cert is a standard X.509 server certificate.
+  The Kerberos authentication happened at enrollment time, not
+  at certificate usage time.
 ```
 
 ### Lab CLI Command
@@ -302,6 +325,29 @@ Step 7: Certificate download
     -----BEGIN CERTIFICATE-----
     <Intermediate CA cert>
     -----END CERTIFICATE-----
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │ Issued Certificate (via ACME + Kerberos EAB)                │
+  ├─────────────────────────────────────────────────────────────┤
+  │ Subject:    CN=my-server.cert-lab.local                     │
+  │ Issuer:     C=US, O=Cert-Lab, CN=IoT Sub-CA                │
+  │ Serial:     3863725A674920D6D2057E01DCBCCC4B                │
+  │ Not Before: Jul 16 15:40:08 2026 GMT                        │
+  │ Not After:  Jul  5 15:40:08 2028 GMT                        │
+  │ Signature:  sha512WithRSAEncryption                         │
+  │ Public Key: rsaEncryption (2048 bit)                        │
+  │                                                             │
+  │ Auth:       ACME EAB (admin@CERT-LAB.LOCAL via HKDF)        │
+  │ Protocol:   ACME newOrder + HTTP-01 (RFC 8555)              │
+  │ RA:         akamu-rsa (Dogtag signer delegation)            │
+  │ EAB kid:    BTmcVSjsl8q9CBhGccN7gA                         │
+  └─────────────────────────────────────────────────────────────┘
+
+  The ACME certificate looks identical to the EST certificate —
+  same issuer, same key type, same trust chain. The difference
+  is how the client was authorized:
+    EST:  direct SPNEGO on every enrollment request
+    ACME: SPNEGO once for EAB → account bound → challenges prove domain control
 ```
 
 ### Lab CLI Command
