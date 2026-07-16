@@ -285,6 +285,7 @@ services:
       - "--no-daemon"
     cap_add:
       - NET_ADMIN
+      - NET_RAW
     networks:
       pki-pq-net:
         ipv4_address: 172.27.0.2

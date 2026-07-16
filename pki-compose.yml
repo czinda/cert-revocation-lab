@@ -242,6 +242,7 @@ services:
     command: ["--address=/cert-lab.local/172.26.0.1", "--log-queries", "--no-daemon"]
     cap_add:
       - NET_ADMIN
+      - NET_RAW
     networks:
       pki-net:
         ipv4_address: 172.26.0.2
