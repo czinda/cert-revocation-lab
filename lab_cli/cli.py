@@ -1017,6 +1017,10 @@ def kerberos_demo(
         "est", "--protocol",
         help="Enrollment protocol: est, acme, or both"
     ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v",
+        help="Show protocol details (auth flow, endpoints, cert info)"
+    ),
 ):
     """Demo: multi-user Kerberos certificate enrollment.
 
@@ -1026,8 +1030,8 @@ def kerberos_demo(
 
     Example:
         lab kerberos-demo -p rsa
-        lab kerberos-demo -u alice,bob,charlie --protocol est
-        lab kerberos-demo -p rsa --protocol both
+        lab kerberos-demo -u alice,bob,charlie --protocol est -v
+        lab kerberos-demo -p rsa --protocol both --verbose
     """
     from .ipa import ipa_is_running, ipa_user_add, REALM
 
@@ -1097,9 +1101,56 @@ def kerberos_demo(
                         subject = sr.stdout.strip().replace("subject=", "").strip()
                 results_table.add_row(f"{user}@{REALM}", device_fqdn, proto.upper(), serial, subject, "[green]✓[/green]")
                 success_count += 1
+
+                if verbose:
+                    d = result.details or {}
+                    console.print(f"  [bold]{user}@{REALM}[/bold] → {device_fqdn}")
+                    console.print(f"    [dim]Auth:[/dim]      {d.get('auth_method', '—')}")
+                    endpoint = d.get("est_url") or d.get("acme_url") or "—"
+                    console.print(f"    [dim]Endpoint:[/dim]  {endpoint}")
+                    if d.get("http_code"):
+                        console.print(f"    [dim]HTTP:[/dim]      {d['http_code']}")
+                    if d.get("eab_kid"):
+                        console.print(f"    [dim]EAB KID:[/dim]  {d['eab_kid']}")
+                    console.print(f"    [dim]Serial:[/dim]    {serial}")
+                    if result.certificate:
+                        cert_info = subprocess.run(
+                            ["openssl", "x509", "-noout", "-issuer", "-dates"],
+                            input=result.certificate, capture_output=True, text=True, timeout=5,
+                        )
+                        if cert_info.returncode == 0:
+                            for line in cert_info.stdout.strip().splitlines():
+                                key, _, val = line.partition("=")
+                                key = key.strip().replace("notBefore", "Valid from").replace("notAfter", "Valid to").replace("issuer", "Issuer")
+                                console.print(f"    [dim]{key}:[/dim]  {val.strip()}")
+                        sig_info = subprocess.run(
+                            ["openssl", "x509", "-noout", "-text"],
+                            input=result.certificate, capture_output=True, text=True, timeout=5,
+                        )
+                        if sig_info.returncode == 0:
+                            for line in sig_info.stdout.splitlines():
+                                line = line.strip()
+                                if line.startswith("Signature Algorithm:"):
+                                    console.print(f"    [dim]Algorithm:[/dim]  {line.split(':', 1)[1].strip()}")
+                                    break
+                                if line.startswith("Public Key Algorithm:"):
+                                    console.print(f"    [dim]Key type:[/dim]   {line.split(':', 1)[1].strip()}")
+                    if d.get("acme_log"):
+                        console.print(f"    [dim]ACME log:[/dim]")
+                        for line in d["acme_log"].splitlines()[:6]:
+                            console.print(f"      [dim]{line}[/dim]")
+                    console.print()
             else:
                 results_table.add_row(f"{user}@{REALM}", device_fqdn, proto.upper(), "—", "—", f"[red]✗[/red]")
                 fail_count += 1
+                if verbose:
+                    console.print(f"  [red]✗ {user}@{REALM}[/red] → {device_fqdn}")
+                    console.print(f"    [dim]{result.message}[/dim]")
+                    if result.details:
+                        for k, v in result.details.items():
+                            if v and k != "hint":
+                                console.print(f"    [dim]{k}: {v}[/dim]")
+                    console.print()
 
     console.print()
     console.print(results_table)

@@ -827,6 +827,7 @@ rm -f /tmp/gssapi-enroll.key /tmp/gssapi-enroll.der /tmp/gssapi-enroll.b64
                 "principal": f"{principal}@{realm}",
                 "auth_method": "GSSAPI (Kerberos SPNEGO)",
                 "pki_type": pki_type.value,
+                "http_code": http_code,
             },
         )
 
@@ -938,6 +939,7 @@ curl -sk --negotiate -u : \
             cert_content = cat_result.stdout
 
         if result.returncode == 0 and cert_content:
+            acme_log = result.stderr.strip() or result.stdout.strip()
             details = {
                 "acme_url": acme_url,
                 "domain": domain,
@@ -945,6 +947,7 @@ curl -sk --negotiate -u : \
                 "auth_method": "GSSAPI EAB (Kerberos → ACME)",
                 "eab_kid": kid,
                 "client": "akamu-cli",
+                "acme_log": acme_log[:500] if acme_log else None,
             }
             serial = None
             sr = subprocess.run(
