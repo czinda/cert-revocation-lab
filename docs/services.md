@@ -370,7 +370,7 @@ Enrollment Registration Authorities proxy certificate enrollment to the Intermed
 
 | Backend | `ENROLLMENT_BACKEND` | ACME Server | EST Server | Coverage |
 |---------|---------------------|-------------|------------|----------|
-| **Akamu / Kipuka** (default) | `akamu` | Akamu (Go) | Kipuka (Go) | All 3 PKI types get both ACME + EST |
+| **Akamu / Kipuka** (default) | `akamu` | Akamu (Rust) | Kipuka (Rust) | All 3 PKI types get both ACME + EST |
 | **Dogtag RAs** (legacy) | `dogtag` | Dogtag RA (`pki-server create`) | Dogtag RA (`pki-server create`) | RSA-only ACME; EST for all types |
 
 **Enrollment RA port table (same ports regardless of backend):**
@@ -391,11 +391,11 @@ Enrollment Registration Authorities proxy certificate enrollment to the Intermed
 | | |
 |---|---|
 | **Compose files** | `pki-compose.yml`, `pki-ecc-compose.yml`, `pki-pq-compose.yml` |
-| **Image** | Custom Go-based ACME server |
+| **Image** | `quay.io/czinda/akamu:latest` (Rust, OpenSSL 3.5+) |
 | **Podman mode** | Rootful (sudo) |
 | **Depends on** | Intermediate CA (started) |
 
-Standalone Go-based ACME server implementing RFC 8555 (the same protocol used by Let's Encrypt). Proxies certificate issuance to each hierarchy's Intermediate CA REST API. Available for all three PKI types (RSA, ECC, PQ), unlike the legacy Dogtag ACME RA which was RSA-only. Supports HTTP-01 and DNS-01 challenges.
+Rust-based ACME server implementing RFC 8555 with PQC support. Proxies certificate issuance to each hierarchy's IoT Sub-CA via the Dogtag REST API. Available for all three PKI types (RSA, ECC, PQ). Supports HTTP-01 and DNS-01 challenges, EAB via GSSAPI/Kerberos, and STAR (RFC 8739) auto-renewal.
 
 **ACME Endpoint (RSA example):** `http://akamu-rsa.cert-lab.local:8446/acme/directory`
 
@@ -410,11 +410,11 @@ Standalone Go-based ACME server implementing RFC 8555 (the same protocol used by
 | | |
 |---|---|
 | **Compose files** | `pki-compose.yml`, `pki-ecc-compose.yml`, `pki-pq-compose.yml` |
-| **Image** | Custom Go-based EST server |
+| **Image** | `quay.io/czinda/kipuka:latest` (Rust, OpenSSL 3.5+) |
 | **Podman mode** | Rootful (sudo) |
 | **Depends on** | Intermediate CA (started) |
 
-Standalone Go-based EST server implementing RFC 7030 (Enrollment over Secure Transport). Proxies certificate enrollment requests to each hierarchy's Intermediate CA REST API. Available for all three PKI types.
+Rust-based EST server implementing RFC 7030 with PQC support. Proxies certificate enrollment to each hierarchy's IoT Sub-CA via the Dogtag REST API. Supports OTP, mTLS, HTTP Basic, and GSSAPI/Kerberos authentication. Available for all three PKI types.
 
 **EST Endpoints:**
 
