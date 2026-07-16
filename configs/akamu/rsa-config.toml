@@ -27,10 +27,9 @@ timeout_secs = 30
 http_validation_allow_private_ips = true
 http_validation_port = 8880
 validate_dnssec = false
-# Resolve *.cert-lab.local via host DNS (Technitium at 192.168.1.121)
-# for HTTP-01 challenge validation. Container default DNS can't resolve
-# lab hostnames. On systems with dnsmasq-rsa, use the dnsmasq IP instead.
-dns_resolver_addr = "192.168.1.121:53"
+# dnsmasq-rsa (172.26.0.2) resolves *.cert-lab.local → 172.26.0.1 (gateway = host)
+# so akamu can reach the HTTP-01 challenge server running on the host.
+dns_resolver_addr = "172.26.0.2:53"
 eab_master_secret = "Y2VydC1sYWItZWFiLW1hc3Rlci1zZWNyZXQtMzJieXRlcyE"
 
 # ── GSSAPI / Kerberos for EAB endpoint ──────────────────────────────────

@@ -231,6 +231,22 @@ services:
   # Activate with: ENROLLMENT_BACKEND=akamu (default)
   # Rust-based ACME CA + EST server, delegating to Dogtag Intermediate CA.
 
+  # DNS for ACME HTTP-01 validation — resolves *.cert-lab.local to the
+  # pki-net gateway (172.26.0.1 = host) so akamu can reach the HTTP-01
+  # challenge server running on the host via --network host.
+  dnsmasq-rsa:
+    profiles: [akamu]
+    image: docker.io/drpsychick/dnsmasq:latest
+    container_name: dnsmasq-rsa
+    hostname: dns-rsa.${LAB_DOMAIN:-cert-lab.local}
+    command: ["--address=/cert-lab.local/172.26.0.1", "--log-queries", "--no-daemon"]
+    cap_add:
+      - NET_ADMIN
+    networks:
+      pki-net:
+        ipv4_address: 172.26.0.2
+    restart: unless-stopped
+
   akamu-rsa:
     profiles: [akamu]
     image: ${AKAMU_IMAGE:-quay.io/czinda/akamu:latest}
