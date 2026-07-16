@@ -272,7 +272,7 @@ services:
         ipv4_address: 172.26.0.18
     ports:
       - "8446:8443"
-      - "8483:8080"
+      - "8483:8483"
     user: "1001:1001"
     read_only: true
     tmpfs:
