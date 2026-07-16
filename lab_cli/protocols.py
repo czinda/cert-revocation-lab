@@ -174,7 +174,7 @@ def _acme_via_akamu_cli(acme_url: str, domain: str, container: str, pki_type: PK
             "--domain", domain,
             "--account-key", "/certs/account.pem",
             "--challenge", "http-01",
-            "--http-port", "80",
+            "--http-port", "8880",
             "--cert-key-type", "ml-dsa-87" if pki_type == PKIType.PQC else "rsa:2048",
             "--out", f"/certs/{domain}.pem",
         ]
@@ -917,7 +917,7 @@ curl -sk --negotiate -u : \
             "--eab-kid", kid,
             "--eab-key", hmac_key,
             "--challenge", "http-01",
-            "--http-port", "80",
+            "--http-port", "8880",
             "--cert-key-type", "rsa:2048",
             "--out", f"/certs/{domain}.pem",
         ]

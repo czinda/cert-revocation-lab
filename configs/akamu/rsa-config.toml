@@ -25,7 +25,7 @@ timeout_secs = 30
 
 [server]
 http_validation_allow_private_ips = true
-http_validation_port = 80
+http_validation_port = 8880
 validate_dnssec = false
 # Resolve *.cert-lab.local via host DNS (Technitium at 192.168.1.121)
 # for HTTP-01 challenge validation. Container default DNS can't resolve
