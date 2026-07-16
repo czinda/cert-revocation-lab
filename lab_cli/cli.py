@@ -360,6 +360,10 @@ def issue(
         "--profile",
         help="Certificate profile (auto-selected by PKI type if not specified)"
     ),
+    valid: bool = typer.Option(
+        False, "--valid", "--validate",
+        help="Query OCSP after issuance to confirm certificate is valid"
+    ),
 ):
     """Issue a certificate from Dogtag PKI."""
     config = LabConfig.load()
@@ -403,6 +407,15 @@ def issue(
 
         if result.certificate_pem:
             _show_cert_details(console, result.certificate_pem)
+
+        if valid and result.serial:
+            from .pki import check_ocsp_status
+            console.print()
+            with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console, transient=True) as p:
+                p.add_task("Querying OCSP...", total=None)
+                ocsp = check_ocsp_status(config, result.serial, pki_type, ca_level)
+            color = "green" if ocsp.status == "good" else ("red" if ocsp.status == "revoked" else "yellow")
+            console.print(f"  OCSP:      [{color}]{ocsp.status}[/{color}]")
     else:
         console.print(f"\n[red]✗ Failed to issue certificate[/red]")
         console.print(f"  Error: {result.message}")
@@ -547,6 +560,10 @@ def est_enroll(
         None, "--otp", "-o",
         help="One-time password (auto-generated via admin API if omitted)"
     ),
+    valid: bool = typer.Option(
+        False, "--valid", "--validate",
+        help="Query OCSP after enrollment to confirm certificate is valid"
+    ),
 ):
     """Enroll for a certificate using EST protocol (RFC 7030).
 
@@ -621,6 +638,14 @@ def est_enroll(
 
         if result.certificate:
             _show_cert_details(console, result.certificate)
+
+        if valid and result.serial:
+            from .pki import check_ocsp_status
+            with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console, transient=True) as p:
+                p.add_task("Querying OCSP...", total=None)
+                ocsp = check_ocsp_status(config, result.serial, pki_type, CALevel.IOT)
+            color = "green" if ocsp.status == "good" else ("red" if ocsp.status == "revoked" else "yellow")
+            console.print(f"  OCSP:      [{color}]{ocsp.status}[/{color}]")
     else:
         console.print(f"\n[red]✗ EST enrollment failed[/red]")
         console.print(f"  Error: {result.message}")
@@ -1024,6 +1049,10 @@ def kerberos_demo(
         False, "--verbose", "-v",
         help="Show protocol details (auth flow, endpoints, cert info)"
     ),
+    valid: bool = typer.Option(
+        False, "--valid", "--validate",
+        help="Query OCSP after each enrollment to confirm certificate is valid"
+    ),
 ):
     """Demo: multi-user Kerberos certificate enrollment.
 
@@ -1142,6 +1171,15 @@ def kerberos_demo(
                         console.print(f"    [dim]ACME log:[/dim]")
                         for line in d["acme_log"].splitlines()[:6]:
                             console.print(f"      [dim]{line}[/dim]")
+
+                if valid and result.serial:
+                    from .pki import check_ocsp_status
+                    ocsp = check_ocsp_status(config, result.serial, pki_type, CALevel.IOT)
+                    color = "green" if ocsp.status == "good" else ("red" if ocsp.status == "revoked" else "yellow")
+                    prefix = "    " if verbose else "  "
+                    console.print(f"{prefix}[dim]OCSP:[/dim]      [{color}]{ocsp.status}[/{color}]")
+
+                if verbose:
                     console.print()
             else:
                 results_table.add_row(f"{user}@{REALM}", device_fqdn, proto.upper(), "—", "—", f"[red]✗[/red]")
@@ -1232,6 +1270,10 @@ def est_reenroll(
     output_dir: Optional[str] = typer.Option(
         None, "--output", "-o",
         help="Directory to save renewed certificate and key"
+    ),
+    valid: bool = typer.Option(
+        False, "--valid", "--validate",
+        help="Query OCSP after renewal to confirm certificate is valid"
     ),
 ):
     """Renew a certificate using EST simplereenroll (RFC 7030).
@@ -1397,6 +1439,14 @@ def est_reenroll(
                     elif line.startswith("Signature Algorithm:"):
                         console.print(f"  Algorithm: {line.split(':', 1)[1].strip()}")
                         break
+
+        if valid and reenroll_result.serial:
+            from .pki import check_ocsp_status
+            with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console, transient=True) as p:
+                p.add_task("Querying OCSP...", total=None)
+                ocsp = check_ocsp_status(config, reenroll_result.serial, pki_type, CALevel.IOT)
+            color = "green" if ocsp.status == "good" else ("red" if ocsp.status == "revoked" else "yellow")
+            console.print(f"  OCSP:      [{color}]{ocsp.status}[/{color}]")
 
         # Save output if requested
         if output_dir:
