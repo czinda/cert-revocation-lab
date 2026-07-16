@@ -27,7 +27,7 @@ timeout_secs = 30
 http_validation_allow_private_ips = true
 http_validation_port = 80
 validate_dnssec = false
-eab_master_secret = "cert-lab-eab-master-secret-32bytes!"
+eab_master_secret = "Y2VydC1sYWItZWFiLW1hc3Rlci1zZWNyZXQtMzJieXRlcyE"
 
 # ── GSSAPI / Kerberos for EAB endpoint ──────────────────────────────────
 # Enables Authorization: Negotiate on GET /acme/eab.
