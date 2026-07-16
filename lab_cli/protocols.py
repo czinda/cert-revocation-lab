@@ -1105,7 +1105,7 @@ def est_reenroll_certificate(
 
         # Submit to simplereenroll with client cert for mTLS authentication
         enroll_cmd = [
-            "curl", "-sk",
+            "curl", "-sSk",
             "-w", "\n%{http_code}",
             "-X", "POST",
             "-H", "Content-Type: application/pkcs10",
@@ -1119,7 +1119,12 @@ def est_reenroll_certificate(
         result = subprocess.run(enroll_cmd, capture_output=True, text=True, timeout=60)
 
         if result.returncode != 0:
-            return ProtocolResult(success=False, message=f"EST re-enrollment failed: {result.stderr}")
+            err = result.stderr.strip() or result.stdout.strip() or f"curl exit code {result.returncode}"
+            return ProtocolResult(
+                success=False,
+                message=f"EST re-enrollment failed: {err}",
+                details={"curl_rc": result.returncode, "cert": client_cert, "key": client_key},
+            )
 
         output = result.stdout.strip()
         lines = output.rsplit("\n", 1)
