@@ -40,6 +40,7 @@ url = "sqlite:///var/lib/kipuka/kipuka.db?mode=rwc"
 # sub-CA certificates.
 [dogtag]
 ca_url         = "https://iot-ca.cert-lab.local:8443"
+kra_url        = "https://kra.cert-lab.local:8443"
 agent_cert_file = "/etc/kipuka/certs/dogtag/agent.pem"
 agent_key_file  = "/etc/kipuka/certs/dogtag/agent-rsa.key.pem"
 ca_cert_file    = "/etc/kipuka/certs/dogtag/ca-chain.pem"
@@ -52,7 +53,7 @@ simpleenroll   = true
 simplereenroll = true
 csrattrs       = true
 fullcmc        = false
-serverkeygen   = false
+serverkeygen   = true
 
 # ── OTP Enrollment Authentication ────────────────────────────────────────
 [otp]
