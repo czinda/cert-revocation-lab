@@ -35,7 +35,7 @@ def ipa_kinit(principal: str = "admin", password: str = DEFAULT_PASSWORD) -> boo
 
 
 def ipa_user_exists(username: str) -> bool:
-    rc, _ = ipa_exec(f"echo '{DEFAULT_PASSWORD}' | kinit admin 2>/dev/null && ipa user-show {username} >/dev/null 2>&1")
+    rc, _ = ipa_exec(f"echo '{DEFAULT_PASSWORD}' | kinit admin@CERT-LAB.LOCAL 2>/dev/null && ipa user-show {username} >/dev/null 2>&1")
     return rc == 0
 
 
@@ -46,7 +46,7 @@ def ipa_user_add(username: str, password: str = DEFAULT_PASSWORD) -> tuple[bool,
 
     first_name = username.replace("-", " ").title().split()[0]
     script = f"""
-echo '{DEFAULT_PASSWORD}' | kinit admin 2>/dev/null
+echo '{DEFAULT_PASSWORD}' | kinit admin@CERT-LAB.LOCAL 2>/dev/null
 ipa user-add {username} --first='{first_name}' --last=Test --random >/dev/null 2>&1
 ldappasswd -x -H ldap://localhost:389 -D "cn=Directory Manager" \
     -w '{DEFAULT_PASSWORD}' -s '{password}' \

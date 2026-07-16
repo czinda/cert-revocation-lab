@@ -62,7 +62,7 @@ done
 # ── Step 2: Test Kerberos connectivity ──────────────────────────────────
 header "Step 2: Test Kerberos"
 
-if podman exec "$IPA_CONTAINER" bash -c "echo '$ADMIN_PASSWORD' | kinit admin 2>&1"; then
+if podman exec "$IPA_CONTAINER" bash -c "echo '$ADMIN_PASSWORD' | kinit admin@CERT-LAB.LOCAL 2>&1"; then
     podman exec "$IPA_CONTAINER" klist 2>&1 | head -5
     log_info "Kerberos TGT acquired"
 else
@@ -77,7 +77,7 @@ if [ -f "$KEYTAB_HOST_PATH" ]; then
     log_info "Keytab already exists: $KEYTAB_HOST_PATH"
 else
     podman exec "$IPA_CONTAINER" bash -c "
-        echo '$ADMIN_PASSWORD' | kinit admin 2>/dev/null
+        echo '$ADMIN_PASSWORD' | kinit admin@CERT-LAB.LOCAL 2>/dev/null
         ipa service-add ${KIPUKA_SERVICE} 2>/dev/null || echo '  (service already exists)'
         ipa-getkeytab -s ipa.cert-lab.local -p ${KIPUKA_SERVICE} -k /certs/rsa/kipuka-rsa.keytab
         chmod 644 /certs/rsa/kipuka-rsa.keytab
@@ -152,7 +152,7 @@ if [ "$DO_TEST" = true ]; then
 
     log_info "Enrolling via EST with GSSAPI (Negotiate) auth..."
     HTTP_CODE=$(podman exec "$IPA_CONTAINER" bash -c "
-        echo '$ADMIN_PASSWORD' | kinit admin 2>/dev/null
+        echo '$ADMIN_PASSWORD' | kinit admin@CERT-LAB.LOCAL 2>/dev/null
         curl -sk --negotiate -u : \
             --data-binary @/tmp/gssapi-test.csr \
             -H 'Content-Type: application/pkcs10' \

@@ -55,7 +55,7 @@ podman run -d --name freeipa \
 
 log_info "Waiting for FreeIPA install (~5 min)..."
 elapsed=0
-while ! podman exec freeipa bash -c "echo '${ADMIN_PASSWORD}' | kinit admin 2>/dev/null" 2>/dev/null; do
+while ! podman exec freeipa bash -c "echo '${ADMIN_PASSWORD}' | kinit admin@CERT-LAB.LOCAL 2>/dev/null" 2>/dev/null; do
   sleep 10
   elapsed=$((elapsed + 10))
   echo -n "."
@@ -69,7 +69,7 @@ log_info "FreeIPA ready!"
 
 header "Phase 3: Provision Kerberos Keytabs"
 podman exec freeipa bash -c "
-  echo '${ADMIN_PASSWORD}' | kinit admin
+  echo '${ADMIN_PASSWORD}' | kinit admin@CERT-LAB.LOCAL
   ipa host-add kipuka-rsa.cert-lab.local --force 2>/dev/null || true
   ipa host-add akamu-rsa.cert-lab.local --force 2>/dev/null || true
   ipa service-add HTTP/kipuka-rsa.cert-lab.local --force 2>/dev/null || true
@@ -171,7 +171,7 @@ fi
 
 header "Phase 6: Create Test Users"
 podman exec freeipa bash -c "
-  echo '${ADMIN_PASSWORD}' | kinit admin
+  echo '${ADMIN_PASSWORD}' | kinit admin@CERT-LAB.LOCAL
   for user in sensor-admin iot-gateway factory-controller edge-node; do
     if ipa user-show \$user >/dev/null 2>&1; then
       echo \"  = \$user (exists)\"
@@ -191,7 +191,7 @@ podman logs kipuka-rsa 2>&1 | grep -i gssapi | tail -2 | sed 's/^/    /'
 echo -e "\n  ${GREEN}Akamu GSSAPI + EAB:${NC}"
 podman logs akamu-rsa 2>&1 | grep -iE 'gssapi|eab|listening' | tail -3 | sed 's/^/    /'
 echo -e "\n  ${GREEN}FreeIPA:${NC}"
-podman exec freeipa bash -c "echo '${ADMIN_PASSWORD}' | kinit admin 2>/dev/null && klist" 2>&1 | head -5 | sed 's/^/    /'
+podman exec freeipa bash -c "echo '${ADMIN_PASSWORD}' | kinit admin@CERT-LAB.LOCAL 2>/dev/null && klist" 2>&1 | head -5 | sed 's/^/    /'
 echo ""
 
 header "Deployment Complete!"

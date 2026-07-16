@@ -748,7 +748,7 @@ def est_gssapi_demo(
 
     for user in user_list:
         create_script = f"""
-echo '{password}' | kinit admin 2>/dev/null
+echo '{password}' | kinit admin@CERT-LAB.LOCAL 2>/dev/null
 if ipa user-show {user} >/dev/null 2>&1; then
     echo 'exists'
 else
