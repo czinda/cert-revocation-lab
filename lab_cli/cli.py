@@ -1290,6 +1290,19 @@ def est_reenroll(
 
         console.print(f"  [green]Enrolled[/green] — serial: {enroll_result.serial or 'unknown'}")
 
+        # Show original cert validity for comparison
+        if enroll_result.certificate:
+            import subprocess as _sp0
+            ov = _sp0.run(
+                ["openssl", "x509", "-noout", "-startdate", "-enddate"],
+                input=enroll_result.certificate, capture_output=True, text=True, timeout=5,
+            )
+            if ov.returncode == 0:
+                for line in ov.stdout.strip().splitlines():
+                    k, _, v = line.partition("=")
+                    label = "Valid from" if "Before" in k else "Valid to"
+                    console.print(f"  {label}:  {v}")
+
         # Save cert+key to temp files for re-enrollment
         tmpdir = tempfile.mkdtemp(prefix="est-reenroll-")
         cert_path = f"{tmpdir}/cert.pem"
@@ -1357,6 +1370,7 @@ def est_reenroll(
 
     if reenroll_result.success:
         console.print(f"\n[green]Certificate renewed via EST simplereenroll[/green]")
+        console.print(f"  Old serial: {enroll_result.serial or 'unknown'}")
         if reenroll_result.serial:
             console.print(f"  New serial: {reenroll_result.serial}")
 
