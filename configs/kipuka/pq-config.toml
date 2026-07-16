@@ -48,6 +48,7 @@ agent_cert_file = "/etc/kipuka/certs/dogtag/agent.pem"
 agent_key_file  = "/etc/kipuka/certs/dogtag/agent-rsa.key.pem"
 ca_cert_file    = "/etc/kipuka/certs/dogtag/ca-chain.pem"
 profile_id      = "labMLDSAServerCert"
+accept_invalid_certs = true
 username        = "caadmin"
 password        = "RedHat123"
 kra_username    = "kraadmin"
