@@ -31,7 +31,7 @@ log_warn()  { echo -e "${YELLOW}[DEPLOY]${NC} $1"; }
 log_error() { echo -e "${RED}[DEPLOY]${NC} $1"; }
 
 header "Phase 1: Clean + Deploy RSA PKI"
-./start-lab.sh --clean --rsa
+./start-lab.sh --clean --yes --rsa
 
 header "Phase 2: Self-Signed FreeIPA"
 rm -rf data/freeipa

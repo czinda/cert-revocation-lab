@@ -35,7 +35,7 @@ log_warn()  { echo -e "${YELLOW}[PQ-DEPLOY]${NC} $1"; }
 log_error() { echo -e "${RED}[PQ-DEPLOY]${NC} $1"; }
 
 header "Phase 1: Clean + Deploy PQ PKI (ML-DSA-87)"
-./start-lab.sh --clean --pqc
+./start-lab.sh --clean --yes --pqc
 
 header "Phase 2: Self-Signed FreeIPA"
 rm -rf data/freeipa
