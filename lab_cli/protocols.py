@@ -1135,17 +1135,33 @@ def est_reenroll_certificate(
         http_code = lines[-1].strip() if len(lines) > 1 else ""
 
         if "BEGIN CERTIFICATE" in response or response.startswith("MII"):
+            # Extract PEM cert from PKCS#7 if needed
+            cert_pem = response
+            if response.startswith("MII") and "BEGIN CERTIFICATE" not in response:
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".p7b", delete=False) as pf:
+                    pf.write(f"-----BEGIN PKCS7-----\n{response}\n-----END PKCS7-----\n")
+                    pf_path = pf.name
+                try:
+                    p7 = subprocess.run(
+                        ["openssl", "pkcs7", "-in", pf_path, "-print_certs"],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    if p7.returncode == 0 and "BEGIN CERTIFICATE" in p7.stdout:
+                        cert_pem = p7.stdout
+                finally:
+                    Path(pf_path).unlink(missing_ok=True)
+
             serial = None
             sr = subprocess.run(
                 ["openssl", "x509", "-serial", "-noout"],
-                input=response, capture_output=True, text=True, timeout=10,
+                input=cert_pem, capture_output=True, text=True, timeout=10,
             )
             if sr.returncode == 0 and "=" in sr.stdout:
                 serial = f"0x{sr.stdout.strip().split('=', 1)[1].strip().upper()}"
             return ProtocolResult(
                 success=True,
                 message="Certificate re-enrolled via EST",
-                certificate=response,
+                certificate=cert_pem,
                 serial=serial,
                 details={"est_url": est_url, "device": device_fqdn}
             )
