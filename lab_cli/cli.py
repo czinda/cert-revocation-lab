@@ -1244,12 +1244,37 @@ def est_reenroll(
         cert_path = f"{tmpdir}/cert.pem"
         key_path = f"{tmpdir}/key.pem"
 
-        # Write the enrolled certificate
-        with open(cert_path, "w") as f:
-            cert_text = enroll_result.certificate or ""
-            if not cert_text.startswith("-----BEGIN"):
-                cert_text = f"-----BEGIN CERTIFICATE-----\n{cert_text}\n-----END CERTIFICATE-----\n"
-            f.write(cert_text)
+        # Extract a clean leaf certificate for curl --cert
+        import subprocess as _sp
+        raw = enroll_result.certificate or ""
+        raw_path = f"{tmpdir}/raw.pem"
+        with open(raw_path, "w") as f:
+            if raw.startswith("-----BEGIN"):
+                f.write(raw)
+            else:
+                f.write(f"-----BEGIN PKCS7-----\n{raw}\n-----END PKCS7-----\n")
+
+        # Try PKCS#7 extraction first, fall back to plain cert
+        p7 = _sp.run(
+            ["openssl", "pkcs7", "-in", raw_path, "-print_certs"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if p7.returncode == 0 and "BEGIN CERTIFICATE" in p7.stdout:
+            pem_text = p7.stdout
+        else:
+            pem_text = raw
+
+        # Extract just the first (leaf) certificate as clean PEM
+        x509 = _sp.run(
+            ["openssl", "x509", "-outform", "PEM"],
+            input=pem_text, capture_output=True, text=True, timeout=10,
+        )
+        if x509.returncode == 0 and "BEGIN CERTIFICATE" in x509.stdout:
+            with open(cert_path, "w") as f:
+                f.write(x509.stdout)
+        else:
+            console.print(f"  [red]Could not extract PEM certificate from enrollment response[/red]")
+            raise typer.Exit(1)
 
         # Use the key from the initial enrollment (returned by est_enroll_certificate)
         if not enroll_result.key_pem:
