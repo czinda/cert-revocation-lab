@@ -66,13 +66,23 @@ if [ ! -f /usr/bin/systemctl ] || [ ! -x /usr/bin/systemctl ]; then
 fi
 
 # ── Step 2: Check if PKI instance exists ────────────────────────────────
-INSTANCE_DIR=$(ls -d /var/lib/pki/pki-* 2>/dev/null | head -1)
+# Dogtag 11 stores CS.cfg under a subsystem subdirectory:
+#   CA:   conf/ca/CS.cfg
+#   OCSP: conf/ocsp/CS.cfg
+#   KRA:  conf/kra/CS.cfg
+# Use server.xml (always at conf/server.xml) as the instance detection signal.
+# Exclude the default pki-tomcat template directory.
+INSTANCE_DIR=""
 INSTANCE_NAME=""
-if [ -n "$INSTANCE_DIR" ]; then
-    INSTANCE_NAME=$(basename "$INSTANCE_DIR")
-fi
+for d in /var/lib/pki/pki-*; do
+    if [ -d "$d" ] && [ "$(basename "$d")" != "pki-tomcat" ] && [ -f "$d/conf/server.xml" ]; then
+        INSTANCE_DIR="$d"
+        INSTANCE_NAME=$(basename "$d")
+        break
+    fi
+done
 
-if [ -n "$INSTANCE_NAME" ] && [ -f "$INSTANCE_DIR/conf/CS.cfg" ]; then
+if [ -n "$INSTANCE_NAME" ]; then
     # ── Existing instance — start Tomcat ────────────────────────────────
     log "Instance exists: $INSTANCE_NAME — starting Tomcat"
 

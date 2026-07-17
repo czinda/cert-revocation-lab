@@ -100,8 +100,10 @@ needs_init() {
     local health
     health=$(podman inspect --format '{{.State.Health.Status}}' "$ca" 2>/dev/null || echo "none")
     if [ "$health" = "unhealthy" ] || [ "$health" = "starting" ]; then
+        # Dogtag 11: server.xml at conf/server.xml, CS.cfg under conf/<subsystem>/
+        # Check server.xml as instance detection (excludes default pki-tomcat template)
         local has_instance
-        has_instance=$(podman exec "$ca" ls /var/lib/pki/*/conf/CS.cfg 2>/dev/null | head -1)
+        has_instance=$(podman exec "$ca" bash -c 'for d in /var/lib/pki/pki-*; do [ "$(basename "$d")" != "pki-tomcat" ] && [ -f "$d/conf/server.xml" ] && echo "$d" && break; done' 2>/dev/null)
         if [ -z "$has_instance" ]; then
             return 0
         fi
