@@ -35,6 +35,18 @@ for c in "$IOT_KRA" "$IOT_KRA_DS"; do
     fi
 done
 
+# Remove stale KRA connector from the Intermediate CA (pkispawn treats
+# "connector already exists" as fatal on re-runs)
+if sudo podman ps --format '{{.Names}}' | grep -q '^dogtag-intermediate-ca$'; then
+    INTER_CFG="/var/lib/pki/pki-intermediate-ca/conf/ca/CS.cfg"
+    sudo podman exec dogtag-intermediate-ca bash -c "
+        if grep -q 'ca.connector.KRA' $INTER_CFG 2>/dev/null; then
+            sed -i '/^ca\.connector\.KRA\./d' $INTER_CFG
+            echo '  Removed stale KRA connector from Intermediate CA'
+        fi
+    "
+fi
+
 # ── Step 2: Build the full CA chain for trust ────────────────────────────
 echo "=== Step 2: Build CA chain ==="
 CHAIN_FILE=$(mktemp /tmp/lab-chain-XXXX.pem)
