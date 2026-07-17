@@ -188,13 +188,24 @@ echo "=== Step 6: Run pkispawn -s KRA ==="
 if ! sudo podman exec \
     -e SSL_CERT_FILE="${CA_CHAIN_PATH}" \
     "$IOT_KRA" pkispawn -s KRA -f /tmp/iot-kra.cfg -v; then
-    # Check if the KRA is actually running despite the pkispawn exit code
+    # pkispawn's error cleanup stops the server. If the failure was just the
+    # connector-add (last step), the KRA is fully configured — restart it.
+    echo "  pkispawn exited non-zero — checking if KRA was fully configured..."
     if sudo podman exec "$IOT_KRA" \
-        curl -sk https://localhost:8443/kra/admin/kra/getStatus 2>&1 | \
-        grep -q '"Running"'; then
-        echo "  pkispawn reported failure but KRA is running (connector conflict on re-run)"
+        test -f /var/lib/pki/pki-iot-kra/conf/kra/CS.cfg; then
+        echo "  CS.cfg exists — starting KRA server..."
+        sudo podman exec "$IOT_KRA" pki-server start pki-iot-kra 2>/dev/null || true
+        sleep 5
+        if sudo podman exec "$IOT_KRA" \
+            curl -sk https://localhost:8443/kra/admin/kra/getStatus 2>&1 | \
+            grep -q '"Running"'; then
+            echo "  KRA is running (connector conflict is non-fatal)"
+        else
+            echo "  ERROR: KRA failed to start after recovery"
+            exit 1
+        fi
     else
-        echo "  ERROR: pkispawn failed and KRA is not running"
+        echo "  ERROR: pkispawn failed before completing configuration"
         exit 1
     fi
 fi
