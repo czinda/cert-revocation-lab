@@ -35,16 +35,23 @@ for c in "$IOT_KRA" "$IOT_KRA_DS"; do
     fi
 done
 
-# Remove stale KRA connector from the Intermediate CA (pkispawn treats
-# "connector already exists" as fatal on re-runs)
+# Remove stale KRA connector from the Intermediate CA.  pkispawn treats
+# "connector already exists" as fatal, and the running Tomcat caches the
+# connector in memory — editing CS.cfg alone is not enough.
 if sudo podman ps --format '{{.Names}}' | grep -q '^dogtag-intermediate-ca$'; then
     INTER_CFG="/var/lib/pki/pki-intermediate-ca/conf/ca/CS.cfg"
     sudo podman exec dogtag-intermediate-ca bash -c "
         if grep -q 'ca.connector.KRA' $INTER_CFG 2>/dev/null; then
             sed -i '/^ca\.connector\.KRA\./d' $INTER_CFG
-            echo '  Removed stale KRA connector from Intermediate CA'
         fi
-    "
+    " && {
+        echo "  Restarting Intermediate CA to clear cached connector..."
+        sudo podman exec dogtag-intermediate-ca pki-server stop pki-intermediate-ca 2>/dev/null || true
+        sleep 3
+        sudo podman exec dogtag-intermediate-ca pki-server start pki-intermediate-ca
+        sleep 5
+        echo "  Intermediate CA restarted"
+    }
 fi
 
 # ── Step 2: Build the full CA chain for trust ────────────────────────────
