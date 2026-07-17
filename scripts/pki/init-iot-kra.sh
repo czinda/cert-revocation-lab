@@ -180,9 +180,24 @@ echo "=== Step 6: Run pkispawn -s KRA ==="
 # Dogtag's PKIConnection uses a custom SSLContextAdapter that calls
 # ssl.SSLContext.set_default_verify_paths() — this reads SSL_CERT_FILE,
 # NOT REQUESTS_CA_BUNDLE.
-sudo podman exec \
+#
+# pkispawn may fail at the very last step (ca-kraconnector-add) if a
+# connector already exists on the Intermediate CA from a previous run.
+# This is non-fatal: all certs are issued and the KRA is running — Step 7
+# configures the connector on the IoT CA (the one that actually matters).
+if ! sudo podman exec \
     -e SSL_CERT_FILE="${CA_CHAIN_PATH}" \
-    "$IOT_KRA" pkispawn -s KRA -f /tmp/iot-kra.cfg -v
+    "$IOT_KRA" pkispawn -s KRA -f /tmp/iot-kra.cfg -v; then
+    # Check if the KRA is actually running despite the pkispawn exit code
+    if sudo podman exec "$IOT_KRA" \
+        curl -sk https://localhost:8443/kra/admin/kra/getStatus 2>&1 | \
+        grep -q '"Running"'; then
+        echo "  pkispawn reported failure but KRA is running (connector conflict on re-run)"
+    else
+        echo "  ERROR: pkispawn failed and KRA is not running"
+        exit 1
+    fi
+fi
 
 # ── Step 7: Configure KRA connector on IoT CA ──────────────────────────
 # pkispawn configured the connector on the Intermediate CA (the issuing CA).
