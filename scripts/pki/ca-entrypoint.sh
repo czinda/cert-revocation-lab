@@ -27,16 +27,19 @@ if [ -z "$INIT_SCRIPT" ]; then
     case "$HOSTNAME_SHORT" in
         *pq-root*)       PKI_TYPE=pq;  INIT_SCRIPT=/scripts/init-pq-root-ca.sh ;;
         *pq-intermediate*) PKI_TYPE=pq; INIT_SCRIPT=/scripts/init-pq-intermediate-ca.sh ;;
+        *pq-iot-kra*)    PKI_TYPE=pq;  INIT_SCRIPT=/scripts/init-iot-kra.sh ;;
         *pq-iot*|*pq-ca*) PKI_TYPE=pq; INIT_SCRIPT=/scripts/init-pq-iot-ca.sh ;;
         *pq-ocsp*)       PKI_TYPE=pq;  INIT_SCRIPT=/scripts/init-ocsp.sh ;;
         *pq-kra*)        PKI_TYPE=pq;  INIT_SCRIPT=/scripts/init-kra.sh ;;
         *ecc-root*)      PKI_TYPE=ecc; INIT_SCRIPT=/scripts/init-ecc-root-ca.sh ;;
         *ecc-intermediate*) PKI_TYPE=ecc; INIT_SCRIPT=/scripts/init-ecc-intermediate-ca.sh ;;
+        *ecc-iot-kra*)   PKI_TYPE=ecc; INIT_SCRIPT=/scripts/init-iot-kra.sh ;;
         *ecc-iot*|*ecc-ca*) PKI_TYPE=ecc; INIT_SCRIPT=/scripts/init-ecc-iot-ca.sh ;;
         *ecc-ocsp*)      PKI_TYPE=ecc; INIT_SCRIPT=/scripts/init-ocsp.sh ;;
         *ecc-kra*)       PKI_TYPE=ecc; INIT_SCRIPT=/scripts/init-kra.sh ;;
         *root*)          PKI_TYPE=rsa; INIT_SCRIPT=/scripts/init-root-ca.sh ;;
         *intermediate*)  PKI_TYPE=rsa; INIT_SCRIPT=/scripts/init-intermediate-ca.sh ;;
+        *iot-kra*)       PKI_TYPE=rsa; INIT_SCRIPT=/scripts/init-iot-kra.sh ;;
         *iot*|*-ca*)     PKI_TYPE=rsa; INIT_SCRIPT=/scripts/init-iot-ca.sh ;;
         *ocsp*)          PKI_TYPE=rsa; INIT_SCRIPT=/scripts/init-ocsp.sh ;;
         *kra*)           PKI_TYPE=rsa; INIT_SCRIPT=/scripts/init-kra.sh ;;

@@ -832,6 +832,14 @@ patch_profile_auto_approve() {
     fi
 
     for profile_id in "${profiles[@]}"; do
+        # SSKG profiles need AgentCertAuth for KRA key archival — stripping it
+        # sends requests to the manual agent queue and pkcs12 output never returns.
+        if $PODMAN exec "$container" grep -q 'serverKeygenInputImpl' \
+            "/var/lib/pki/${instance}/conf/ca/profiles/ca/${profile_id}.cfg" 2>/dev/null; then
+            log_info "Skipping SSKG profile: $profile_id (requires agent auth for KRA)"
+            continue
+        fi
+
         log_info "Patching ${profile_id} for auto-approve on $container..."
 
         $PODMAN exec "$container" bash -c "

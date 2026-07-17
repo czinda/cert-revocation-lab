@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Deploy a KRA instance under the IoT Sub-CA for server-side key generation.
 #
+# pkispawn issues all KRA system certs from the IoT CA, registers the
+# IoT CA's subsystem cert as a Trusted Manager on the KRA, and configures
+# the CA↔KRA connector on the IoT CA — no manual connector wiring needed.
+#
 # Prerequisites:
 #   - IoT CA (dogtag-iot-ca), Intermediate CA, and Root CA must be running
 #   - pki-net network must exist
@@ -35,23 +39,16 @@ for c in "$IOT_KRA" "$IOT_KRA_DS"; do
     fi
 done
 
-# Remove stale KRA connector from the Intermediate CA.  pkispawn treats
-# "connector already exists" as fatal, and the running Tomcat caches the
-# connector in memory — editing CS.cfg alone is not enough.
-if sudo podman ps --format '{{.Names}}' | grep -q '^dogtag-intermediate-ca$'; then
-    INTER_CFG="/var/lib/pki/pki-intermediate-ca/conf/ca/CS.cfg"
-    sudo podman exec dogtag-intermediate-ca bash -c "
-        if grep -q 'ca.connector.KRA' $INTER_CFG 2>/dev/null; then
-            sed -i '/^ca\.connector\.KRA\./d' $INTER_CFG
+# Remove stale iot-kra connector from the IoT CA (from previous failed runs).
+# Only remove entries whose host is iot-kra — never touch the dogtag-kra connector.
+if sudo podman ps --format '{{.Names}}' | grep -q '^dogtag-iot-ca$'; then
+    IOT_CFG="/var/lib/pki/pki-iot-ca/conf/ca/CS.cfg"
+    sudo podman exec dogtag-iot-ca bash -c "
+        if grep -q 'ca.connector.KRA.*iot-kra' $IOT_CFG 2>/dev/null; then
+            sed -i '/^ca\.connector\.KRA\./d' $IOT_CFG
+            echo '  Removed stale iot-kra connector from IoT CA'
         fi
-    " && {
-        echo "  Restarting Intermediate CA to clear cached connector..."
-        sudo podman exec dogtag-intermediate-ca pki-server stop pki-intermediate-ca 2>/dev/null || true
-        sleep 3
-        sudo podman exec dogtag-intermediate-ca pki-server start pki-intermediate-ca
-        sleep 5
-        echo "  Intermediate CA restarted"
-    }
+    "
 fi
 
 # ── Step 2: Build the full CA chain for trust ────────────────────────────
@@ -113,7 +110,7 @@ for i in $(seq 1 30); do
         echo "  DS ready"
         break
     fi
-    [ "$i" -eq 30 ] && { echo "  ERROR: DS timeout"; exit 1; }
+    if [ "$i" -eq 30 ]; then echo "  ERROR: DS timeout"; exit 1; fi
     sleep 2
 done
 
@@ -143,16 +140,14 @@ sleep 5
 # ── Step 5: Prepare container environment ────────────────────────────────
 echo "=== Step 5: Prepare container ==="
 
-# Install mock-systemctl (containers don't have systemd)
-sudo podman exec "$IOT_KRA" bash -c '
-    printf "#!/bin/bash\ncase \"\$1\" in\n  daemon-reload) exit 0 ;;\n  start) pki-server start \"\${2#*@}\" ;;\n  stop) pki-server stop \"\${2#*@}\" ;;\n  is-active) echo active; exit 0 ;;\n  *) exit 0 ;;\nesac\n" > /usr/bin/systemctl
-    chmod +x /usr/bin/systemctl
-'
+# Install mock-systemctl using the shared library (scripts volume is at /scripts:ro)
+sudo podman exec "$IOT_KRA" bash -c 'source /scripts/lib-pki-common.sh && setup_mock_systemctl'
 echo "  mock-systemctl installed"
 
 # Install CA chain for TLS verification.
-# Copy to a stable path and use it directly as REQUESTS_CA_BUNDLE rather than
-# relying on update-ca-trust (which may not include custom anchors in all images).
+# Dogtag's PKIConnection uses a custom SSLContextAdapter that calls
+# ssl.SSLContext.set_default_verify_paths() — this reads SSL_CERT_FILE,
+# NOT REQUESTS_CA_BUNDLE.
 CA_CHAIN_PATH="/etc/pki/lab-ca-chain.pem"
 sudo podman cp "$CHAIN_FILE" "${IOT_KRA}:${CA_CHAIN_PATH}"
 sudo podman exec "$IOT_KRA" update-ca-trust 2>/dev/null || true
@@ -165,7 +160,7 @@ echo "  pkispawn config copied"
 # Add KRA hostname to security domain and issuing CA containers.
 # SecurityDomainProcessor.getInstallToken() resolves the KRA hostname via
 # InetAddress.getByName(); an unresolvable host leaves ip="" which violates
-# LDAP Directory String syntax (must be ≥1 char) in the session table entry.
+# LDAP Directory String syntax (must be >=1 char) in the session table entry.
 for ca in dogtag-intermediate-ca dogtag-iot-ca; do
     if sudo podman ps --format '{{.Names}}' | grep -q "^${ca}$"; then
         sudo podman exec "$ca" bash -c \
@@ -177,23 +172,15 @@ done
 
 # ── Step 6: Run pkispawn ────────────────────────────────────────────────
 echo "=== Step 6: Run pkispawn -s KRA ==="
-# Dogtag's PKIConnection uses a custom SSLContextAdapter that calls
-# ssl.SSLContext.set_default_verify_paths() — this reads SSL_CERT_FILE,
-# NOT REQUESTS_CA_BUNDLE.
-#
 # pkispawn may fail at the very last step (ca-kraconnector-add) if a
-# connector already exists on the Intermediate CA from a previous run.
-# This is non-fatal: all certs are issued and the KRA is running — Step 7
-# configures the connector on the IoT CA (the one that actually matters).
+# connector already exists on the IoT CA from a previous run.  This is
+# non-fatal: all certs are issued and the KRA is running.
 if ! sudo podman exec \
     -e SSL_CERT_FILE="${CA_CHAIN_PATH}" \
     "$IOT_KRA" pkispawn -s KRA -f /tmp/iot-kra.cfg -v; then
-    # If the failure was just the connector-add (last step), the KRA is
-    # fully configured and likely still running.
     echo "  pkispawn exited non-zero — checking if KRA was configured..."
     if sudo podman exec "$IOT_KRA" \
         test -f /var/lib/pki/pki-iot-kra/conf/kra/CS.cfg; then
-        # Ensure it's running (may already be up — start is idempotent)
         sudo podman exec "$IOT_KRA" pki-server start pki-iot-kra 2>&1 | \
             grep -qi "started\|already" && \
             echo "  KRA is running (connector conflict is non-fatal)" || {
@@ -204,65 +191,15 @@ if ! sudo podman exec \
     fi
 fi
 
-# ── Step 7: Configure KRA connector on IoT CA ──────────────────────────
-# pkispawn configured the connector on the Intermediate CA (the issuing CA).
-# The IoT CA also needs the connector for SSKG (server-side key generation).
+# ── Step 7: Verify ──────────────────────────────────────────────────────
 echo ""
-echo "=== Step 7: Configure IoT CA KRA connector ==="
+echo "=== Step 7: Verify ==="
 sleep 10
-
-# Export transport cert from KRA
-TRANSPORT_PEM=$(sudo podman exec "$IOT_KRA" \
-    certutil -L -d /var/lib/pki/pki-iot-kra/conf/alias \
-    -n "transportCert cert-pki-iot-kra KRA" -a 2>/dev/null)
-
-if [ -z "$TRANSPORT_PEM" ]; then
-    echo "  WARNING: Could not export transport cert — KRA may not be running"
-else
-    # Import transport cert into IoT CA's NSS database
-    echo "$TRANSPORT_PEM" | sudo podman exec -i dogtag-iot-ca \
-        certutil -A -d /var/lib/pki/pki-iot-ca/conf/alias \
-        -n "transportCert cert-pki-iot-kra KRA" -t "u,u,u" -a
-    echo "  Transport cert imported into IoT CA"
-
-    # Copy connector config from Intermediate CA to IoT CA, repointing to KRA
-    INTER_CFG="/var/lib/pki/pki-intermediate-ca/conf/ca/CS.cfg"
-    IOT_CFG="/var/lib/pki/pki-iot-ca/conf/ca/CS.cfg"
-
-    sudo podman exec dogtag-iot-ca bash -c "
-        if grep -q 'ca.connector.KRA.enable' $IOT_CFG 2>/dev/null; then
-            echo '  KRA connector already exists in IoT CA'
-        else
-            cat >> $IOT_CFG <<CONNECTOR
-ca.connector.KRA.enable=true
-ca.connector.KRA.host=iot-kra.${LAB_DOMAIN}
-ca.connector.KRA.port=8443
-ca.connector.KRA.nickName=subsystemCert cert-pki-iot-ca
-ca.connector.KRA.timeout=30
-ca.connector.KRA.transportCertNickname=transportCert cert-pki-iot-kra KRA
-ca.connector.KRA.uri=/kra/agent/kra/connector
-CONNECTOR
-            echo '  KRA connector added to IoT CA CS.cfg'
-        fi
-    "
-
-    # Restart IoT CA to pick up the connector
-    echo "  Restarting IoT CA..."
-    sudo podman exec dogtag-iot-ca pki-server stop pki-iot-ca 2>/dev/null || true
-    sleep 2
-    sudo podman exec dogtag-iot-ca pki-server start pki-iot-ca
-    sleep 5
-    echo "  IoT CA restarted"
-fi
-
-# ── Step 8: Verify ──────────────────────────────────────────────────────
-echo ""
-echo "=== Step 8: Verify ==="
 
 echo "--- IoT KRA status ---"
 sudo podman exec "$IOT_KRA" \
     curl -sk https://localhost:8443/kra/admin/kra/getStatus 2>&1 | \
-    python3 -c "import sys,json; print(json.load(sys.stdin)['Response']['Status'])" 2>/dev/null \
+    python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('Response',d).get('Status','UNKNOWN'))" 2>/dev/null \
     || echo "NOT_RUNNING"
 
 echo "--- IoT CA connector ---"

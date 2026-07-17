@@ -166,10 +166,13 @@ if [ "$CHECK_RSA" = true ]; then
     for svc in akamu-rsa kipuka-rsa dnsmasq-rsa kryoptic-hsm; do
         check_container "$svc" false
     done
+    # IoT KRA (standalone, deployed via init-iot-kra.sh)
+    check_container "ds-iot-kra" false
+    check_container "dogtag-iot-kra" false
 
     # Init CAs if any are running but unhealthy (pkispawn not run yet)
     if [ "$DO_FIX" = true ]; then
-        local any_needs_init=false
+        any_needs_init=false
         for ca in dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-kra; do
             if needs_init "$ca"; then
                 any_needs_init=true
@@ -180,7 +183,7 @@ if [ "$CHECK_RSA" = true ]; then
         if [ "$any_needs_init" = true ]; then
             # Verify ALL DS containers are healthy before attempting CA init
             log_info "Verifying Directory Servers are healthy..."
-            local ds_ok=true
+            ds_ok=true
             for ds in ds-root ds-intermediate ds-iot ds-ocsp ds-kra; do
                 if ! wait_ds_healthy "$ds" 120; then
                     ds_ok=false
@@ -222,7 +225,7 @@ if [ "$CHECK_PQ" = true ]; then
     done
 
     if [ "$DO_FIX" = true ]; then
-        local any_pq_needs_init=false
+        any_pq_needs_init=false
         for ca in dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-ocsp dogtag-pq-kra; do
             if needs_init "$ca"; then
                 any_pq_needs_init=true
@@ -232,7 +235,7 @@ if [ "$CHECK_PQ" = true ]; then
 
         if [ "$any_pq_needs_init" = true ]; then
             log_info "Verifying PQ Directory Servers are healthy..."
-            local pq_ds_ok=true
+            pq_ds_ok=true
             for ds in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-ocsp ds-pq-kra; do
                 if ! wait_ds_healthy "$ds" 120; then
                     pq_ds_ok=false
