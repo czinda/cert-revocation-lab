@@ -95,24 +95,48 @@ check_container() {
     esac
 }
 
-init_if_needed() {
+needs_init() {
     local ca="$1"
-    local init_script="$2"
-    local pki_type="$3"
-
     local health
     health=$(podman inspect --format '{{.State.Health.Status}}' "$ca" 2>/dev/null || echo "none")
     if [ "$health" = "unhealthy" ] || [ "$health" = "starting" ]; then
-        # Check if pkispawn already ran
         local has_instance
         has_instance=$(podman exec "$ca" ls /var/lib/pki/*/conf/CS.cfg 2>/dev/null | head -1)
         if [ -z "$has_instance" ]; then
-            log_info "$ca: needs initialization — running $init_script $pki_type"
-            podman exec "$ca" bash "/scripts/$init_script" "$pki_type" || {
-                log_warn "$ca: init failed (may need manual intervention)"
-            }
+            return 0
         fi
     fi
+    return 1
+}
+
+wait_ds_healthy() {
+    local ds="$1"
+    local max_wait="${2:-120}"
+    local elapsed=0
+    while [ $elapsed -lt $max_wait ]; do
+        local health
+        health=$(podman inspect --format '{{.State.Health.Status}}' "$ds" 2>/dev/null || echo "missing")
+        if [ "$health" = "healthy" ]; then
+            return 0
+        fi
+        if [ "$health" = "missing" ]; then
+            log_error "$ds does not exist — run podman-compose up --no-start first"
+            return 1
+        fi
+        sleep 5
+        elapsed=$((elapsed + 5))
+    done
+    log_error "$ds not healthy after ${max_wait}s"
+    return 1
+}
+
+run_pki_hierarchy_init() {
+    local pki_type="$1"
+    local flag="--${pki_type}"
+    log_info "Running sequential PKI hierarchy init (init-pki-hierarchy.sh $flag)..."
+    bash "$SCRIPT_DIR/pki/init-pki-hierarchy.sh" "$flag" || {
+        log_warn "init-pki-hierarchy.sh exited with errors (some CAs may need manual intervention)"
+    }
 }
 
 echo ""
@@ -141,13 +165,37 @@ if [ "$CHECK_RSA" = true ]; then
         check_container "$svc" false
     done
 
-    # Init CAs if they're running but unhealthy (pkispawn not run yet)
+    # Init CAs if any are running but unhealthy (pkispawn not run yet)
     if [ "$DO_FIX" = true ]; then
-        init_if_needed dogtag-root-ca init-root-ca.sh rsa
-        init_if_needed dogtag-intermediate-ca init-intermediate-ca.sh rsa
-        init_if_needed dogtag-iot-ca init-iot-ca.sh rsa
-        init_if_needed dogtag-ocsp init-ocsp.sh rsa
-        init_if_needed dogtag-kra init-kra.sh rsa
+        local any_needs_init=false
+        for ca in dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-kra; do
+            if needs_init "$ca"; then
+                any_needs_init=true
+                break
+            fi
+        done
+
+        if [ "$any_needs_init" = true ]; then
+            # Verify ALL DS containers are healthy before attempting CA init
+            log_info "Verifying Directory Servers are healthy..."
+            local ds_ok=true
+            for ds in ds-root ds-intermediate ds-iot ds-ocsp ds-kra; do
+                if ! wait_ds_healthy "$ds" 120; then
+                    ds_ok=false
+                fi
+            done
+            if [ "$ds_ok" = false ]; then
+                log_error "Cannot initialize CAs — DS containers missing or unhealthy"
+                log_error "Run: sudo podman-compose -f pki-compose.yml --profile akamu up --no-start"
+                log_error "Then: sudo bash scripts/lab-repair.sh --rsa --fix"
+            else
+                # Use init-pki-hierarchy.sh for proper sequential orchestration
+                # (handles CSR signing between Root→Intermediate→IoT, plus OCSP/KRA)
+                run_pki_hierarchy_init rsa
+            fi
+        else
+            log_success "All RSA CAs already initialized"
+        fi
 
         # Provision akamu/kipuka certs if missing
         if [ ! -f data/certs/rsa/akamu-rsa.cert.pem ] || [ ! -f data/certs/rsa/kipuka-rsa.cert.pem ]; then
@@ -172,11 +220,31 @@ if [ "$CHECK_PQ" = true ]; then
     done
 
     if [ "$DO_FIX" = true ]; then
-        init_if_needed dogtag-pq-root-ca init-pq-root-ca.sh pq
-        init_if_needed dogtag-pq-intermediate-ca init-pq-intermediate-ca.sh pq
-        init_if_needed dogtag-pq-iot-ca init-pq-iot-ca.sh pq
-        init_if_needed dogtag-pq-ocsp init-ocsp.sh pq
-        init_if_needed dogtag-pq-kra init-kra.sh pq
+        local any_pq_needs_init=false
+        for ca in dogtag-pq-root-ca dogtag-pq-intermediate-ca dogtag-pq-iot-ca dogtag-pq-ocsp dogtag-pq-kra; do
+            if needs_init "$ca"; then
+                any_pq_needs_init=true
+                break
+            fi
+        done
+
+        if [ "$any_pq_needs_init" = true ]; then
+            log_info "Verifying PQ Directory Servers are healthy..."
+            local pq_ds_ok=true
+            for ds in ds-pq-root ds-pq-intermediate ds-pq-iot ds-pq-ocsp ds-pq-kra; do
+                if ! wait_ds_healthy "$ds" 120; then
+                    pq_ds_ok=false
+                fi
+            done
+            if [ "$pq_ds_ok" = false ]; then
+                log_error "Cannot initialize PQ CAs — DS containers missing or unhealthy"
+                log_error "Run: sudo podman-compose -f pki-pq-compose.yml --profile akamu up --no-start"
+            else
+                run_pki_hierarchy_init pq
+            fi
+        else
+            log_success "All PQ CAs already initialized"
+        fi
 
         if [ ! -f data/certs/pq/akamu-pq.cert.pem ] || [ ! -f data/certs/pq/kipuka-pq.cert.pem ]; then
             log_info "Provisioning akamu/kipuka TLS certs (PQ)..."

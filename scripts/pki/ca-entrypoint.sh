@@ -98,22 +98,14 @@ if [ -n "$INSTANCE_NAME" ] && [ -f "$INSTANCE_DIR/conf/CS.cfg" ]; then
     done
 
 else
-    # ── Fresh container — run init script ───────────────────────────────
-    if [ -n "$INIT_SCRIPT" ] && [ -f "$INIT_SCRIPT" ]; then
-        log "No instance found — running init: $INIT_SCRIPT $PKI_TYPE"
-        bash "$INIT_SCRIPT" "$PKI_TYPE"
-
-        # After init, find the instance name
-        INSTANCE_DIR=$(ls -d /var/lib/pki/pki-* 2>/dev/null | head -1)
-        if [ -n "$INSTANCE_DIR" ]; then
-            INSTANCE_NAME=$(basename "$INSTANCE_DIR")
-            log "Init complete — instance: $INSTANCE_NAME"
-        else
-            log "WARNING: Init completed but no PKI instance found"
-        fi
-    else
-        log "No INIT_SCRIPT set and no instance exists — container will idle"
-        log "Set INIT_SCRIPT environment variable or run init manually"
+    # ── Fresh container — wait for external initialization ─────────────
+    # Subordinate CAs need cross-container CSR signing which can't happen
+    # from inside this container. Let the external orchestrator (start-lab.sh
+    # or lab-repair.sh --fix) handle first-boot init via podman exec.
+    log "No PKI instance found — waiting for external initialization"
+    log "Run: podman exec $(hostname -s) bash /scripts/<init-script>.sh $PKI_TYPE"
+    if [ -n "$INIT_SCRIPT" ]; then
+        log "Expected init script: $INIT_SCRIPT"
     fi
 fi
 
