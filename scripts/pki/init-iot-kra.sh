@@ -134,6 +134,19 @@ echo "  CA chain trusted ($CERT_COUNT certs)"
 sudo podman cp "${SCRIPT_DIR}/configs/pki/iot-kra.cfg" "${IOT_KRA}:/tmp/iot-kra.cfg"
 echo "  pkispawn config copied"
 
+# Add KRA hostname to security domain and issuing CA containers.
+# SecurityDomainProcessor.getInstallToken() resolves the KRA hostname via
+# InetAddress.getByName(); an unresolvable host leaves ip="" which violates
+# LDAP Directory String syntax (must be ≥1 char) in the session table entry.
+for ca in dogtag-intermediate-ca dogtag-iot-ca; do
+    if sudo podman ps --format '{{.Names}}' | grep -q "^${ca}$"; then
+        sudo podman exec "$ca" bash -c \
+            "grep -q 'iot-kra.${LAB_DOMAIN}' /etc/hosts 2>/dev/null || \
+             echo '${IOT_KRA_IP} iot-kra.${LAB_DOMAIN}' >> /etc/hosts"
+        echo "  Added KRA host entry to ${ca}"
+    fi
+done
+
 # ── Step 6: Run pkispawn ────────────────────────────────────────────────
 echo "=== Step 6: Run pkispawn -s KRA ==="
 sudo podman exec \
