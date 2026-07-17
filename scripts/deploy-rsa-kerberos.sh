@@ -59,8 +59,8 @@ while ! podman exec freeipa bash -c "echo '${ADMIN_PASSWORD}' | kinit admin@CERT
   sleep 10
   elapsed=$((elapsed + 10))
   echo -n "."
-  if [ $elapsed -ge 600 ]; then
-    log_error "FreeIPA not ready after 10 minutes"
+  if [ $elapsed -ge 900 ]; then
+    log_error "FreeIPA not ready after 15 minutes"
     exit 1
   fi
 done
