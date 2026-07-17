@@ -39,14 +39,17 @@ done
 echo "=== Step 2: Build CA chain ==="
 CHAIN_FILE=$(mktemp /tmp/lab-chain-XXXX.pem)
 
-# Root CA
-sudo podman exec dogtag-iot-ca bash -c \
-    'certutil -L -d /var/lib/pki/pki-iot-ca/conf/alias -n "caSigningCert External CA" -a 2>/dev/null' \
-    >> "$CHAIN_FILE" || true
-
-# If that nickname didn't work, try alternatives
+# Root CA — extract from Intermediate CA's NSS DB where it is stored as the
+# "External CA" (the Intermediate CA's parent).  Do NOT use the IoT CA's
+# "External CA" nickname — that is the Intermediate CA cert, not Root.
+for nick in "caSigningCert External CA" "Root CA - Cert-Lab" "Root CA"; do
+    sudo podman exec dogtag-intermediate-ca bash -c \
+        "certutil -L -d /var/lib/pki/pki-intermediate-ca/conf/alias -n \"$nick\" -a 2>/dev/null" \
+        >> "$CHAIN_FILE" 2>/dev/null && break || true
+done
+# Fallback: try the Root CA container directly
 if [ ! -s "$CHAIN_FILE" ]; then
-    for nick in "Root CA - Cert-Lab" "caSigningCert External CA" "Root CA"; do
+    for nick in "caSigningCert cert-pki-root-ca CA" "Root CA - Cert-Lab"; do
         sudo podman exec dogtag-root-ca bash -c \
             "certutil -L -d /var/lib/pki/pki-root-ca/conf/alias -n \"$nick\" -a 2>/dev/null" \
             >> "$CHAIN_FILE" 2>/dev/null && break || true
@@ -65,8 +68,11 @@ sudo podman exec dogtag-iot-ca bash -c \
 
 CERT_COUNT=$(grep -c "BEGIN CERTIFICATE" "$CHAIN_FILE")
 echo "  Chain file: $CHAIN_FILE ($CERT_COUNT certs)"
+if [ "$CERT_COUNT" -lt 3 ]; then
+    echo "  WARNING: Expected 3 CA certs (Root + Intermediate + IoT), got $CERT_COUNT"
+fi
 if [ "$CERT_COUNT" -lt 2 ]; then
-    echo "  ERROR: Expected at least 2 CA certs in chain"
+    echo "  ERROR: Need at least 2 CA certs in chain"
     exit 1
 fi
 
@@ -125,10 +131,13 @@ sudo podman exec "$IOT_KRA" bash -c '
 '
 echo "  mock-systemctl installed"
 
-# Install CA chain into system trust store
-sudo podman cp "$CHAIN_FILE" "${IOT_KRA}:/etc/pki/ca-trust/source/anchors/lab-ca-chain.pem"
-sudo podman exec "$IOT_KRA" update-ca-trust
-echo "  CA chain trusted ($CERT_COUNT certs)"
+# Install CA chain for TLS verification.
+# Copy to a stable path and use it directly as REQUESTS_CA_BUNDLE rather than
+# relying on update-ca-trust (which may not include custom anchors in all images).
+CA_CHAIN_PATH="/etc/pki/lab-ca-chain.pem"
+sudo podman cp "$CHAIN_FILE" "${IOT_KRA}:${CA_CHAIN_PATH}"
+sudo podman exec "$IOT_KRA" update-ca-trust 2>/dev/null || true
+echo "  CA chain installed ($CERT_COUNT certs)"
 
 # Copy pkispawn config
 sudo podman cp "${SCRIPT_DIR}/configs/pki/iot-kra.cfg" "${IOT_KRA}:/tmp/iot-kra.cfg"
@@ -150,7 +159,7 @@ done
 # ── Step 6: Run pkispawn ────────────────────────────────────────────────
 echo "=== Step 6: Run pkispawn -s KRA ==="
 sudo podman exec \
-    -e REQUESTS_CA_BUNDLE=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem \
+    -e REQUESTS_CA_BUNDLE="${CA_CHAIN_PATH}" \
     "$IOT_KRA" pkispawn -s KRA -f /tmp/iot-kra.cfg -v
 
 # ── Step 7: Verify ──────────────────────────────────────────────────────
