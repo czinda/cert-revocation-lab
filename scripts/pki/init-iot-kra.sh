@@ -165,10 +165,60 @@ sudo podman exec \
     -e SSL_CERT_FILE="${CA_CHAIN_PATH}" \
     "$IOT_KRA" pkispawn -s KRA -f /tmp/iot-kra.cfg -v
 
-# ── Step 7: Verify ──────────────────────────────────────────────────────
+# ── Step 7: Configure KRA connector on IoT CA ──────────────────────────
+# pkispawn configured the connector on the Intermediate CA (the issuing CA).
+# The IoT CA also needs the connector for SSKG (server-side key generation).
 echo ""
-echo "=== Step 7: Verify ==="
+echo "=== Step 7: Configure IoT CA KRA connector ==="
 sleep 10
+
+# Export transport cert from KRA
+TRANSPORT_PEM=$(sudo podman exec "$IOT_KRA" \
+    certutil -L -d /var/lib/pki/pki-iot-kra/conf/alias \
+    -n "transportCert cert-pki-iot-kra KRA" -a 2>/dev/null)
+
+if [ -z "$TRANSPORT_PEM" ]; then
+    echo "  WARNING: Could not export transport cert — KRA may not be running"
+else
+    # Import transport cert into IoT CA's NSS database
+    echo "$TRANSPORT_PEM" | sudo podman exec -i dogtag-iot-ca \
+        certutil -A -d /var/lib/pki/pki-iot-ca/conf/alias \
+        -n "transportCert cert-pki-iot-kra KRA" -t "u,u,u" -a
+    echo "  Transport cert imported into IoT CA"
+
+    # Copy connector config from Intermediate CA to IoT CA, repointing to KRA
+    INTER_CFG="/var/lib/pki/pki-intermediate-ca/conf/ca/CS.cfg"
+    IOT_CFG="/var/lib/pki/pki-iot-ca/conf/ca/CS.cfg"
+
+    sudo podman exec dogtag-iot-ca bash -c "
+        if grep -q 'ca.connector.KRA.enable' $IOT_CFG 2>/dev/null; then
+            echo '  KRA connector already exists in IoT CA'
+        else
+            cat >> $IOT_CFG <<CONNECTOR
+ca.connector.KRA.enable=true
+ca.connector.KRA.host=iot-kra.${LAB_DOMAIN}
+ca.connector.KRA.port=8443
+ca.connector.KRA.nickName=subsystemCert cert-pki-iot-ca
+ca.connector.KRA.timeout=30
+ca.connector.KRA.transportCertNickname=transportCert cert-pki-iot-kra KRA
+ca.connector.KRA.uri=/kra/agent/kra/connector
+CONNECTOR
+            echo '  KRA connector added to IoT CA CS.cfg'
+        fi
+    "
+
+    # Restart IoT CA to pick up the connector
+    echo "  Restarting IoT CA..."
+    sudo podman exec dogtag-iot-ca pki-server stop pki-iot-ca 2>/dev/null || true
+    sleep 2
+    sudo podman exec dogtag-iot-ca pki-server start pki-iot-ca
+    sleep 5
+    echo "  IoT CA restarted"
+fi
+
+# ── Step 8: Verify ──────────────────────────────────────────────────────
+echo ""
+echo "=== Step 8: Verify ==="
 
 echo "--- IoT KRA status ---"
 sudo podman exec "$IOT_KRA" \
