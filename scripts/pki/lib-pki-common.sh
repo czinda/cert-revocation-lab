@@ -325,25 +325,42 @@ wait_for_ca() {
 
 # Check if CA instance is already initialized
 # Usage: check_initialized <instance_name> <cert_file>
+# Returns 0 if the PKI instance has a valid CS.cfg (not just a cert file).
 check_initialized() {
     local instance="${1:?Instance name required}"
     local cert_file="${2:-}"
+    local instance_dir="/var/lib/pki/${instance}"
+    local cs_cfg="${instance_dir}/conf/CS.cfg"
 
-    if [ -n "$cert_file" ] && [ -f "$cert_file" ]; then
-        log_info "Certificate exists: $cert_file"
-
-        if pki-server status "$instance" 2>/dev/null | grep -q "running"; then
-            log_info "Instance $instance is running"
-            return 0
+    # Check for the actual PKI instance (CS.cfg), not just the cert file.
+    # The cert may exist on a shared volume while the instance volume is empty
+    # (e.g., after container recreation with a new anonymous volume).
+    if [ ! -f "$cs_cfg" ]; then
+        if [ -n "$cert_file" ] && [ -f "$cert_file" ]; then
+            log_warn "Certificate exists ($cert_file) but PKI instance missing ($cs_cfg)"
+            log_warn "Instance volume may have been lost — will re-initialize"
         fi
-
-        if [ -d "/var/lib/pki/${instance}" ]; then
-            log_info "Starting existing instance..."
-            pki-server start "$instance" 2>/dev/null || true
-            return 0
-        fi
+        return 1
     fi
-    return 1
+
+    log_info "PKI instance exists: $instance (CS.cfg present)"
+
+    if pki-server status "$instance" 2>/dev/null | grep -q "running"; then
+        log_info "Instance $instance is already running"
+        return 0
+    fi
+
+    log_info "Starting existing instance..."
+    # Ensure mock systemctl is installed (may be lost after container restart)
+    setup_mock_systemctl 2>/dev/null || true
+    mkdir -p "/var/log/pki/${instance}"
+    touch "/var/log/pki/${instance}/catalina.out"
+    /usr/bin/systemctl start "pki-tomcatd@${instance}.service" 2>/dev/null || {
+        # Fallback: direct pki-server run
+        nohup pki-server run "$instance" > "/var/log/pki/${instance}/catalina.out" 2>&1 &
+    }
+    sleep 10
+    return 0
 }
 
 # Prepare pkispawn config with variable substitution

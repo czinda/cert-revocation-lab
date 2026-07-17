@@ -122,7 +122,8 @@ services:
     ports:
       - "8463:8443"
       - "8493:8080"
-    command: ["/bin/bash", "-c", "sleep infinity"]
+    command: ["/bin/bash", "/scripts/ca-entrypoint.sh"]
+    stop_grace_period: 30s
     healthcheck:
       test: ["CMD-SHELL", "curl -sk https://localhost:8443/ca/admin/ca/getStatus 2>/dev/null | grep -q running || exit 1"]
       interval: 10s
@@ -179,7 +180,8 @@ services:
     ports:
       - "8464:8443"
       - "8494:8080"
-    command: ["/bin/bash", "-c", "sleep infinity"]
+    command: ["/bin/bash", "/scripts/ca-entrypoint.sh"]
+    stop_grace_period: 30s
     healthcheck:
       test: ["CMD-SHELL", "curl -sk https://localhost:8443/ca/admin/ca/getStatus 2>/dev/null | grep -q running || exit 1"]
       interval: 10s
@@ -236,7 +238,8 @@ services:
     ports:
       - "8465:8443"
       - "8495:8080"
-    command: ["/bin/bash", "-c", "sleep infinity"]
+    command: ["/bin/bash", "/scripts/ca-entrypoint.sh"]
+    stop_grace_period: 30s
     healthcheck:
       test: ["CMD-SHELL", "curl -sk https://localhost:8443/ca/admin/ca/getStatus 2>/dev/null | grep -q running || exit 1"]
       interval: 10s
@@ -355,7 +358,8 @@ services:
     ports:
       - "8466:8443"
       - "8496:8080"
-    command: ["/bin/bash", "-c", "sleep infinity"]
+    command: ["/bin/bash", "/scripts/ca-entrypoint.sh"]
+    stop_grace_period: 30s
     healthcheck:
       test: ["CMD-SHELL", "curl -sk https://localhost:8443/.well-known/est/cacerts 2>/dev/null | head -1 | grep -qE 'BEGIN|MII' || exit 1"]
       interval: 10s
@@ -426,7 +430,8 @@ services:
     ports:
       - "8467:8443"
       - "8497:8080"
-    command: ["/bin/bash", "-c", "sleep infinity"]
+    command: ["/bin/bash", "/scripts/ca-entrypoint.sh"]
+    stop_grace_period: 30s
     healthcheck:
       test: ["CMD-SHELL", "curl -sk https://localhost:8443/ocsp/admin/ocsp/getStatus 2>/dev/null | grep -q running || exit 1"]
       interval: 10s
@@ -492,7 +497,8 @@ services:
     ports:
       - "8468:8443"
       - "8498:8080"
-    command: ["/bin/bash", "-c", "sleep infinity"]
+    command: ["/bin/bash", "/scripts/ca-entrypoint.sh"]
+    stop_grace_period: 30s
     healthcheck:
       test: ["CMD-SHELL", "curl -sk https://localhost:8443/kra/admin/kra/getStatus 2>/dev/null | grep -q running || exit 1"]
       interval: 10s
