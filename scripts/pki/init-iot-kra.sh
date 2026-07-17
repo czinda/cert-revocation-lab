@@ -158,8 +158,11 @@ done
 
 # ── Step 6: Run pkispawn ────────────────────────────────────────────────
 echo "=== Step 6: Run pkispawn -s KRA ==="
+# Dogtag's PKIConnection uses a custom SSLContextAdapter that calls
+# ssl.SSLContext.set_default_verify_paths() — this reads SSL_CERT_FILE,
+# NOT REQUESTS_CA_BUNDLE.
 sudo podman exec \
-    -e REQUESTS_CA_BUNDLE="${CA_CHAIN_PATH}" \
+    -e SSL_CERT_FILE="${CA_CHAIN_PATH}" \
     "$IOT_KRA" pkispawn -s KRA -f /tmp/iot-kra.cfg -v
 
 # ── Step 7: Verify ──────────────────────────────────────────────────────
