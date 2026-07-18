@@ -129,6 +129,33 @@ setup_directories() {
     mkdir -p ansible/collections
     mkdir -p notebooks
 
+    # Pre-create Kerberos mount targets. Keytabs and krb5.conf are file
+    # bind-mounts: if the host file is absent at container creation, podman
+    # auto-creates a DIRECTORY at that path and the mount is broken for
+    # the container's lifetime. Empty placeholders make the mounts bind
+    # correctly; real content lands later via setup-enrollment-auth.sh.
+    local realm="CERT-LAB.LOCAL" domain="cert-lab.local"
+    for t in rsa ecc pq; do
+        mkdir -p "data/certs/$t"
+        touch "data/certs/$t/kipuka.keytab" "data/certs/$t/akamu.keytab"
+        if [ ! -s "data/certs/$t/krb5.conf" ]; then
+            cat > "data/certs/$t/krb5.conf" << KRBEOF
+[libdefaults]
+    default_realm = ${realm}
+    dns_lookup_realm = false
+    dns_lookup_kdc = false
+[realms]
+    ${realm} = {
+        kdc = ipa.${domain}
+        admin_server = ipa.${domain}
+    }
+[domain_realm]
+    .${domain} = ${realm}
+    ${domain} = ${realm}
+KRBEOF
+        fi
+    done
+
     log_success "Directory structure created"
 }
 
@@ -716,14 +743,8 @@ start_pki_hierarchy() {
             sudo bash scripts/pki/init-akamu-kipuka.sh rsa
         fi
 
-        # Full enrollment auth setup: agent cert, CA agent registration,
-        # KRA connector, SSKG profile, Kerberos keytabs
-        log_info "Setting up enrollment authentication (agent certs, KRA, keytabs)..."
-        if is_running_as_root; then
-            bash scripts/pki/setup-enrollment-auth.sh rsa || log_warn "Enrollment auth setup incomplete (non-fatal)"
-        else
-            sudo bash scripts/pki/setup-enrollment-auth.sh rsa || log_warn "Enrollment auth setup incomplete (non-fatal)"
-        fi
+        # Enrollment auth (agent cert, KRA connector, SSKG profile, keytabs)
+        # runs AFTER FreeIPA starts — see setup_kerberos_enrollment() phase
     else
         log_info "Dogtag ACME/EST RA initialization handled by init-pki-hierarchy.sh"
     fi
@@ -1227,6 +1248,73 @@ start_freeipa() {
     log_success "FreeIPA server configured"
     log_info "Web UI: https://ipa.cert-lab.local:4443/ipa/ui"
     log_info "Admin: admin / (see .env)"
+}
+
+# Kerberos enrollment auth: keytab distribution + mount repair
+setup_kerberos_enrollment() {
+    local pki_type="$1"
+    log_phase "Kerberos Enrollment Auth (${pki_type^^})"
+
+    if [ "$ENROLLMENT_BACKEND" != "akamu" ]; then
+        log_info "ENROLLMENT_BACKEND=$ENROLLMENT_BACKEND — skipping keytab setup"
+        return 0
+    fi
+
+    local ipa_running=false
+    if container_healthy freeipa 2>/dev/null; then ipa_running=true; fi
+    if ! $ipa_running; then
+        log_warn "FreeIPA not running — GSSAPI/SPNEGO enrollment unavailable"
+        log_warn "Later: sudo bash scripts/pki/setup-enrollment-auth.sh $pki_type"
+        return 0
+    fi
+
+    # Canonical, idempotent path: agent cert, KRA connector, SSKG profile,
+    # service principals, keytabs, krb5.conf
+    if is_running_as_root; then
+        bash scripts/pki/setup-enrollment-auth.sh "$pki_type" || \
+            log_warn "setup-enrollment-auth.sh $pki_type reported errors (see above)"
+    else
+        sudo bash scripts/pki/setup-enrollment-auth.sh "$pki_type" || \
+            log_warn "setup-enrollment-auth.sh $pki_type reported errors (see above)"
+    fi
+
+    local certs_dir="data/certs/${pki_type}"
+    for svc in kipuka akamu; do
+        local ctr="${svc}-${pki_type}"
+        local keytab="${certs_dir}/${svc}.keytab"
+
+        local state
+        state=$(podman inspect --format '{{.State.Status}}' "$ctr" 2>/dev/null || echo missing)
+        [ "$state" = "missing" ] && continue
+
+        # Repair: broken file mount (dir where the keytab should be).
+        # Happens when the container predates the placeholder touch.
+        if podman exec "$ctr" test -d /etc/krb5.keytab 2>/dev/null; then
+            log_warn "$ctr: keytab mount is a directory — recreating container"
+            podman rm -f "$ctr" 2>/dev/null
+            if is_running_as_root; then
+                podman-compose -f pki-compose.yml --profile akamu create --no-start "$ctr" 2>/dev/null
+            else
+                sudo podman-compose -f pki-compose.yml --profile akamu create --no-start "$ctr" 2>/dev/null
+            fi
+            podman start "$ctr" 2>/dev/null || sudo podman start "$ctr" 2>/dev/null || true
+            continue
+        fi
+
+        # Repair: keytab refreshed after container started → restart so
+        # GSSAPI acceptor re-reads it
+        if [ -s "$keytab" ]; then
+            local kt_m ctr_s
+            kt_m=$(stat -c %Y "$keytab" 2>/dev/null || echo 0)
+            ctr_s=$(date -d "$(podman inspect --format '{{.State.StartedAt}}' "$ctr" 2>/dev/null)" +%s 2>/dev/null || echo 0)
+            if [ "$kt_m" -gt "$ctr_s" ] 2>/dev/null; then
+                log_info "$ctr: keytab newer than container start — restarting"
+                podman restart "$ctr" 2>/dev/null || sudo podman restart "$ctr" 2>/dev/null || true
+            fi
+        else
+            log_warn "$ctr: keytab still empty — GSSAPI unavailable until provisioned"
+        fi
+    done
 }
 
 # Phase 6: Start Ansible Runner
@@ -1864,6 +1952,9 @@ main() {
     if [ "$START_PQ_PKI" = true ]; then start_pq_pki_hierarchy; fi
 
     start_freeipa
+    if [ "$START_RSA_PKI" = true ]; then setup_kerberos_enrollment rsa; fi
+    if [ "$START_PQ_PKI"  = true ]; then setup_kerberos_enrollment pq;  fi
+    if [ "$START_ECC_PKI" = true ]; then setup_kerberos_enrollment ecc; fi
     start_runner
     start_eda
     start_security_tools
