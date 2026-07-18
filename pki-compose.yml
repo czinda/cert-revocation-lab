@@ -308,6 +308,8 @@ services:
     volumes:
       - ./configs/kipuka/rsa-config.toml:/etc/kipuka/kipuka.toml:ro
       - ./data/certs/rsa:/etc/kipuka/certs:ro
+      - ./data/certs/rsa/kipuka.keytab:/etc/krb5.keytab:ro,z
+      - ./data/certs/rsa/krb5.conf:/etc/krb5.conf:ro,z
       - kipuka-rsa-data:/var/lib/kipuka
     extra_hosts:
       - "root-ca.cert-lab.local:172.26.0.12"

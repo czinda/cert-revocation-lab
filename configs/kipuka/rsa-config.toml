@@ -81,12 +81,12 @@ bearer_token = "cert-lab-kipuka-admin-token"
 # Enables EST enrollment via Kerberos (SPNEGO). Clients authenticate
 # with a Kerberos ticket; kipuka validates against the keytab.
 # Requires kipuka built with --features gssapi and FreeIPA running.
-# Uncomment after FreeIPA keytab is provisioned:
+# Provisioned by setup-enrollment-auth.sh:
 #   ipa service-add HTTP/kipuka-rsa.cert-lab.local
-#   ipa-getkeytab -s ipa.cert-lab.local -p HTTP/kipuka-rsa.cert-lab.local -k /path/to/kipuka.keytab
-# [admin.gssapi]
-# keytab_file = "/etc/krb5.keytab"
-# require_crypto_verification = true
+#   ipa-getkeytab → data/certs/rsa/kipuka.keytab → mounted at /etc/krb5.keytab
+[admin.gssapi]
+keytab_file = "/etc/krb5.keytab"
+require_crypto_verification = true
 
 # ── Audit ────────────────────────────────────────────────────────────────
 [audit]

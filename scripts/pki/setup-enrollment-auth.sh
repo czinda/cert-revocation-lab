@@ -199,9 +199,14 @@ KRBEOF
         ok "krb5.conf already exists"
     fi
 
-    # Generate keytabs for kipuka and akamu
+    # Generate keytabs for kipuka and akamu.
+    # Filenames match the compose volume mounts:
+    #   kipuka: data/certs/rsa/kipuka.keytab → /etc/krb5.keytab
+    #   akamu:  data/certs/rsa/akamu.keytab  → /certs/akamu.keytab (in /certs volume)
     for svc_host in "$KIPUKA" "$AKAMU"; do
-        KEYTAB_FILE="${CERTS_DIR}/${svc_host##*-}.keytab"
+        # kipuka-rsa → kipuka, akamu-rsa → akamu
+        SVC_SHORT="${svc_host%%-*}"
+        KEYTAB_FILE="${CERTS_DIR}/${SVC_SHORT}.keytab"
         SVC_FQDN="${svc_host}.${DOMAIN}"
 
         if [ -f "$KEYTAB_FILE" ]; then
@@ -227,12 +232,7 @@ KRBEOF
             warn "Keytab creation failed for $SVC_FQDN"
         fi
     done
-
-    # Copy keytabs into running containers (they don't survive recreation)
-    if [ -f "${CERTS_DIR}/${KIPUKA##*-}.keytab" ]; then
-        $PODMAN cp "${CERTS_DIR}/${KIPUKA##*-}.keytab" "${KIPUKA}:/etc/krb5.keytab" 2>/dev/null && \
-            ok "Keytab copied to $KIPUKA" || warn "Could not copy keytab to $KIPUKA (not running?)"
-    fi
+    # No podman cp needed — keytabs are mounted as persistent volumes
 fi
 
 echo ""
