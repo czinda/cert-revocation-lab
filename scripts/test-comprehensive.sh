@@ -62,7 +62,7 @@ pki_cmd() {
         PASS=\$(cat \"\$PASS_FILE\" 2>/dev/null || echo RedHat123)
         HOST=\$(hostname)
 
-        pki -U http://\$HOST:8080 -u caadmin -w \"\$PASS\" \
+        pki -P http -h \"\$HOST\" -p 8080 -u caadmin -w \"\$PASS\" \
             $* 2>&1
     " 2>&1
 }
@@ -178,7 +178,7 @@ ISSUE_OUT=$(podman exec dogtag-iot-ca bash -c "
     PASS=\$(cat \"\$PASS_FILE\" 2>/dev/null || echo RedHat123)
     HOST=\$(hostname)
 
-    pki -U http://\$HOST:8080 -u caadmin -w \"\$PASS\" \
+    pki -P http -h \"\$HOST\" -p 8080 -u caadmin -w \"\$PASS\" \
         ca-cert-request-submit --profile caServerCert \
         --csr-file /tmp/test-csr.pem 2>&1
 " 2>&1)
