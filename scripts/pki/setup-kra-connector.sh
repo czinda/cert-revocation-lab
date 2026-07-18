@@ -128,7 +128,7 @@ $PODMAN exec "$KRA_CONTAINER" bash -c "
     fi
     HAS=\$(certutil -L -d \$CLIENT_DB 2>/dev/null | grep -c 'u,u,u' || true)
     if [ \$HAS -eq 0 ]; then
-        P12=\$(find /root/.dogtag -name 'ca_admin_cert.p12' 2>/dev/null | head -1)
+        P12=\$(find /root/.dogtag -name '*admin*.p12' 2>/dev/null | head -1)
         PASS=\$(find /root/.dogtag -name 'password.conf' 2>/dev/null -exec cat {} \; | head -1)
         [ -z \"\$PASS\" ] && PASS=RedHat123
         if [ -n \"\$P12\" ]; then
@@ -172,17 +172,19 @@ ok "Registered '$TM_USER' as Trusted Manager on KRA"
 echo ""
 echo "--- Step 3: Add KRA connector to CS.cfg ---"
 
-# Write connector config WITHOUT leading spaces (critical for Dogtag parser)
-$PODMAN exec "$CA_CONTAINER" bash -c "cat >> '$CA_CSCFG'" <<EOF
-ca.connector.KRA.enable=true
-ca.connector.KRA.host=${KRA_HOST}
-ca.connector.KRA.local=false
-ca.connector.KRA.nickName=subsystemCert cert-${CA_INSTANCE}
-ca.connector.KRA.port=8443
-ca.connector.KRA.timeout=30
-ca.connector.KRA.transportCertNickname=transportCert cert-${KRA_INSTANCE}
-ca.connector.KRA.uri=/kra/agent/kra/connector
-EOF
+# Write connector config line-by-line to avoid heredoc/bash-c leading space issues.
+# CS.cfg is a Java properties file — leading spaces corrupt key names.
+for line in \
+    "ca.connector.KRA.enable=true" \
+    "ca.connector.KRA.host=${KRA_HOST}" \
+    "ca.connector.KRA.local=false" \
+    "ca.connector.KRA.nickName=subsystemCert cert-${CA_INSTANCE}" \
+    "ca.connector.KRA.port=8443" \
+    "ca.connector.KRA.timeout=30" \
+    "ca.connector.KRA.transportCertNickname=transportCert cert-${KRA_INSTANCE}" \
+    "ca.connector.KRA.uri=/kra/agent/kra/connector"; do
+    $PODMAN exec "$CA_CONTAINER" bash -c "echo '$line' >> '$CA_CSCFG'"
+done
 
 # Verify no leading spaces
 $PODMAN exec "$CA_CONTAINER" grep "^ca.connector.KRA\." "$CA_CSCFG"
