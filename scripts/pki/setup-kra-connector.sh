@@ -54,8 +54,11 @@ for ctr in "$CA_CONTAINER" "$KRA_CONTAINER"; do
 done
 
 # Detect instance names
-CA_INSTANCE=$($PODMAN exec "$CA_CONTAINER" bash -c 'ls /etc/pki/ 2>/dev/null | grep "^pki-" | head -1')
-KRA_INSTANCE=$($PODMAN exec "$KRA_CONTAINER" bash -c 'ls /etc/pki/ 2>/dev/null | grep "^pki-" | head -1')
+# Detect instance via server.xml (not ls | grep, which can match pki-tomcat template dir)
+CA_INSTANCE=$($PODMAN exec "$CA_CONTAINER" bash -c \
+    'for d in /etc/pki/pki-*/; do [ -f "$d/server.xml" ] && basename "$d" && break; done' 2>/dev/null)
+KRA_INSTANCE=$($PODMAN exec "$KRA_CONTAINER" bash -c \
+    'for d in /etc/pki/pki-*/; do [ -f "$d/server.xml" ] && basename "$d" && break; done' 2>/dev/null)
 CA_CSCFG="/etc/pki/${CA_INSTANCE}/ca/CS.cfg"
 CA_NSSDB="/etc/pki/${CA_INSTANCE}/alias"
 KRA_NSSDB="/etc/pki/${KRA_INSTANCE}/alias"
@@ -157,7 +160,7 @@ $PODMAN exec "$KRA_CONTAINER" bash -c "
 
     # Create user (may already exist)
     eval \$PKI kra-user-show '$TM_USER' 2>/dev/null && echo 'User exists' || \
-    eval \$PKI kra-user-add '$TM_USER' --fullName 'CA Subsystem Cert - $CA_HOSTNAME' --type agentType 2>&1
+    eval \$PKI kra-user-add '$TM_USER' --full-name 'CA Subsystem Cert - $CA_HOSTNAME' --type agentType 2>&1
 
     # Add the subsystem cert to the user
     eval \$PKI kra-user-cert-add '$TM_USER' --input /tmp/ca-subsystem.pem 2>&1 || echo 'Cert may already be assigned'
@@ -168,12 +171,29 @@ $PODMAN exec "$KRA_CONTAINER" bash -c "
 
 ok "Registered '$TM_USER' as Trusted Manager on KRA"
 
-# ── Step 3: Add connector to CS.cfg ──
+# ── Step 3: Stop CA, add connector to CS.cfg, restart ──
+# IMPORTANT: stop Tomcat BEFORE writing CS.cfg. If the CA flushes its
+# in-memory config (serial-range updates trigger this), it overwrites
+# CS.cfg without our new lines — the "flush race" that ate connectors
+# on Thursday's session.
 echo ""
-echo "--- Step 3: Add KRA connector to CS.cfg ---"
+echo "--- Step 3: Stop CA + add KRA connector to CS.cfg ---"
 
-# Write connector config line-by-line to avoid heredoc/bash-c leading space issues.
-# CS.cfg is a Java properties file — leading spaces corrupt key names.
+# Stop Tomcat inside the container first
+$PODMAN exec "$CA_CONTAINER" bash -c "
+    /usr/bin/systemctl stop pki-tomcatd@${CA_INSTANCE}.service 2>/dev/null || \
+    pki-server stop ${CA_INSTANCE} 2>/dev/null || true
+" 2>/dev/null
+# Verify Tomcat is actually down
+for _w in $(seq 1 10); do
+    if ! $PODMAN exec "$CA_CONTAINER" bash -c "pgrep -f 'java.*${CA_INSTANCE}'" &>/dev/null; then
+        break
+    fi
+    sleep 1
+done
+log "Tomcat stopped inside $CA_CONTAINER"
+
+# Write connector config line-by-line (no heredoc, no leading spaces)
 for line in \
     "ca.connector.KRA.enable=true" \
     "ca.connector.KRA.host=${KRA_HOST}" \
@@ -186,16 +206,19 @@ for line in \
     $PODMAN exec "$CA_CONTAINER" bash -c "echo '$line' >> '$CA_CSCFG'"
 done
 
-# Verify no leading spaces
 $PODMAN exec "$CA_CONTAINER" grep "^ca.connector.KRA\." "$CA_CSCFG"
-ok "Connector config added (no inline base64, uses NSS nickname)"
+ok "Connector config added"
 
 # ── Step 4: Restart CA ──
 echo ""
 echo "--- Step 4: Restart CA ---"
 
-$PODMAN stop "$CA_CONTAINER" 2>/dev/null
-$PODMAN start "$CA_CONTAINER" 2>/dev/null
+# Start Tomcat inside the container (avoids the compose-command dependency —
+# works whether the container uses ca-entrypoint.sh or sleep infinity)
+$PODMAN exec "$CA_CONTAINER" bash -c "
+    /usr/bin/systemctl start pki-tomcatd@${CA_INSTANCE}.service 2>/dev/null || \
+    nohup pki-server run ${CA_INSTANCE} > /var/log/pki/${CA_INSTANCE}/catalina.out 2>&1 &
+" 2>/dev/null
 log "Waiting for CA to start (up to 90s)..."
 
 for i in $(seq 1 18); do
@@ -203,6 +226,11 @@ for i in $(seq 1 18); do
     if echo "$CA_STATUS" | grep -q running; then
         ok "CA is running with KRA connector"
         break
+    fi
+    if [ "$i" -eq 45 ] && ! $PODMAN exec "$CA_CONTAINER" bash -c "pgrep -f 'java.*${CA_INSTANCE}'" &>/dev/null; then
+        log "Java not running after 45s — starting via pki-server run"
+        $PODMAN exec "$CA_CONTAINER" bash -c \
+            "nohup pki-server run ${CA_INSTANCE} > /var/log/pki/${CA_INSTANCE}/catalina.out 2>&1 &" 2>/dev/null
     fi
     if [ "$i" -eq 18 ]; then
         err "CA did not start within 90s — check logs: podman logs $CA_CONTAINER"

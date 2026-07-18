@@ -150,7 +150,7 @@ if [ -f "${AGENT_DIR}/agent.pem" ]; then
             --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \
             -U https://$HOST:8443 \
             ca-group-member-add "Certificate Manager Agents" enrollment-agent 2>&1 || echo "May exist"
-    ' 2>&1 | grep -E "Added|EXISTS|exist" | head -3
+    ' 2>&1 | grep -E "Added|EXISTS|exist" | head -3 || true
     ok "Agent registered on IoT CA"
 else
     warn "No agent cert — skipping CA agent registration"

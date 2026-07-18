@@ -162,6 +162,19 @@ $PODMAN exec "$CONTAINER" bash -c "
 
 echo "  Modifications applied"
 
+# Verify critical modifications took effect (seds silently no-op if pattern drifts)
+VERIFY_OUT=$(pki_exec "ca-profile-show $PROFILE_ID --raw" 2>/dev/null)
+VERIFY_FAIL=0
+for check in "1.3.6.1.5.5.7.3.1" "DNSName" "minSize=1" "cracklibCheck=false"; do
+    if ! echo "$VERIFY_OUT" | grep -q "$check"; then
+        echo "  [WARN] Verification failed: '$check' not found in profile"
+        VERIFY_FAIL=1
+    fi
+done
+if [ "$VERIFY_FAIL" -eq 0 ]; then
+    echo "  [OK] Profile modifications verified (EKU=serverAuth, SAN=DNSName, P12=relaxed)"
+fi
+
 # Step 3: Enable
 echo ""
 echo "--- Step 3: Enable profile ---"
