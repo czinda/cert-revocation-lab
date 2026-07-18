@@ -707,24 +707,6 @@ start_pki_hierarchy() {
         sudo bash scripts/pki/init-pki-hierarchy.sh
     fi
 
-    # Wire KRA connector to IoT CA for SSKG (if KRA is running)
-    if container_healthy dogtag-kra 2>/dev/null; then
-        log_info "Configuring KRA connector on IoT CA for SSKG..."
-        if is_running_as_root; then
-            bash scripts/pki/setup-kra-connector.sh --ca dogtag-iot-ca --kra dogtag-kra || log_warn "KRA connector setup incomplete"
-        else
-            sudo bash scripts/pki/setup-kra-connector.sh --ca dogtag-iot-ca --kra dogtag-kra || log_warn "KRA connector setup incomplete"
-        fi
-
-        # Create SSKG profile on IoT CA
-        log_info "Creating SSKG profile on IoT CA..."
-        if is_running_as_root; then
-            bash scripts/pki/create-sskg-profile.sh rsa || log_warn "SSKG profile creation incomplete"
-        else
-            sudo bash scripts/pki/create-sskg-profile.sh rsa || log_warn "SSKG profile creation incomplete"
-        fi
-    fi
-
     # Initialize enrollment backend (Akamu/Kipuka or Dogtag ACME/EST)
     if [ "$ENROLLMENT_BACKEND" = "akamu" ]; then
         log_info "Initializing Akamu ACME + Kipuka EST backend..."
@@ -732,6 +714,15 @@ start_pki_hierarchy() {
             bash scripts/pki/init-akamu-kipuka.sh rsa
         else
             sudo bash scripts/pki/init-akamu-kipuka.sh rsa
+        fi
+
+        # Full enrollment auth setup: agent cert, CA agent registration,
+        # KRA connector, SSKG profile, Kerberos keytabs
+        log_info "Setting up enrollment authentication (agent certs, KRA, keytabs)..."
+        if is_running_as_root; then
+            bash scripts/pki/setup-enrollment-auth.sh rsa || log_warn "Enrollment auth setup incomplete (non-fatal)"
+        else
+            sudo bash scripts/pki/setup-enrollment-auth.sh rsa || log_warn "Enrollment auth setup incomplete (non-fatal)"
         fi
     else
         log_info "Dogtag ACME/EST RA initialization handled by init-pki-hierarchy.sh"
