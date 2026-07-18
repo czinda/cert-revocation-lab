@@ -263,11 +263,13 @@ services:
     volumes:
       - ./configs/akamu/rsa-config.toml:/app/conf/config.toml:ro,z
       - ./data/certs/rsa:/certs:ro,z
+      - ./data/certs/rsa/akamu.keytab:/etc/krb5.keytab:ro,z
       - akamu-rsa-data:/app/data
     extra_hosts:
       - "root-ca.cert-lab.local:172.26.0.12"
       - "intermediate-ca.cert-lab.local:172.26.0.11"
       - "iot-ca.cert-lab.local:172.26.0.13"
+      - "kra.cert-lab.local:172.26.0.23"
       - "akamu-rsa.cert-lab.local:172.26.0.18"
       - "kipuka-rsa.cert-lab.local:172.26.0.20"
       - "ocsp.cert-lab.local:172.26.0.22"
