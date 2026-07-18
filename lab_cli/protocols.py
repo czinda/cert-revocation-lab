@@ -82,34 +82,41 @@ class ProtocolResult:
 # Dynamic endpoint resolution from CA_CONFIGS
 # ---------------------------------------------------------------------------
 
-def _resolve_host(hostname: str, port: int) -> str:
-    """Resolve hostname, falling back to localhost if DNS is unavailable."""
+def _can_resolve(hostname: str) -> bool:
+    """Check if a hostname resolves via DNS."""
     try:
-        socket.getaddrinfo(hostname, port, socket.AF_INET, socket.SOCK_STREAM)
-        return hostname
+        socket.getaddrinfo(hostname, None, socket.AF_INET, socket.SOCK_STREAM)
+        return True
     except socket.gaierror:
-        return "localhost"
+        return False
 
 
 def _build_url(pki_type: PKIType, ca_level: str, suffix: str = "") -> Optional[str]:
-    """Build a URL for a CA from CA_CONFIGS with correct scheme/port handling.
+    """Build a URL for a CA from CA_CONFIGS.
 
-    When http_port is set, uses HTTP (the port serves plaintext). Otherwise
-    uses the scheme from ca.url. This avoids the scheme/port mismatch where
-    HTTPS scheme was paired with an HTTP port.
+    When the container hostname resolves via DNS, uses the container's
+    internal URL (hostname + container port) — this reaches the service
+    directly on its network IP. When DNS is unavailable, falls back to
+    localhost + host_port (the port-mapped path through the host).
+
+    When http_port is set, forces HTTP scheme (for PQ where TLS isn't
+    available on the client side).
     """
     pki = pki_type.value
     if pki not in CA_CONFIGS or ca_level not in CA_CONFIGS[pki]:
         return None
     ca = CA_CONFIGS[pki][ca_level]
+
+    if ca.http_port and _can_resolve(ca.hostname):
+        return f"http://{ca.hostname}:{ca.http_port}{suffix}"
     if ca.http_port:
-        port = ca.http_port
-        scheme = "http"
-    else:
-        port = ca.host_port
-        scheme = "http" if ca.url.startswith("http://") else "https"
-    host = _resolve_host(ca.hostname, port)
-    return f"{scheme}://{host}:{port}{suffix}"
+        return f"http://localhost:{ca.http_port}{suffix}"
+
+    if _can_resolve(ca.hostname):
+        return f"{ca.url}{suffix}"
+
+    scheme = "http" if ca.url.startswith("http://") else "https"
+    return f"{scheme}://localhost:{ca.host_port}{suffix}"
 
 
 def _get_acme_url(pki_type: PKIType) -> Optional[str]:
