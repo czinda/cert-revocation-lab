@@ -58,11 +58,30 @@ pki_cmd() {
     local ctr="$1"
     shift
     podman exec "$ctr" bash -c "
-        PASS_FILE=\$(find /root/.dogtag -name 'password.conf' -path '*/ca/*' 2>/dev/null | head -1)
-        PASS=\$(cat \"\$PASS_FILE\" 2>/dev/null || echo RedHat123)
+        CLIENT_DB=/root/.dogtag/nssdb
         HOST=\$(hostname)
 
-        pki -P http -h \"\$HOST\" -p 8080 -u caadmin -w \"\$PASS\" \
+        # Auto-import admin cert if not present
+        USER_CERTS=\$(certutil -L -d \"\$CLIENT_DB\" 2>/dev/null | grep -c 'u,u,u' || true)
+        if [ \"\$USER_CERTS\" -eq 0 ]; then
+            P12=\$(find /root/.dogtag -name 'ca_admin_cert.p12' 2>/dev/null | head -1)
+            PASS_FILE=\$(find /root/.dogtag -name 'password.conf' -path '*/ca/*' 2>/dev/null | head -1)
+            PASS=\$(cat \"\$PASS_FILE\" 2>/dev/null || echo RedHat123)
+            if [ -n \"\$P12\" ]; then
+                pk12util -i \"\$P12\" -d \"\$CLIENT_DB\" -W \"\$PASS\" -K '' 2>/dev/null || true
+            fi
+        fi
+
+        # Detect admin cert nickname
+        NICKNAME=\$(certutil -L -d \"\$CLIENT_DB\" 2>/dev/null | grep 'u,u,u' | sed 's/\s*u,u,u\s*//' | head -1)
+        if [ -z \"\$NICKNAME\" ]; then
+            NICKNAME='PKI Administrator'
+        fi
+
+        pki -d \"\$CLIENT_DB\" -n \"\$NICKNAME\" \
+            --ignore-cert-status UNTRUSTED_ISSUER \
+            --ignore-cert-status UNKNOWN_ISSUER \
+            -U https://\$HOST:8443 \
             $* 2>&1
     " 2>&1
 }
@@ -174,11 +193,26 @@ ISSUE_OUT=$(podman exec dogtag-iot-ca bash -c "
         -keyout /tmp/test-key.pem -out /tmp/test-csr.pem \
         -subj '/CN=$TEST_CN' 2>/dev/null
 
-    PASS_FILE=\$(find /root/.dogtag -name 'password.conf' -path '*/ca/*' 2>/dev/null | head -1)
-    PASS=\$(cat \"\$PASS_FILE\" 2>/dev/null || echo RedHat123)
+    CLIENT_DB=/root/.dogtag/nssdb
     HOST=\$(hostname)
 
-    pki -P http -h \"\$HOST\" -p 8080 -u caadmin -w \"\$PASS\" \
+    # Ensure admin cert is imported
+    USER_CERTS=\$(certutil -L -d \"\$CLIENT_DB\" 2>/dev/null | grep -c 'u,u,u' || true)
+    if [ \"\$USER_CERTS\" -eq 0 ]; then
+        P12=\$(find /root/.dogtag -name 'ca_admin_cert.p12' 2>/dev/null | head -1)
+        PASS_FILE=\$(find /root/.dogtag -name 'password.conf' -path '*/ca/*' 2>/dev/null | head -1)
+        PASS=\$(cat \"\$PASS_FILE\" 2>/dev/null || echo RedHat123)
+        if [ -n \"\$P12\" ]; then
+            pk12util -i \"\$P12\" -d \"\$CLIENT_DB\" -W \"\$PASS\" -K '' 2>/dev/null || true
+        fi
+    fi
+
+    NICKNAME=\$(certutil -L -d \"\$CLIENT_DB\" 2>/dev/null | grep 'u,u,u' | sed 's/\s*u,u,u\s*//' | head -1)
+
+    pki -d \"\$CLIENT_DB\" -n \"\$NICKNAME\" \
+        --ignore-cert-status UNTRUSTED_ISSUER \
+        --ignore-cert-status UNKNOWN_ISSUER \
+        -U https://\$HOST:8443 \
         ca-cert-request-submit --profile caServerCert \
         --csr-file /tmp/test-csr.pem 2>&1
 " 2>&1)
