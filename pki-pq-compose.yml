@@ -404,7 +404,7 @@ services:
       - RUST_LOG=info
       - HSM_USER_PIN=${HSM_USER_PIN:-1234}
     healthcheck:
-      test: ["CMD-SHELL", "curl -sk https://localhost:9443/.well-known/est/cacerts 2>/dev/null | head -1 | grep -qE 'BEGIN|MII' || exit 1"]
+      test: ["CMD-SHELL", "echo | openssl s_client -connect $(hostname):9443 2>/dev/null | grep -q 'Verify return code' || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 5
