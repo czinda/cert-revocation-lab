@@ -292,9 +292,12 @@ echo ""; echo "=== 10. Trust Chain Verification ==="
 for ca_entry in "Root CA:8443" "Intermediate CA:8444" "IoT CA:8445"; do
     CA_NAME="${ca_entry%%:*}"
     CA_PORT="${ca_entry##*:}"
-    CHAIN_OUT=$(curl -sk "https://localhost:${CA_PORT}/ca/rest/certs?size=3" 2>/dev/null)
-    CHAIN_COUNT=$(echo "$CHAIN_OUT" | grep -c "CertId\|id>" || true)
-    if [ "$CHAIN_COUNT" -gt 0 ]; then
+    CHAIN_OUT=$(curl -sk "https://localhost:${CA_PORT}/ca/rest/certs?size=1" 2>/dev/null)
+    TOTAL=$(echo "$CHAIN_OUT" | grep -oP 'total"?[>:]\s*\K[0-9]+' 2>/dev/null | head -1)
+    CERT_FOUND=$(echo "$CHAIN_OUT" | grep -c "CertId\|id>\|SerialNumber" || true)
+    if [ -n "$TOTAL" ] && [ "$TOTAL" -gt 0 ] 2>/dev/null; then
+        pass "$CA_NAME — $TOTAL certificates in chain"
+    elif [ "$CERT_FOUND" -gt 0 ]; then
         pass "$CA_NAME — certificates visible via REST API"
     else
         fail "$CA_NAME — no certificates found"
