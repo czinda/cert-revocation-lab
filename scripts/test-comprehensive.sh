@@ -289,14 +289,17 @@ fi
 
 # ── 10. Trust Chain Verification ──
 echo ""; echo "=== 10. Trust Chain Verification ==="
-CHAIN_OUT=$(pki_cmd dogtag-iot-ca ca-cert-find --maxResults 10)
-CHAIN_COUNT=$(echo "$CHAIN_OUT" | grep -c "Serial Number:" || true)
-if [ "$CHAIN_COUNT" -gt 0 ]; then
-    pass "IoT CA has $CHAIN_COUNT certificates"
-    echo "$CHAIN_OUT" | grep -E "Serial Number:|Subject DN:|Status:" | head -12 | sed 's/^/    /'
-else
-    fail "No certificates found in IoT CA"
-fi
+for ca_entry in "Root CA:8443" "Intermediate CA:8444" "IoT CA:8445"; do
+    CA_NAME="${ca_entry%%:*}"
+    CA_PORT="${ca_entry##*:}"
+    CHAIN_OUT=$(curl -sk "https://localhost:${CA_PORT}/ca/rest/certs?size=3" 2>/dev/null)
+    CHAIN_COUNT=$(echo "$CHAIN_OUT" | grep -c "CertId\|id>" || true)
+    if [ "$CHAIN_COUNT" -gt 0 ]; then
+        pass "$CA_NAME — certificates visible via REST API"
+    else
+        fail "$CA_NAME — no certificates found"
+    fi
+done
 
 # ── 11. FreeIPA ──
 echo ""; echo "=== 11. FreeIPA ==="
@@ -362,31 +365,18 @@ done
 
 # ── 14. Certificate Inventory ──
 echo ""; echo "=== 14. Certificate Inventory ==="
-for ca_entry in "Root CA:dogtag-root-ca" "Intermediate CA:dogtag-intermediate-ca" "IoT CA:dogtag-iot-ca"; do
+for ca_entry in "Root CA:8443" "Intermediate CA:8444" "IoT CA:8445"; do
     CA_NAME="${ca_entry%%:*}"
-    CA_CTR="${ca_entry##*:}"
-    INV_OUT=$(pki_cmd "$CA_CTR" ca-cert-find --maxResults 1 2>&1)
-    CERT_COUNT=$(echo "$INV_OUT" | grep "Number of entries" | awk '{print $NF}')
-    if [ -n "$CERT_COUNT" ] && [ "$CERT_COUNT" -gt 0 ] 2>/dev/null; then
-        pass "$CA_NAME — $CERT_COUNT certificates"
+    CA_PORT="${ca_entry##*:}"
+    INV_OUT=$(curl -sk "https://localhost:${CA_PORT}/ca/rest/certs?size=1" 2>/dev/null)
+    CERT_FOUND=$(echo "$INV_OUT" | grep -c "CertId\|id>\|SerialNumber" || true)
+    TOTAL=$(echo "$INV_OUT" | grep -oP 'total"?[>:]\s*\K[0-9]+' | head -1)
+    if [ -n "$TOTAL" ] && [ "$TOTAL" -gt 0 ] 2>/dev/null; then
+        pass "$CA_NAME — $TOTAL certificates"
+    elif [ "$CERT_FOUND" -gt 0 ]; then
+        pass "$CA_NAME — certificates found via REST API"
     else
-        # If pki_cmd failed, try REST API directly (no auth needed for info)
-        CA_PORT=""
-        case "$CA_CTR" in
-            dogtag-root-ca) CA_PORT=8443 ;;
-            dogtag-intermediate-ca) CA_PORT=8444 ;;
-            dogtag-iot-ca) CA_PORT=8445 ;;
-        esac
-        if [ -n "$CA_PORT" ]; then
-            REST_COUNT=$(curl -sk "https://localhost:${CA_PORT}/ca/rest/certs?maxResults=1" 2>/dev/null | grep -c "<CertDataInfo>" || true)
-            if [ "$REST_COUNT" -gt 0 ]; then
-                pass "$CA_NAME — responsive (REST API)"
-            else
-                fail "$CA_NAME — could not query inventory"
-            fi
-        else
-            fail "$CA_NAME — could not query inventory"
-        fi
+        fail "$CA_NAME — could not query inventory"
     fi
 done
 
