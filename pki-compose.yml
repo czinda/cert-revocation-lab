@@ -261,10 +261,11 @@ services:
       dogtag-iot-ca:
         condition: service_healthy
     environment:
-      KRB5_CONFIG: /certs/krb5.conf
+      KRB5_CONFIG: /etc/krb5.conf
     volumes:
       - ./configs/akamu/rsa-config.toml:/app/conf/config.toml:ro,z
       - ./data/certs/rsa:/certs:ro,z
+      - ./data/certs/rsa/krb5.conf:/etc/krb5.conf:ro,z
       - akamu-rsa-data:/app/data
     extra_hosts:
       - "root-ca.cert-lab.local:172.26.0.12"
