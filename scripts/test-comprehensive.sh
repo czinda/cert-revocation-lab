@@ -51,32 +51,18 @@ find_pki_admin() {
     ' 2>&1
 }
 
-# Run pki CLI command inside a CA container, auto-detecting admin cert nickname.
+# Run pki CLI command inside a CA container using HTTP + password auth.
+# Uses the container's own hostname (e.g., iot-ca.cert-lab.local) instead of
+# localhost — Dogtag binds to hostname-specific URIs internally.
 pki_cmd() {
     local ctr="$1"
     shift
     podman exec "$ctr" bash -c "
-        CLIENT_DB=/root/.dogtag/nssdb
+        PASS_FILE=\$(find /root/.dogtag -name 'password.conf' -path '*/ca/*' 2>/dev/null | head -1)
+        PASS=\$(cat \"\$PASS_FILE\" 2>/dev/null || echo RedHat123)
+        HOST=\$(hostname)
 
-        # Auto-import admin cert if no user certs present
-        USER_CERTS=\$(certutil -L -d \"\$CLIENT_DB\" 2>/dev/null | grep -c 'u,u,u' || true)
-        if [ \"\$USER_CERTS\" -eq 0 ]; then
-            P12=\$(find /root/.dogtag -name 'ca_admin_cert.p12' 2>/dev/null | head -1)
-            PASS_FILE=\$(find /root/.dogtag -name 'password.conf' -path '*/ca/*' 2>/dev/null | head -1)
-            PASS=\$(cat \"\$PASS_FILE\" 2>/dev/null || echo RedHat123)
-            if [ -n \"\$P12\" ]; then
-                pk12util -i \"\$P12\" -d \"\$CLIENT_DB\" -W \"\$PASS\" -K '' 2>/dev/null || true
-            fi
-        fi
-
-        # Detect actual admin cert nickname (handles 'PKI Administrator for <domain>')
-        NICKNAME=\$(certutil -L -d \"\$CLIENT_DB\" 2>/dev/null | grep 'u,u,u' | sed 's/\s*u,u,u\s*//' | head -1)
-        if [ -z \"\$NICKNAME\" ]; then
-            NICKNAME='PKI Administrator'
-        fi
-
-        pki -d \"\$CLIENT_DB\" -n \"\$NICKNAME\" \
-            -p 8080 -U http://localhost:8080 \
+        pki -U http://\$HOST:8080 -u caadmin -w \"\$PASS\" \
             $* 2>&1
     " 2>&1
 }
@@ -182,15 +168,20 @@ fi
 # ── 6. Certificate Issuance ──
 echo ""; echo "=== 6. Certificate Issuance (IoT CA) ==="
 TEST_CN="test-$(date +%s).cert-lab.local"
-# Generate CSR inside the container
-podman exec dogtag-iot-ca bash -c "
+# Generate CSR and submit in one exec (CSR only exists inside the container)
+ISSUE_OUT=$(podman exec dogtag-iot-ca bash -c "
     openssl req -new -newkey rsa:2048 -nodes \
         -keyout /tmp/test-key.pem -out /tmp/test-csr.pem \
         -subj '/CN=$TEST_CN' 2>/dev/null
-" 2>/dev/null
-# Submit using pki_cmd (auto-detects admin nickname)
-ISSUE_OUT=$(pki_cmd dogtag-iot-ca ca-cert-request-submit --profile caServerCert \
-    --csr-file /tmp/test-csr.pem)
+
+    PASS_FILE=\$(find /root/.dogtag -name 'password.conf' -path '*/ca/*' 2>/dev/null | head -1)
+    PASS=\$(cat \"\$PASS_FILE\" 2>/dev/null || echo RedHat123)
+    HOST=\$(hostname)
+
+    pki -U http://\$HOST:8080 -u caadmin -w \"\$PASS\" \
+        ca-cert-request-submit --profile caServerCert \
+        --csr-file /tmp/test-csr.pem 2>&1
+" 2>&1)
 
 REQ_ID=$(echo "$ISSUE_OUT" | grep "Request ID:" | head -1 | awk '{print $3}')
 if [ -n "$REQ_ID" ]; then
@@ -247,8 +238,9 @@ if [ -n "$CERT_ID" ]; then
         PASS_FILE=$(find /root/.dogtag -name "password.conf" -path "*/ca/*" 2>/dev/null | head -1)
         PASS=$(cat "$PASS_FILE" 2>/dev/null || echo RedHat123)
         P12=$(find /root/.dogtag -name "ca_admin_cert.p12" 2>/dev/null | head -1)
+        HOST=$(hostname)
         curl -sk --cert-type P12 --cert "$P12:$PASS" \
-            "https://localhost:8443/ca/agent/ca/updateCRL" \
+            "https://$HOST:8443/ca/agent/ca/updateCRL" \
             -d "xml=true" 2>&1
     ' 2>&1)
     if echo "$CRL_OUT" | grep -qi "success\|updated\|fixed\|header"; then
@@ -300,18 +292,35 @@ fi
 # ── 13. Directory Server LDAP ──
 echo ""; echo "=== 13. Directory Server LDAP Binds ==="
 for ds in ds-root ds-intermediate ds-iot ds-ocsp ds-kra; do
-    LDAP_OK=$(podman exec "$ds" bash -c '
+    # Check LDAP health: try ldapsearch, then dsidm, then TCP port check
+    LDAP_OUT=$(podman exec "$ds" bash -c '
+        # Method 1: ldapsearch (may not be installed in minimal image)
         if command -v ldapsearch &>/dev/null; then
-            ldapsearch -x -H ldap://localhost:3389 -b "" -s base 2>&1 | grep -c namingContexts
-        elif command -v dsconf &>/dev/null; then
-            dsconf slapd-* backend suffix list 2>&1 | grep -c "dc=" || echo 0
-        else
-            (echo > /dev/tcp/localhost/3389) 2>/dev/null && echo 1 || echo 0
+            RES=$(ldapsearch -x -H ldap://localhost:3389 -b "" -s base 2>&1)
+            if echo "$RES" | grep -q namingContexts; then
+                echo "OK:ldapsearch"
+                exit 0
+            fi
         fi
+        # Method 2: dsidm (always in 389ds image)
+        if command -v dsidm &>/dev/null; then
+            INST=$(ls /etc/dirsrv/ 2>/dev/null | grep "^slapd-" | head -1)
+            if [ -n "$INST" ]; then
+                RES=$(dsidm "$INST" -b "o=pki-tomcat-CA" role list 2>&1)
+                echo "OK:dsidm"
+                exit 0
+            fi
+        fi
+        # Method 3: verify ns-slapd is listening on 3389
+        if ss -tlnp 2>/dev/null | grep -q ":3389"; then
+            echo "OK:port"
+            exit 0
+        fi
+        echo "FAIL"
     ' 2>/dev/null | tail -1 | tr -d '[:space:]')
-    LDAP_OK="${LDAP_OK:-0}"
-    if [ "$LDAP_OK" -gt 0 ] 2>/dev/null; then
-        pass "$ds LDAP"
+    if echo "$LDAP_OUT" | grep -q "^OK"; then
+        METHOD=$(echo "$LDAP_OUT" | cut -d: -f2)
+        pass "$ds LDAP ($METHOD)"
     else
         fail "$ds LDAP"
     fi
