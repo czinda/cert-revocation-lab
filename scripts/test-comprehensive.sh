@@ -19,17 +19,12 @@ fail() { echo "  [FAIL] $1"; FAIL=$((FAIL+1)); }
 skip() { echo "  [SKIP] $1"; SKIP=$((SKIP+1)); }
 info() { echo "  [INFO] $1"; }
 
-# Detect the PKI instance alias directory and admin cert inside a CA container.
-# Dogtag stores certs in /etc/pki/<instance>/alias/ — instance name varies.
+# Import admin cert and detect its nickname inside a CA container.
+# Returns key=value lines: P12, PASS, NICKNAME.
 find_pki_admin() {
     local ctr="$1"
     podman exec "$ctr" bash -c '
-        # Find instance alias directory
-        ALIAS_DIR=$(find /etc/pki -maxdepth 3 -name "cert9.db" -path "*/alias/*" 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
-        if [ -z "$ALIAS_DIR" ]; then
-            echo "ERROR: no NSS DB found"
-            exit 1
-        fi
+        CLIENT_DB="/root/.dogtag/nssdb"
 
         # Find admin cert P12 file
         P12=$(find /root/.dogtag -name "ca_admin_cert.p12" 2>/dev/null | head -1)
@@ -39,37 +34,33 @@ find_pki_admin() {
 
         # Get password
         PASS_FILE=$(find /root/.dogtag -name "password.conf" -path "*/ca/*" 2>/dev/null | head -1)
-        PASS=""
-        if [ -n "$PASS_FILE" ]; then
-            PASS=$(cat "$PASS_FILE" 2>/dev/null)
-        fi
-        if [ -z "$PASS" ]; then
-            PASS="RedHat123"
-        fi
+        PASS=$(cat "$PASS_FILE" 2>/dev/null || echo RedHat123)
 
-        # Import admin cert to client NSS DB if not already there
-        CLIENT_DB="/root/.dogtag/nssdb"
-        HAS_ADMIN=$(certutil -L -d "$CLIENT_DB" 2>/dev/null | grep -c "PKI Administrator" || true)
-        if [ "$HAS_ADMIN" -eq 0 ] && [ -n "$P12" ]; then
+        # Import admin cert if no user certs in NSS DB
+        USER_CERTS=$(certutil -L -d "$CLIENT_DB" 2>/dev/null | grep "u,u,u" | wc -l)
+        if [ "$USER_CERTS" -eq 0 ] && [ -n "$P12" ]; then
             pk12util -i "$P12" -d "$CLIENT_DB" -W "$PASS" -K "" 2>/dev/null || true
         fi
 
-        echo "ALIAS_DIR=$ALIAS_DIR"
+        # Detect the actual nickname (may be "PKI Administrator for <domain>")
+        NICKNAME=$(certutil -L -d "$CLIENT_DB" 2>/dev/null | grep "u,u,u" | sed "s/\s*u,u,u\s*//" | head -1)
+
         echo "P12=$P12"
         echo "PASS=$PASS"
+        echo "NICKNAME=$NICKNAME"
     ' 2>&1
 }
 
-# Run pki CLI command inside a CA container, ensuring admin cert is available.
+# Run pki CLI command inside a CA container, auto-detecting admin cert nickname.
 pki_cmd() {
     local ctr="$1"
     shift
     podman exec "$ctr" bash -c "
         CLIENT_DB=/root/.dogtag/nssdb
 
-        # Auto-import admin cert if missing
-        HAS_ADMIN=\$(certutil -L -d \"\$CLIENT_DB\" 2>/dev/null | grep -c 'PKI Administrator' || true)
-        if [ \"\$HAS_ADMIN\" -eq 0 ]; then
+        # Auto-import admin cert if no user certs present
+        USER_CERTS=\$(certutil -L -d \"\$CLIENT_DB\" 2>/dev/null | grep -c 'u,u,u' || true)
+        if [ \"\$USER_CERTS\" -eq 0 ]; then
             P12=\$(find /root/.dogtag -name 'ca_admin_cert.p12' 2>/dev/null | head -1)
             PASS_FILE=\$(find /root/.dogtag -name 'password.conf' -path '*/ca/*' 2>/dev/null | head -1)
             PASS=\$(cat \"\$PASS_FILE\" 2>/dev/null || echo RedHat123)
@@ -78,7 +69,13 @@ pki_cmd() {
             fi
         fi
 
-        pki -d \"\$CLIENT_DB\" -n 'PKI Administrator' \
+        # Detect actual admin cert nickname (handles 'PKI Administrator for <domain>')
+        NICKNAME=\$(certutil -L -d \"\$CLIENT_DB\" 2>/dev/null | grep 'u,u,u' | sed 's/\s*u,u,u\s*//' | head -1)
+        if [ -z \"\$NICKNAME\" ]; then
+            NICKNAME='PKI Administrator'
+        fi
+
+        pki -d \"\$CLIENT_DB\" -n \"\$NICKNAME\" \
             -p 8080 -U http://localhost:8080 \
             $* 2>&1
     " 2>&1
@@ -174,10 +171,10 @@ else
     echo "$ADMIN_SETUP" | sed 's/^/    /'
 fi
 
-# Verify admin cert is now in NSS DB
-ADMIN_VERIFY=$(podman exec dogtag-iot-ca bash -c 'certutil -L -d /root/.dogtag/nssdb 2>/dev/null | grep -c "PKI Administrator"' 2>/dev/null || echo "0")
-if [ "$ADMIN_VERIFY" -gt 0 ]; then
-    pass "Admin cert imported to client NSS DB"
+# Verify admin cert is now in NSS DB and extract nickname
+ADMIN_NICKNAME=$(echo "$ADMIN_SETUP" | grep "^NICKNAME=" | cut -d= -f2-)
+if [ -n "$ADMIN_NICKNAME" ]; then
+    pass "Admin cert nickname: $ADMIN_NICKNAME"
 else
     fail "Admin cert not in client NSS DB — cert lifecycle tests will fail"
 fi
@@ -185,25 +182,15 @@ fi
 # ── 6. Certificate Issuance ──
 echo ""; echo "=== 6. Certificate Issuance (IoT CA) ==="
 TEST_CN="test-$(date +%s).cert-lab.local"
-ISSUE_OUT=$(podman exec dogtag-iot-ca bash -c "
+# Generate CSR inside the container
+podman exec dogtag-iot-ca bash -c "
     openssl req -new -newkey rsa:2048 -nodes \
         -keyout /tmp/test-key.pem -out /tmp/test-csr.pem \
         -subj '/CN=$TEST_CN' 2>/dev/null
-
-    # Ensure admin cert is imported
-    P12=\$(find /root/.dogtag -name 'ca_admin_cert.p12' 2>/dev/null | head -1)
-    PASS_FILE=\$(find /root/.dogtag -name 'password.conf' -path '*/ca/*' 2>/dev/null | head -1)
-    PASS=\$(cat \"\$PASS_FILE\" 2>/dev/null || echo RedHat123)
-    HAS_ADMIN=\$(certutil -L -d /root/.dogtag/nssdb 2>/dev/null | grep -c 'PKI Administrator' || true)
-    if [ \"\$HAS_ADMIN\" -eq 0 ] && [ -n \"\$P12\" ]; then
-        pk12util -i \"\$P12\" -d /root/.dogtag/nssdb -W \"\$PASS\" -K '' 2>/dev/null || true
-    fi
-
-    pki -d /root/.dogtag/nssdb -n 'PKI Administrator' \
-        -p 8080 -U http://localhost:8080 \
-        ca-cert-request-submit --profile caServerCert \
-        --csr-file /tmp/test-csr.pem 2>&1
-" 2>&1)
+" 2>/dev/null
+# Submit using pki_cmd (auto-detects admin nickname)
+ISSUE_OUT=$(pki_cmd dogtag-iot-ca ca-cert-request-submit --profile caServerCert \
+    --csr-file /tmp/test-csr.pem)
 
 REQ_ID=$(echo "$ISSUE_OUT" | grep "Request ID:" | head -1 | awk '{print $3}')
 if [ -n "$REQ_ID" ]; then
@@ -256,14 +243,14 @@ fi
 # ── 9. CRL Update ──
 echo ""; echo "=== 9. CRL Update (IoT CA) ==="
 if [ -n "$CERT_ID" ]; then
-    CRL_OUT=$(podman exec dogtag-iot-ca bash -c "
-        PASS_FILE=\$(find /root/.dogtag -name 'password.conf' -path '*/ca/*' 2>/dev/null | head -1)
-        PASS=\$(cat \"\$PASS_FILE\" 2>/dev/null || echo RedHat123)
-        P12=\$(find /root/.dogtag -name 'ca_admin_cert.p12' 2>/dev/null | head -1)
-        curl -sk --cert-type P12 --cert \"\$P12:\$PASS\" \
-            'https://localhost:8443/ca/agent/ca/updateCRL' \
-            -d 'xml=true' 2>&1
-    " 2>&1)
+    CRL_OUT=$(podman exec dogtag-iot-ca bash -c '
+        PASS_FILE=$(find /root/.dogtag -name "password.conf" -path "*/ca/*" 2>/dev/null | head -1)
+        PASS=$(cat "$PASS_FILE" 2>/dev/null || echo RedHat123)
+        P12=$(find /root/.dogtag -name "ca_admin_cert.p12" 2>/dev/null | head -1)
+        curl -sk --cert-type P12 --cert "$P12:$PASS" \
+            "https://localhost:8443/ca/agent/ca/updateCRL" \
+            -d "xml=true" 2>&1
+    ' 2>&1)
     if echo "$CRL_OUT" | grep -qi "success\|updated\|fixed\|header"; then
         pass "CRL update triggered"
     else
@@ -313,18 +300,17 @@ fi
 # ── 13. Directory Server LDAP ──
 echo ""; echo "=== 13. Directory Server LDAP Binds ==="
 for ds in ds-root ds-intermediate ds-iot ds-ocsp ds-kra; do
-    # Try ldapsearch first; if not available, use dsconf or simple TCP check
     LDAP_OK=$(podman exec "$ds" bash -c '
         if command -v ldapsearch &>/dev/null; then
             ldapsearch -x -H ldap://localhost:3389 -b "" -s base 2>&1 | grep -c namingContexts
         elif command -v dsconf &>/dev/null; then
             dsconf slapd-* backend suffix list 2>&1 | grep -c "dc=" || echo 0
         else
-            # Fallback: just check if port 3389 is listening
             (echo > /dev/tcp/localhost/3389) 2>/dev/null && echo 1 || echo 0
         fi
-    ' 2>/dev/null || echo "0")
-    if [ "$LDAP_OK" -gt 0 ]; then
+    ' 2>/dev/null | tail -1 | tr -d '[:space:]')
+    LDAP_OK="${LDAP_OK:-0}"
+    if [ "$LDAP_OK" -gt 0 ] 2>/dev/null; then
         pass "$ds LDAP"
     else
         fail "$ds LDAP"
@@ -368,8 +354,9 @@ if [ "$AWX_STATUS" = "running" ]; then
         pass "AWX API (port 8084) — HTTP $AWX_HTTP"
     else
         # AWX-EE may be a mock (sleep infinity) — check if it has a real process
-        AWX_PROC=$(podman exec awx-web bash -c 'ps aux 2>/dev/null | grep -cE "uwsgi|gunicorn|nginx|supervisord" || echo 0' 2>/dev/null)
-        if [ "${AWX_PROC:-0}" -gt 0 ]; then
+        AWX_PROC=$(podman exec awx-web bash -c 'ps aux 2>/dev/null | grep -cE "uwsgi|gunicorn|nginx|supervisord" || echo 0' 2>/dev/null | tail -1 | tr -d '[:space:]')
+        AWX_PROC="${AWX_PROC:-0}"
+        if [ "$AWX_PROC" -gt 0 ] 2>/dev/null; then
             fail "AWX API (port 8084) — HTTP $AWX_HTTP (process running but not responding)"
         else
             skip "AWX container running but no web server inside (mock/placeholder)"
