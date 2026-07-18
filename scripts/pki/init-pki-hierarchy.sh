@@ -521,6 +521,11 @@ init_intermediate_ca() {
     sign_csr "$ROOT_CONTAINER" "/certs/intermediate-ca.csr" "/certs/intermediate-ca-signed.crt" \
         "$ROOT_URL" "caCACert"
 
+    # Normalize: the init script expects the unsuffixed name
+    $PODMAN exec "$INTERMEDIATE_CONTAINER" bash -c \
+        'cp /certs/intermediate-ca-signed.crt /certs/intermediate-ca.crt' 2>/dev/null
+    [ -f data/certs/intermediate-ca.crt ] || cp data/certs/intermediate-ca-signed.crt data/certs/intermediate-ca.crt 2>/dev/null
+
     # Phase 2: Install signed certificate
     log_info "Running Intermediate CA initialization (Phase 2: certificate installation)..."
     $PODMAN exec "$INTERMEDIATE_CONTAINER" /scripts/init-${SCRIPT_PREFIX}intermediate-ca.sh || {
@@ -590,6 +595,11 @@ init_iot_ca() {
     # Sign the CA CSR with Intermediate CA
     sign_csr "$INTERMEDIATE_CONTAINER" "/certs/iot-ca.csr" "/certs/iot-ca-signed.crt" \
         "$INTERMEDIATE_URL" "caCACert"
+
+    # Normalize: the init script expects the unsuffixed name
+    $PODMAN exec "$IOT_CONTAINER" bash -c \
+        'cp /certs/iot-ca-signed.crt /certs/iot-ca.crt' 2>/dev/null
+    [ -f data/certs/iot-ca.crt ] || cp data/certs/iot-ca-signed.crt data/certs/iot-ca.crt 2>/dev/null
 
     # Phase 2: Install signed certificate
     log_info "Running IoT CA initialization (Phase 2: certificate installation)..."
