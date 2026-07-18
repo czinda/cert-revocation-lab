@@ -347,6 +347,30 @@ check_initialized() {
 
     log_info "PKI instance exists: $instance (server.xml present)"
 
+    # Instance exists, but if the cert file was lost (e.g., bind mount recreated
+    # after compose down), we need Phase 2 to re-export/install it.
+    if [ -n "$cert_file" ] && [ ! -f "$cert_file" ]; then
+        log_warn "Certificate not found: $cert_file"
+
+        # Try to re-export from the instance's NSS DB
+        local alias_dir="/etc/pki/${instance}/alias"
+        local signing_nick
+        signing_nick=$(certutil -L -d "$alias_dir" 2>/dev/null | grep -i "caSigningCert\|signing" | sed 's/\s*[A-Za-z,]*$//' | head -1)
+        if [ -n "$signing_nick" ]; then
+            certutil -L -d "$alias_dir" -n "$signing_nick" -a > "$cert_file" 2>/dev/null
+            if [ -f "$cert_file" ] && grep -q "BEGIN CERTIFICATE" "$cert_file"; then
+                log_info "Re-exported certificate from NSS DB: $cert_file"
+            else
+                rm -f "$cert_file"
+                log_warn "Could not re-export cert — Phase 2 will re-run"
+                return 1
+            fi
+        else
+            log_warn "No signing cert in NSS DB — Phase 2 will re-run"
+            return 1
+        fi
+    fi
+
     if pki-server status "$instance" 2>/dev/null | grep -q "running"; then
         log_info "Instance $instance is already running"
         return 0
