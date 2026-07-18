@@ -20,11 +20,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAB_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Source .env for IP overrides
+# Source .env for IP overrides (grep only IP_* and LAB_* vars to avoid
+# parsing issues with unquoted values containing special characters)
 if [ -f "$LAB_DIR/.env" ]; then
-    set -a
-    source "$LAB_DIR/.env"
-    set +a
+    while IFS='=' read -r key value; do
+        [[ "$key" =~ ^(IP_|LAB_SUBNET|LAB_GATEWAY) ]] && export "$key=$value"
+    done < <(grep -E '^(IP_|LAB_SUBNET|LAB_GATEWAY)=' "$LAB_DIR/.env")
 fi
 
 TECHNITIUM_URL="${TECHNITIUM_URL:-http://localhost:5380}"
