@@ -31,6 +31,7 @@ if [ -z "$INIT_SCRIPT" ]; then
         *pq-iot*|*pq-ca*) PKI_TYPE=pq; INIT_SCRIPT=/scripts/init-pq-iot-ca.sh ;;
         *pq-ocsp*)       PKI_TYPE=pq;  INIT_SCRIPT=/scripts/init-ocsp.sh ;;
         *pq-kra*)        PKI_TYPE=pq;  INIT_SCRIPT=/scripts/init-kra.sh ;;
+        *pq-ops*)        PKI_TYPE=pq;  INIT_SCRIPT=/scripts/init-ops-ca.sh ;;
         *ecc-root*)      PKI_TYPE=ecc; INIT_SCRIPT=/scripts/init-ecc-root-ca.sh ;;
         *ecc-intermediate*) PKI_TYPE=ecc; INIT_SCRIPT=/scripts/init-ecc-intermediate-ca.sh ;;
         *ecc-iot-kra*)   PKI_TYPE=ecc; INIT_SCRIPT=/scripts/init-iot-kra.sh ;;

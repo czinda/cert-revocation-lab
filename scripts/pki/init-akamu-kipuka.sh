@@ -274,7 +274,7 @@ provision_cert() {
 
 # --- Export IoT Sub-CA signing cert for trust configuration ---
 export_intermediate_ca_cert() {
-    local ca_cert_file="${CERTS_DIR}/intermediate-ca.crt"
+    local ca_cert_file="${CERTS_DIR}/issuing-ca.crt"
 
     if [ -f "$ca_cert_file" ]; then
         log_info "IoT Sub-CA cert already exported: ${ca_cert_file}"
@@ -283,12 +283,12 @@ export_intermediate_ca_cert() {
 
     log_info "Exporting IoT Sub-CA signing cert..."
     sudo podman exec "$ISSUING_CA_CONTAINER" bash -c \
-        "pki-server cert-export ca_signing --cert-file /tmp/intermediate-signing.crt -i ${ISSUING_CA_INSTANCE}" \
+        "pki-server cert-export ca_signing --cert-file /tmp/issuing-signing.crt -i ${ISSUING_CA_INSTANCE}" \
         >/dev/null 2>&1 || true
 
-    if sudo podman exec "$ISSUING_CA_CONTAINER" test -f /tmp/intermediate-signing.crt 2>/dev/null; then
-        sudo podman cp "${ISSUING_CA_CONTAINER}:/tmp/intermediate-signing.crt" "$ca_cert_file"
-        sudo podman exec "$ISSUING_CA_CONTAINER" rm -f /tmp/intermediate-signing.crt 2>/dev/null || true
+    if sudo podman exec "$ISSUING_CA_CONTAINER" test -f /tmp/issuing-signing.crt 2>/dev/null; then
+        sudo podman cp "${ISSUING_CA_CONTAINER}:/tmp/issuing-signing.crt" "$ca_cert_file"
+        sudo podman exec "$ISSUING_CA_CONTAINER" rm -f /tmp/issuing-signing.crt 2>/dev/null || true
         log_info "IoT Sub-CA cert saved: ${ca_cert_file}"
     else
         log_warn "Could not export IoT Sub-CA signing cert (non-fatal)"

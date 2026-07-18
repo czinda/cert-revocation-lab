@@ -142,7 +142,6 @@ podman create --name akamu-pq \
   quay.io/czinda/akamu:latest
 
 # Fix volume ownership
-local akamu_vol
 akamu_vol=$(podman volume inspect akamu-pq-data --format '{{.Mountpoint}}' 2>/dev/null \
          || podman volume inspect cert-revocation-lab_akamu-pq-data --format '{{.Mountpoint}}' 2>/dev/null)
 if [ -n "$akamu_vol" ]; then

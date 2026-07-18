@@ -127,7 +127,7 @@ services:
         ipv4_address: 172.27.0.12
     ports:
       - "8453:8443"
-      - "8490:8080"
+      - "8500:8080"
     command: ["/bin/bash", "/scripts/ca-entrypoint.sh"]
     stop_grace_period: 30s
     healthcheck:
@@ -187,7 +187,7 @@ services:
         ipv4_address: 172.27.0.11
     ports:
       - "8454:8443"
-      - "8484:8080"
+      - "8501:8080"
     command: ["/bin/bash", "/scripts/ca-entrypoint.sh"]
     stop_grace_period: 30s
     healthcheck:
@@ -247,7 +247,7 @@ services:
         ipv4_address: 172.27.0.13
     ports:
       - "8455:8443"
-      - "8485:8080"
+      - "8502:8080"
     command: ["/bin/bash", "/scripts/ca-entrypoint.sh"]
     stop_grace_period: 30s
     healthcheck:
@@ -259,7 +259,7 @@ services:
 
   # ── Enrollment Backend: Akamu + Kipuka (--profile akamu) ──────────────────
   # Activate with: ENROLLMENT_BACKEND=akamu (default)
-  # Rust-based ACME CA + EST server, delegating to Dogtag PQ Intermediate CA.
+  # Rust-based ACME CA + EST server, delegating to Dogtag PQ IoT Sub-CA.
 
   # ── DNS for ACME HTTP-01 validation ────────────────────────────────────────
   # Resolves *.cert-lab.local to the host gateway (172.27.0.1) so akamu can
@@ -327,7 +327,7 @@ services:
     container_name: akamu-pq
     hostname: akamu-pq.${LAB_DOMAIN:-cert-lab.local}
     depends_on:
-      dogtag-pq-intermediate-ca:
+      dogtag-pq-iot-ca:
         condition: service_healthy
     volumes:
       - ./configs/akamu/pq-config.toml:/app/conf/config.toml:ro,z
@@ -353,7 +353,7 @@ services:
         ipv4_address: 172.27.0.18
     ports:
       - "8459:8443"
-      - "8486:8080"
+      - "8503:8080"
     user: "1001:1001"
     read_only: true
     stop_grace_period: 30s
@@ -376,7 +376,7 @@ services:
     container_name: kipuka-pq
     hostname: kipuka-pq.${LAB_DOMAIN:-cert-lab.local}
     depends_on:
-      dogtag-pq-intermediate-ca:
+      dogtag-pq-iot-ca:
         condition: service_healthy
     volumes:
       - ./configs/kipuka/pq-config.toml:/etc/kipuka/kipuka.toml:ro
@@ -443,7 +443,7 @@ services:
         ipv4_address: 172.27.0.18
     ports:
       - "8456:8443"
-      - "8486:8080"
+      - "8503:8080"
     command: ["/bin/bash", "/scripts/ca-entrypoint.sh"]
     stop_grace_period: 30s
     healthcheck:
@@ -519,7 +519,7 @@ services:
         ipv4_address: 172.27.0.22
     ports:
       - "8457:8443"
-      - "8492:8080"
+      - "8505:8080"
     command: ["/bin/bash", "/scripts/ca-entrypoint.sh"]
     stop_grace_period: 30s
     healthcheck:
@@ -590,7 +590,7 @@ services:
         ipv4_address: 172.27.0.23
     ports:
       - "8458:8443"
-      - "8493:8080"
+      - "8506:8080"
     command: ["/bin/bash", "/scripts/ca-entrypoint.sh"]
     stop_grace_period: 30s
     healthcheck:
@@ -660,13 +660,13 @@ services:
       - "ds-pq-ops.cert-lab.local:172.27.0.26"
       - "pq-root-ca.cert-lab.local:172.27.0.12"
       - "pq-intermediate-ca.cert-lab.local:172.27.0.11"
-      - "pq-ops-ca.cert-lab.local:172.27.0.26"
+      - "pq-ops-ca.cert-lab.local:172.27.0.27"
     networks:
       pki-pq-net:
-        ipv4_address: 172.27.0.26
+        ipv4_address: 172.27.0.27
     ports:
       - "8460:8443"
-      - "8494:8080"
+      - "8507:8080"
     command: ["/bin/bash", "/scripts/ca-entrypoint.sh"]
     stop_grace_period: 30s
     healthcheck:

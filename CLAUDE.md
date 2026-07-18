@@ -306,7 +306,7 @@ The lab supports two enrollment backends, controlled by `ENROLLMENT_BACKEND` (de
 
 | Backend | ACME Server | EST Server | Coverage | Notes |
 |---------|------------|------------|----------|-------|
-| **akamu** (default) | Akamu (Go) | Kipuka (Rust) | All 3 PKI types get both ACME + EST | RA mode — delegates to Dogtag IoT Sub-CA |
+| **akamu** (default) | Akamu (Rust) | Kipuka (Rust) | All 3 PKI types get both ACME + EST | RA mode — delegates to Dogtag IoT Sub-CA |
 | **dogtag** (legacy) | Dogtag RA | Dogtag RA | RSA-only ACME; EST for all types | `pki-server create` instances |
 
 **Enrollment RA port table:**

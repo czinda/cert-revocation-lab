@@ -325,25 +325,27 @@ wait_for_ca() {
 
 # Check if CA instance is already initialized
 # Usage: check_initialized <instance_name> <cert_file>
-# Returns 0 if the PKI instance has a valid CS.cfg (not just a cert file).
+# Returns 0 if the PKI instance has a valid server.xml (not just a cert file).
+# Dogtag 11 moved CS.cfg to conf/<subsystem>/CS.cfg — use server.xml
+# (always at conf/server.xml) as the instance detection signal.
 check_initialized() {
     local instance="${1:?Instance name required}"
     local cert_file="${2:-}"
     local instance_dir="/var/lib/pki/${instance}"
-    local cs_cfg="${instance_dir}/conf/CS.cfg"
+    local server_xml="${instance_dir}/conf/server.xml"
 
-    # Check for the actual PKI instance (CS.cfg), not just the cert file.
+    # Check for the actual PKI instance (server.xml), not just the cert file.
     # The cert may exist on a shared volume while the instance volume is empty
     # (e.g., after container recreation with a new anonymous volume).
-    if [ ! -f "$cs_cfg" ]; then
+    if [ ! -f "$server_xml" ]; then
         if [ -n "$cert_file" ] && [ -f "$cert_file" ]; then
-            log_warn "Certificate exists ($cert_file) but PKI instance missing ($cs_cfg)"
+            log_warn "Certificate exists ($cert_file) but PKI instance missing ($server_xml)"
             log_warn "Instance volume may have been lost — will re-initialize"
         fi
         return 1
     fi
 
-    log_info "PKI instance exists: $instance (CS.cfg present)"
+    log_info "PKI instance exists: $instance (server.xml present)"
 
     if pki-server status "$instance" 2>/dev/null | grep -q "running"; then
         log_info "Instance $instance is already running"
@@ -826,7 +828,7 @@ patch_profile_auto_approve() {
     local container="${1:?container required}"
     local instance="${2:?instance required}"
     shift 2
-    local profiles=("${@:-caServerCert caECServerCert}")
+    local profiles=("$@")
     if [ ${#profiles[@]} -eq 0 ]; then
         profiles=(caServerCert caECServerCert)
     fi

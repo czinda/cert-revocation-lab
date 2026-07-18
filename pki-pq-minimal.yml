@@ -53,7 +53,7 @@ services:
       retries: 10
 
   dogtag-pq-ca:
-    image: ${PKI_IMAGE:-quay.io/czinda/dogtag-pki-main:latest}
+    image: ${PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
     container_name: dogtag-pq-ca
     hostname: pq-ca.cert-lab.local
     privileged: true
@@ -87,7 +87,7 @@ services:
         ipv4_address: 172.27.0.12
     ports:
       - "8453:8443"
-      - "8490:8080"
+      - "8500:8080"
     command: ["/bin/bash", "-c", "sleep infinity"]
     healthcheck:
       test: ["CMD-SHELL", "curl -sk https://localhost:8443/ca/admin/ca/getStatus 2>/dev/null | grep -q running || exit 1"]
@@ -97,7 +97,7 @@ services:
       start_period: 120s
 
   dogtag-pq-kra:
-    image: ${PKI_IMAGE:-quay.io/czinda/dogtag-pki-main:latest}
+    image: ${PKI_IMAGE:-quay.io/dogtagpki/pki-ca:latest}
     container_name: dogtag-pq-kra
     hostname: pq-kra.cert-lab.local
     privileged: true
@@ -133,7 +133,7 @@ services:
         ipv4_address: 172.27.0.23
     ports:
       - "8458:8443"
-      - "8493:8080"
+      - "8506:8080"
     command: ["/bin/bash", "-c", "sleep infinity"]
     healthcheck:
       test: ["CMD-SHELL", "curl -sk https://localhost:8443/kra/admin/kra/getStatus 2>/dev/null | grep -q running || exit 1"]

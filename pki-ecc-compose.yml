@@ -121,7 +121,7 @@ services:
         ipv4_address: 172.28.0.12
     ports:
       - "8463:8443"
-      - "8493:8080"
+      - "8510:8080"
     command: ["/bin/bash", "/scripts/ca-entrypoint.sh"]
     stop_grace_period: 30s
     healthcheck:
@@ -179,7 +179,7 @@ services:
         ipv4_address: 172.28.0.11
     ports:
       - "8464:8443"
-      - "8494:8080"
+      - "8511:8080"
     command: ["/bin/bash", "/scripts/ca-entrypoint.sh"]
     stop_grace_period: 30s
     healthcheck:
@@ -237,7 +237,7 @@ services:
         ipv4_address: 172.28.0.13
     ports:
       - "8465:8443"
-      - "8495:8080"
+      - "8512:8080"
     command: ["/bin/bash", "/scripts/ca-entrypoint.sh"]
     stop_grace_period: 30s
     healthcheck:
@@ -249,7 +249,7 @@ services:
 
   # ── Enrollment Backend: Akamu + Kipuka (--profile akamu) ──────────────────
   # Activate with: ENROLLMENT_BACKEND=akamu (default)
-  # Rust-based ACME CA + EST server, delegating to Dogtag ECC Intermediate CA.
+  # Rust-based ACME CA + EST server, delegating to Dogtag ECC IoT Sub-CA.
 
   akamu-ecc:
     profiles: [akamu]
@@ -257,7 +257,7 @@ services:
     container_name: akamu-ecc
     hostname: akamu-ecc.${LAB_DOMAIN:-cert-lab.local}
     depends_on:
-      dogtag-ecc-intermediate-ca:
+      dogtag-ecc-iot-ca:
         condition: service_healthy
     volumes:
       - ./configs/akamu/ecc-config.toml:/app/conf/config.toml:ro,z
@@ -275,7 +275,7 @@ services:
         ipv4_address: 172.28.0.18
     ports:
       - "8469:8443"
-      - "8496:8080"
+      - "8513:8080"
     user: "1001:1001"
     read_only: true
     tmpfs:
@@ -297,7 +297,7 @@ services:
     container_name: kipuka-ecc
     hostname: kipuka-ecc.${LAB_DOMAIN:-cert-lab.local}
     depends_on:
-      dogtag-ecc-intermediate-ca:
+      dogtag-ecc-iot-ca:
         condition: service_healthy
     volumes:
       - ./configs/kipuka/ecc-config.toml:/etc/kipuka/kipuka.toml:ro
@@ -357,7 +357,7 @@ services:
         ipv4_address: 172.28.0.18
     ports:
       - "8466:8443"
-      - "8496:8080"
+      - "8513:8080"
     command: ["/bin/bash", "/scripts/ca-entrypoint.sh"]
     stop_grace_period: 30s
     healthcheck:
@@ -429,7 +429,7 @@ services:
         ipv4_address: 172.28.0.22
     ports:
       - "8467:8443"
-      - "8497:8080"
+      - "8515:8080"
     command: ["/bin/bash", "/scripts/ca-entrypoint.sh"]
     stop_grace_period: 30s
     healthcheck:
@@ -496,7 +496,7 @@ services:
         ipv4_address: 172.28.0.23
     ports:
       - "8468:8443"
-      - "8498:8080"
+      - "8516:8080"
     command: ["/bin/bash", "/scripts/ca-entrypoint.sh"]
     stop_grace_period: 30s
     healthcheck:

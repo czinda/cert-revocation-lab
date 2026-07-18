@@ -83,13 +83,11 @@ EXTRA_HOSTS=(
     --add-host "pq-root-ca.cert-lab.local:172.27.0.12"
     --add-host "pq-ca.cert-lab.local:172.27.0.12"
     --add-host "pq-intermediate-ca.cert-lab.local:172.27.0.11"
-    --add-host "pq-iot-ca.cert-lab.local:172.27.0.12"
+    --add-host "pq-iot-ca.cert-lab.local:172.27.0.13"
     --add-host "akamu-pq.cert-lab.local:172.27.0.18"
     --add-host "kipuka-pq.cert-lab.local:172.27.0.19"
     --add-host "pq-ocsp.cert-lab.local:172.27.0.22"
     --add-host "pq-kra.cert-lab.local:172.27.0.23"
-    --add-host "stunnel-pq-proxy.cert-lab.local:172.27.0.20"
-    --add-host "media.cert-lab.local:172.27.0.1"
 )
 
 # Create akamu-pq

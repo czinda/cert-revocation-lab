@@ -232,7 +232,7 @@ services:
 
   # ── Enrollment Backend: Akamu + Kipuka (--profile akamu) ──────────────────
   # Activate with: ENROLLMENT_BACKEND=akamu (default)
-  # Rust-based ACME CA + EST server, delegating to Dogtag Intermediate CA.
+  # Rust-based ACME CA + EST server, delegating to Dogtag IoT Sub-CA.
 
   # DNS for ACME HTTP-01 validation — resolves *.cert-lab.local to the
   # pki-net gateway (172.26.0.1 = host) so akamu can reach the HTTP-01
@@ -256,8 +256,9 @@ services:
     image: ${AKAMU_IMAGE:-quay.io/czinda/akamu:latest}
     container_name: akamu-rsa
     hostname: akamu-rsa.${LAB_DOMAIN:-cert-lab.local}
+    dns: 172.26.0.2
     depends_on:
-      dogtag-intermediate-ca:
+      dogtag-iot-ca:
         condition: service_healthy
     volumes:
       - ./configs/akamu/rsa-config.toml:/app/conf/config.toml:ro,z
@@ -275,7 +276,7 @@ services:
         ipv4_address: 172.26.0.18
     ports:
       - "8446:8443"
-      - "8483:8483"
+      - "8483:8080"
     user: "1001:1001"
     read_only: true
     tmpfs:
@@ -296,8 +297,9 @@ services:
     image: ${KIPUKA_IMAGE:-quay.io/czinda/kipuka:latest}
     container_name: kipuka-rsa
     hostname: kipuka-rsa.${LAB_DOMAIN:-cert-lab.local}
+    dns: 172.26.0.2
     depends_on:
-      dogtag-intermediate-ca:
+      dogtag-iot-ca:
         condition: service_healthy
     volumes:
       - ./configs/kipuka/rsa-config.toml:/etc/kipuka/kipuka.toml:ro

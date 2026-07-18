@@ -301,8 +301,8 @@ sleep 15
 
 # Verify
 for ctr in "$CA_CONTAINER" "$KRA_CONTAINER"; do
-    status=$(sudo podman exec "$ctr" curl -sk https://localhost:8443/ca/admin/ca/getStatus 2>/dev/null \
-        || sudo podman exec "$ctr" curl -sk https://localhost:8443/kra/admin/kra/getStatus 2>/dev/null \
+    status=$(sudo podman exec "$ctr" curl -skf https://localhost:8443/ca/admin/ca/getStatus 2>/dev/null \
+        || sudo podman exec "$ctr" curl -skf https://localhost:8443/kra/admin/kra/getStatus 2>/dev/null \
         || echo "")
     if echo "$status" | grep -q "running"; then
         log_ok "$ctr is running"
