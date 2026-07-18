@@ -1220,12 +1220,12 @@ start_freeipa() {
     log_info "Admin: admin / (see .env)"
 }
 
-# Phase 6: Start AWX
-start_awx() {
-    log_phase "Phase 6: Starting Ansible AWX"
+# Phase 6: Start Ansible Runner
+start_runner() {
+    log_phase "Phase 6: Starting Ansible Runner"
 
     local to_start=()
-    for svc in awx-web awx-task; do
+    for svc in runner runner-task; do
         if is_rootless_running "$svc"; then
             log_success "$svc is already running"
         else
@@ -1234,26 +1234,26 @@ start_awx() {
     done
 
     if [ ${#to_start[@]} -eq 0 ]; then
-        log_success "AWX already running"
+        log_success "Ansible Runner already running"
         return
     fi
 
     run_as_user podman-compose up -d "${to_start[@]}"
 
-    # Only wait if awx-web was just started
+    # Only wait if runner was just started
     for svc in "${to_start[@]}"; do
-        if [ "$svc" = "awx-web" ]; then
+        if [ "$svc" = "runner" ]; then
             if is_running_as_root; then
-                run_as_user podman wait --condition=running awx-web 2>/dev/null || sleep 60
+                run_as_user podman wait --condition=running runner 2>/dev/null || sleep 60
             else
-                wait_for_container "awx-web" 180
+                wait_for_container "runner" 180
             fi
         fi
     done
 
-    log_success "AWX started"
-    log_info "AWX Web UI: http://localhost:8084"
-    log_info "Default credentials: admin / (see .env)"
+    log_success "Ansible Runner started"
+    log_info "Ansible Runner: http://localhost:8084"
+    log_info "Use: podman exec runner ansible-runner run /runner/project"
 }
 
 # Phase 7: Start EDA
@@ -1495,7 +1495,7 @@ print_summary() {
 
     echo "Other Services:"
     echo "  FreeIPA:         https://ipa.cert-lab.local:4443/ipa/ui"
-    echo "  AWX:             http://localhost:8084"
+    echo "  Ansible Runner:  http://localhost:8084"
     echo "  Mock EDR:        http://localhost:8082"
     echo "  Mock SIEM:       http://localhost:8083"
     echo "  IoT Client:      http://localhost:8085"
@@ -1511,7 +1511,7 @@ print_summary() {
     echo "Default Credentials:"
     echo "  PKI Admin:    caadmin / (see .env)"
     echo "  IPA Admin:    admin / (see .env)"
-    echo "  AWX Admin:    admin / (see .env)"
+    echo "  Runner:       podman exec runner ansible-runner run /runner/project"
     echo "  Jupyter:      Token: (see .env)"
     echo ""
 
@@ -1642,7 +1642,7 @@ quick_start() {
 
     # Start other containers (rootless) - exclude PKI/DS services
     local rootless_to_start=()
-    for svc in dnsmasq postgres redis zookeeper kafka awx-web awx-task eda-server mock-edr mock-siem mock-ct-log policy-engine crl-server chain-visualizer mtls-proxy iot-client pin-validator kryoptic-hsm kmip-server jupyter loki promtail prometheus grafana pki-exporter; do
+    for svc in dnsmasq postgres redis zookeeper kafka runner runner-task eda-server mock-edr mock-siem mock-ct-log policy-engine crl-server chain-visualizer mtls-proxy iot-client pin-validator kryoptic-hsm kmip-server jupyter loki promtail prometheus grafana pki-exporter; do
         if is_rootless_running "$svc"; then
             log_success "$svc is already running"
         else
@@ -1855,7 +1855,7 @@ main() {
     if [ "$START_PQ_PKI" = true ]; then start_pq_pki_hierarchy; fi
 
     start_freeipa
-    start_awx
+    start_runner
     start_eda
     start_security_tools
     start_jupyter

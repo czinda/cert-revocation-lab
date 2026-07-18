@@ -172,7 +172,7 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → Ansible Playbook 
 - **389 Directory Server**: LDAP backend for Dogtag CA instances (not used by RAs)
 - **Kafka**: Event streaming for security events
 - **Event-Driven Ansible**: Rulebook engine consuming Kafka events
-- **AWX**: Ansible automation platform
+- **Ansible Runner**: Ad-hoc playbook execution (awx-ee containers)
 - **FastAPI**: Mock EDR/SIEM/CT-log implementations and PKI metrics exporter
 - **Mock CT Log**: RFC 6962 Certificate Transparency log simulation (http://localhost:8086)
 - **CRL CDP Server**: HTTP CRL Distribution Point serving DER/PEM CRLs (http://localhost:8088)
@@ -462,7 +462,7 @@ The `agnosticd/configs/cert-revocation-lab/` directory deploys the lab onto a si
 - **FreeIPA CA is subordinate to Intermediate CA**: Uses `--external-ca` two-phase workflow. `start-lab.sh` automates this: phase 1 generates CSR, `sign-csr.sh` signs it via Intermediate CA with `caCACert` profile, phase 2 installs the signed cert. After initial setup, FreeIPA container restarts normally (install opts ignored)
 - **EDA SSH bridge**: EDA (rootless) connects to PKI (rootful) via SSH. Automated by `start-lab.sh` Phase 7 — generates keys, sets `.env` variables, fixes ownership and SELinux context. Manual setup via `./scripts/setup-eda-ssh.sh` still supported for standalone use
 - **SELinux shared volumes**: `data/certs` uses `:z` (shared) not `:Z` (private) in compose files because it is mounted by FreeIPA, PKI containers, and EDA. Using `:Z` stamps private MCS categories preventing cross-container access on SELinux enforcing systems
-- **Port remapping**: FreeIPA 4443/8180/3390/6360; AWX 8084
+- **Port remapping**: FreeIPA 4443/8180/3390/6360; Ansible Runner 8084
 - **ECC KRA**: Fails with `NullPointerException` — ECDSA keys can't be used for KRA key wrapping (encryption). KRA init is non-fatal; key archival unavailable in ECC hierarchy
 - **ML-DSA-87 (PQ) full hierarchy**: The `feature/pq-full-mldsa87` branch deploys all 5 subsystems (Root CA, Intermediate CA, IoT CA, OCSP, KRA) with ML-DSA-87 on ALL certs + ML-KEM-1024 for KRA. Requires JDK TLS handshake fix (`-Djdk.tls.maxHandshakeMessageSize=64000`), web.xml CONFIDENTIAL→NONE patch, HTTP for `pki` CLI operations, and profile key parameter patching. See `memory/pq-full-mldsa87-deployment.md` for details
 - **PQ NSS client-side TLS**: NSS 3.123.1 cannot validate ML-DSA-87 cert chains in the client TLS auth path (server TLS works with JDK fix). The `pki` CLI uses HTTP (:8080) with basic auth instead of HTTPS for CSR signing and approval

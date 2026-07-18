@@ -112,7 +112,7 @@ done
 
 echo ""
 echo "  --- Optional services (may be down) ---"
-for svc in akamu-rsa kipuka-rsa eda-server awx-web awx-task; do
+for svc in akamu-rsa kipuka-rsa eda-server runner runner-task; do
     STATUS=$(podman inspect --format '{{.State.Status}}' "$svc" 2>/dev/null || echo "missing")
     if [ "$STATUS" = "running" ]; then
         pass "$svc"
@@ -398,25 +398,18 @@ else
     skip "Kipuka EST (8447) — HTTP $EST_HTTP (container not running)"
 fi
 
-# ── 16. AWX ──
-echo ""; echo "=== 16. AWX ==="
-AWX_STATUS=$(podman inspect --format '{{.State.Status}}' awx-web 2>/dev/null || echo "missing")
-if [ "$AWX_STATUS" = "running" ]; then
-    AWX_HTTP=$(curl -sk -o /dev/null -w "%{http_code}" "http://localhost:8084/api/v2/ping/" 2>/dev/null)
-    if [ "$AWX_HTTP" = "200" ]; then
-        pass "AWX API (port 8084) — HTTP $AWX_HTTP"
+# ── 16. Ansible Runner ──
+echo ""; echo "=== 16. Ansible Runner ==="
+RUNNER_STATUS=$(podman inspect --format '{{.State.Status}}' runner 2>/dev/null || echo "missing")
+if [ "$RUNNER_STATUS" = "running" ]; then
+    RUNNER_VER=$(podman exec runner ansible-runner --version 2>/dev/null | head -1 | tr -d '[:space:]')
+    if [ -n "$RUNNER_VER" ]; then
+        pass "Ansible Runner — version $RUNNER_VER"
     else
-        # AWX-EE may be a mock (sleep infinity) — check if it has a real process
-        AWX_PROC=$(podman exec awx-web bash -c 'ps aux 2>/dev/null | grep -cE "uwsgi|gunicorn|nginx|supervisord" || echo 0' 2>/dev/null | tail -1 | tr -d '[:space:]')
-        AWX_PROC="${AWX_PROC:-0}"
-        if [ "$AWX_PROC" -gt 0 ] 2>/dev/null; then
-            fail "AWX API (port 8084) — HTTP $AWX_HTTP (process running but not responding)"
-        else
-            skip "AWX container running but no web server inside (mock/placeholder)"
-        fi
+        fail "Ansible Runner — container running but ansible-runner --version failed"
     fi
 else
-    skip "AWX ($AWX_STATUS)"
+    skip "Ansible Runner ($RUNNER_STATUS)"
 fi
 
 # ── Summary ──
