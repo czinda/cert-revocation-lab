@@ -855,3 +855,109 @@ patch_profile_auto_approve() {
         " 2>&1
     done
 }
+
+# Create the caServerKeygenEST profile for EST SSKG (RFC 7030 §4.4).
+# Idempotent: skips if the profile already exists.
+# Usage: create_sskg_profile <container> <instance>
+create_sskg_profile() {
+    local container="${1:?container required}"
+    local instance="${2:?instance required}"
+    local profile_id="caServerKeygenEST"
+    local profile_cfg="/etc/pki-configs/profiles/${profile_id}.cfg"
+
+    # Check if profile config is available (mounted from host)
+    if ! $PODMAN exec "$container" test -f "$profile_cfg" 2>/dev/null; then
+        log_warn "SSKG profile config not found at $profile_cfg — skipping"
+        return 0
+    fi
+
+    # Find admin cert nickname
+    local nickname
+    nickname=$($PODMAN exec "$container" bash -c '
+        certutil -L -d /root/.dogtag/nssdb 2>/dev/null | grep "u,u,u" | sed "s/\s*u,u,u\s*//" | head -1
+    ' 2>/dev/null)
+    if [ -z "$nickname" ]; then
+        log_warn "No admin cert in NSS DB — skipping SSKG profile creation"
+        return 0
+    fi
+
+    # Check if already exists
+    local existing
+    existing=$($PODMAN exec "$container" bash -c "
+        HOST=\$(hostname)
+        pki -d /root/.dogtag/nssdb -n '$nickname' \
+            --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \
+            -U https://\$HOST:8443 \
+            ca-profile-show $profile_id 2>&1 || true
+    " 2>&1)
+    if echo "$existing" | grep -q "Profile ID:.*$profile_id"; then
+        log_info "SSKG profile $profile_id already exists"
+        return 0
+    fi
+
+    log_info "Creating SSKG profile $profile_id on $container..."
+    $PODMAN exec "$container" bash -c "
+        HOST=\$(hostname)
+        pki -d /root/.dogtag/nssdb -n '$nickname' \
+            --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \
+            -U https://\$HOST:8443 \
+            ca-profile-add '$profile_cfg' --raw 2>&1 || true
+    " 2>&1
+
+    # Enable the profile
+    $PODMAN exec "$container" bash -c "
+        HOST=\$(hostname)
+        pki -d /root/.dogtag/nssdb -n '$nickname' \
+            --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \
+            -U https://\$HOST:8443 \
+            ca-profile-enable $profile_id 2>&1 || true
+    " 2>&1
+
+    log_success "SSKG profile $profile_id created and enabled"
+}
+
+# Create the caServerKeygenEST profile from INSIDE the CA container.
+# Called by init-iot-ca.sh during CA initialization.
+# Usage: create_sskg_profile_local <instance>
+create_sskg_profile_local() {
+    local instance="${1:?instance required}"
+    local profile_id="caServerKeygenEST"
+    local profile_cfg="/etc/pki-configs/profiles/${profile_id}.cfg"
+    local host
+    host=$(hostname)
+
+    if [ ! -f "$profile_cfg" ]; then
+        log_warn "SSKG profile config not found at $profile_cfg — skipping"
+        return 0
+    fi
+
+    local nickname
+    nickname=$(certutil -L -d /root/.dogtag/nssdb 2>/dev/null | grep "u,u,u" | sed "s/\s*u,u,u\s*//" | head -1)
+    if [ -z "$nickname" ]; then
+        log_warn "No admin cert in NSS DB — skipping SSKG profile creation"
+        return 0
+    fi
+
+    local existing
+    existing=$(pki -d /root/.dogtag/nssdb -n "$nickname" \
+        --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \
+        -U "https://${host}:8443" \
+        ca-profile-show "$profile_id" 2>&1 || true)
+    if echo "$existing" | grep -q "Profile ID:.*$profile_id"; then
+        log_info "SSKG profile $profile_id already exists"
+        return 0
+    fi
+
+    log_info "Creating SSKG profile $profile_id..."
+    pki -d /root/.dogtag/nssdb -n "$nickname" \
+        --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \
+        -U "https://${host}:8443" \
+        ca-profile-add "$profile_cfg" --raw 2>&1 || true
+
+    pki -d /root/.dogtag/nssdb -n "$nickname" \
+        --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \
+        -U "https://${host}:8443" \
+        ca-profile-enable "$profile_id" 2>&1 || true
+
+    log_success "SSKG profile $profile_id created and enabled"
+}

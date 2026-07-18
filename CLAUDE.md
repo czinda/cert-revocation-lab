@@ -192,6 +192,7 @@ Mock EDR/SIEM → Kafka (security-events) → EDA Rulebook → Ansible Playbook 
 - `caServerCert`: Server TLS certificates (RSA keys only)
 - `caECServerCert`: Server TLS certificates (ECC keys)
 - `caMLDSAServerCert`: Server TLS certificates (ML-DSA keys)
+- `caServerKeygenEST`: Server TLS certificates with server-side key generation (EST RFC 7030 §4.4) — uses `serverKeygenInputImpl` + `pkcs12OutputImpl`, created automatically by `init-iot-ca.sh`
 - `caUserCert`: User certificates
 
 **Important**: Dogtag stores profiles in LDAP after initialization. Editing profile files on disk has no effect on running CAs. The `lab` CLI and `pki-cli.py` select the correct profile automatically based on PKI type.
