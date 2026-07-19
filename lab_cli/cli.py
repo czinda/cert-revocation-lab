@@ -3222,13 +3222,21 @@ def est_serverkeygen_cmd(
 
     if result.success:
         console.print(f"[green]✓ {result.message}[/green]")
+
+        from rich.table import Table
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column(style="bold")
+        table.add_column()
+        table.add_row("Device", result.details.get("device", device) if result.details else device)
+        table.add_row("Key Origin", "[bold green]Server-generated (SSKG)[/bold green]")
+        if result.details and result.details.get("key"):
+            key = result.details["key"]
+            table.add_row("Private Key", key.get("algorithm", f"{key.get('size', '?')} bytes"))
+        table.add_row("Response", f"{result.details.get('response_size', '?')} bytes (multipart/mixed)")
+        console.print(table)
+
         if result.certificate:
             _show_cert_details(console, result.certificate)
-        elif result.details:
-            console.print(f"  Device: {result.details.get('device', device)}")
-            preview = result.details.get("response_preview", "")
-            if preview:
-                console.print(f"\n[dim]{preview}[/dim]")
     else:
         console.print(f"[red]✗ {result.message}[/red]")
         if result.details and result.details.get("hint"):

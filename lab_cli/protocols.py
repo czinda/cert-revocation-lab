@@ -1678,41 +1678,69 @@ def est_serverkeygen(
 
         response = result.stdout.strip()
         if "BEGIN" in response or response.startswith("MII") or "estServerKeyGenBoundary" in response or "multipart" in response.lower():
-            # Parse multipart to extract the cert (PKCS#7 part)
             cert_pem = None
+            key_info: dict = {}
             if "estServerKeyGenBoundary" in response:
                 parts = response.split("--estServerKeyGenBoundary")
                 for part in parts:
+                    lines = part.strip().splitlines()
+                    body_started = False
+                    b64_lines: list[str] = []
+                    for line in lines:
+                        if body_started:
+                            if line.strip():
+                                b64_lines.append(line.strip())
+                        elif line.strip() == "":
+                            body_started = True
+                    if not b64_lines:
+                        continue
+                    part_b64 = "".join(b64_lines)
+
                     if "pkcs7" in part.lower() or "certs-only" in part.lower():
-                        # Skip header lines, collect base64 body after blank line
-                        lines = part.strip().splitlines()
-                        body_started = False
-                        b64_lines = []
-                        for line in lines:
-                            if body_started:
-                                if line.strip():
-                                    b64_lines.append(line.strip())
-                            elif line.strip() == "":
-                                body_started = True
-                        if b64_lines:
-                            p7_b64 = "".join(b64_lines)
-                            try:
-                                p7_der = base64.b64decode(p7_b64)
-                                p7_conv = subprocess.run(
-                                    ["sudo", "podman", "exec", "-i", "dogtag-pq-ca",
-                                     "openssl", "pkcs7", "-inform", "DER", "-print_certs"],
-                                    input=p7_der, capture_output=True, timeout=10,
-                                )
-                                if p7_conv.returncode == 0 and b"BEGIN CERTIFICATE" in p7_conv.stdout:
-                                    cert_pem = p7_conv.stdout.decode(errors="replace")
-                            except Exception:
-                                pass
+                        try:
+                            p7_der = base64.b64decode(part_b64)
+                            p7_conv = subprocess.run(
+                                ["openssl", "pkcs7", "-inform", "DER", "-print_certs"],
+                                input=p7_der, capture_output=True, timeout=10,
+                            )
+                            if p7_conv.returncode == 0 and b"BEGIN CERTIFICATE" in p7_conv.stdout:
+                                cert_pem = p7_conv.stdout.decode(errors="replace")
+                        except Exception:
+                            pass
+
+                    elif "pkcs8" in part.lower():
+                        try:
+                            key_der = base64.b64decode(part_b64)
+                            key_check = subprocess.run(
+                                ["openssl", "pkey", "-inform", "DER", "-noout", "-text"],
+                                input=key_der, capture_output=True, text=True, timeout=10,
+                            )
+                            if key_check.returncode == 0:
+                                key_info["size"] = len(key_der)
+                                for kline in key_check.stdout.splitlines():
+                                    kline = kline.strip()
+                                    if "RSA" in kline or "EC" in kline or "ML-DSA" in kline:
+                                        key_info["algorithm"] = kline
+                                        break
+                                    if "bit" in kline.lower():
+                                        key_info["algorithm"] = kline
+                                        break
+                        except Exception:
+                            key_info["size"] = len(part_b64)
+
+            details = {
+                "device": device_fqdn,
+                "response_size": len(response),
+                "server_generated": True,
+            }
+            if key_info:
+                details["key"] = key_info
 
             return ProtocolResult(
                 success=True,
                 message="Server-side key generation completed (cert + key returned)",
                 certificate=cert_pem,
-                details={"device": device_fqdn, "response_size": len(response)},
+                details=details,
             )
 
         if "internal server error" in response.lower() or "not enabled" in response.lower():
