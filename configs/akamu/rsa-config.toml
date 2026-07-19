@@ -38,7 +38,7 @@ eab_master_secret = "Y2VydC1sYWItZWFiLW1hc3Rlci1zZWNyZXQtMzJieXRlcyE"
 # Enables Authorization: Negotiate on GET /acme/eab.
 # Requires a keytab for HTTP/akamu-rsa.cert-lab.local from FreeIPA.
 [server.gssapi]
-keytab_file = "/etc/krb5.keytab"
+keytab_file = "/certs/akamu.keytab"
 service_name = "HTTP"
 
 [profiles]
