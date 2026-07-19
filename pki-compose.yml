@@ -280,7 +280,6 @@ services:
         ipv4_address: 172.26.0.18
     ports:
       - "8446:8443"
-      - "8483:8080"
     user: "1001:1001"
     read_only: true
     tmpfs:
@@ -290,7 +289,7 @@ services:
     cap_drop:
       - ALL
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/directory > /dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl -skf https://localhost:8443/acme/directory > /dev/null || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -326,7 +325,7 @@ services:
     environment:
       - RUST_LOG=info
     healthcheck:
-      test: ["CMD-SHELL", "echo | openssl s_client -connect $(hostname):9443 2>/dev/null | grep -q 'Verify return code' || exit 1"]
+      test: ["CMD-SHELL", "echo | openssl s_client -connect localhost:9443 2>/dev/null | grep -q 'Verify return code' || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 5

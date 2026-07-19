@@ -3,8 +3,12 @@
 # Dogtag RA mode: delegates signing to the Dogtag RSA IoT Sub-CA.
 # Reference: https://akamu.dev/doc/user/configuration.html#casigner
 
-listen_addr = "0.0.0.0:8483"
-base_url    = "http://akamu-rsa.cert-lab.local:8483"
+listen_addr = "0.0.0.0:8443"
+base_url    = "https://akamu-rsa.cert-lab.local:8446"
+
+[tls]
+cert_file = "/certs/akamu-rsa.cert.pem"
+key_file  = "/certs/akamu-rsa.key.pem"
 
 [database]
 url = "sqlite:///app/data/akamu.db"
@@ -37,9 +41,10 @@ eab_master_secret = "Y2VydC1sYWItZWFiLW1hc3Rlci1zZWNyZXQtMzJieXRlcyE"
 # ── GSSAPI / Kerberos for EAB endpoint ──────────────────────────────────
 # Enables Authorization: Negotiate on GET /acme/eab.
 # Requires a keytab for HTTP/akamu-rsa.cert-lab.local from FreeIPA.
-[server.gssapi]
-keytab_file = "/certs/akamu.keytab"
-service_name = "HTTP"
+# GSSAPI disabled until FreeIPA is running (exit 123 cgroup issue)
+#[server.gssapi]
+#keytab_file = "/certs/akamu.keytab"
+#service_name = "HTTP"
 
 [profiles]
 refresh_interval_secs = 3600
