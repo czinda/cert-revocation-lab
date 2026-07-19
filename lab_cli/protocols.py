@@ -167,13 +167,13 @@ def _get_container_gateway_ip(container: str) -> Optional[str]:
 
 
 def _acme_via_akamu_cli(acme_url: str, domain: str, container: str, pki_type: PKIType = PKIType.RSA) -> ProtocolResult:
-    """Issue certificate using akamu-cli with host networking + port proxy.
+    """Issue certificate using akamu-cli with host networking.
 
     akamu-cli runs with ``--network host`` so its HTTP-01 challenge server
     on port 8880 binds on the host.  akamu (the server) validates the
-    challenge by connecting to ``<domain>:8880`` — dnsmasq resolves
-    *.cert-lab.local to the gateway IP (172.26.0.1).  A socat proxy
-    forwards gateway:8880 → localhost:8880 so the container can reach it.
+    challenge by connecting to ``<domain>:8880`` — this requires the host
+    firewall to allow container→host routing (works on Beaker with
+    Technitium DNS, fails on media with UFW FORWARD=DROP).
     """
     pki = pki_type.value
     if pki in CA_CONFIGS and "acme" in CA_CONFIGS[pki]:
@@ -184,56 +184,38 @@ def _acme_via_akamu_cli(acme_url: str, domain: str, container: str, pki_type: PK
         cli_acme_url = acme_url
         akamu_host = "akamu-rsa.cert-lab.local"
 
-    gateway_ip = _get_container_gateway_ip(container) or "172.26.0.1"
+    timeout = 120 if pki_type == PKIType.PQC else 60
 
-    # akamu-cli binds its challenge server on port 8881 (host networking).
-    # socat forwards gateway_ip:8880 → 127.0.0.1:8881 so the akamu container
-    # (which connects to <domain>:8880 via the gateway) reaches the solver.
-    cli_challenge_port = "8881"
-    socat_cmd = [
-        "sudo", "socat",
-        f"TCP-LISTEN:8880,bind={gateway_ip},fork,reuseaddr",
-        f"TCP:127.0.0.1:{cli_challenge_port}",
-    ]
-    socat_proc = subprocess.Popen(socat_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    result = None
+    cert_content = ""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cert_file = Path(tmpdir) / f"{domain}.pem"
 
-    try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            certs_dir = Path(tmpdir)
-            cert_file = certs_dir / f"{domain}.pem"
+        cmd = [
+            "sudo", "podman", "run", "--rm", "--network", "host",
+            "--add-host", f"{akamu_host}:127.0.0.1",
+            "--entrypoint", "/app/akamu-cli",
+            "-v", f"{tmpdir}:/certs",
+            f"quay.io/czinda/akamu:latest",
+            "issue",
+            "--server", cli_acme_url + "/directory",
+            "--domain", domain,
+            "--account-key", "/certs/account.pem",
+            "--challenge", "http-01",
+            "--http-port", "8880",
+            "--cert-key-type", "ml-dsa-87" if pki_type == PKIType.PQC else "rsa:2048",
+            "--out", f"/certs/{domain}.pem",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
-            cmd = [
-                "sudo", "podman", "run", "--rm", "--network", "host",
-                "--add-host", f"{akamu_host}:127.0.0.1",
-                "--entrypoint", "/app/akamu-cli",
-                "-v", f"{tmpdir}:/certs",
-                f"quay.io/czinda/akamu:latest",
-                "issue",
-                "--server", cli_acme_url + "/directory",
-                "--domain", domain,
-                "--account-key", "/certs/account.pem",
-                "--challenge", "http-01",
-                "--http-port", cli_challenge_port,
-                "--cert-key-type", "ml-dsa-87" if pki_type == PKIType.PQC else "rsa:2048",
-                "--out", f"/certs/{domain}.pem",
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+        cat_result = subprocess.run(
+            ["sudo", "cat", str(cert_file)],
+            capture_output=True, text=True, timeout=5,
+        )
+        if cat_result.returncode == 0 and "BEGIN CERTIFICATE" in cat_result.stdout:
+            cert_content = cat_result.stdout
 
-            cert_content = ""
-            cat_result = subprocess.run(
-                ["sudo", "cat", str(cert_file)],
-                capture_output=True, text=True, timeout=5,
-            )
-            if cat_result.returncode == 0 and "BEGIN CERTIFICATE" in cat_result.stdout:
-                cert_content = cat_result.stdout
-    finally:
-        try:
-            socat_proc.terminate()
-            socat_proc.wait(timeout=5)
-        except Exception:
-            socat_proc.kill()
-
-    if result.returncode == 0 and cert_content:
+    if result is not None and result.returncode == 0 and cert_content:
         details = {"acme_url": acme_url, "domain": domain, "client": "akamu-cli"}
         info = subprocess.run(
             ["sudo", "podman", "exec", "-i", container,
@@ -272,6 +254,8 @@ def _acme_via_akamu_cli(acme_url: str, domain: str, container: str, pki_type: PK
             details=details,
         )
 
+    if result is None:
+        return ProtocolResult(success=False, message="akamu-cli: failed to start")
     return ProtocolResult(
         success=False,
         message=f"akamu-cli: {result.stderr.strip()[:300] or result.stdout.strip()[:300]}",

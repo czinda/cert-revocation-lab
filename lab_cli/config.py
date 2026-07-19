@@ -70,7 +70,7 @@ class CAConfig:
         import socket
         if self.http_port:
             try:
-                socket.getaddrinfo(self.hostname, self.http_port, socket.AF_INET, socket.SOCK_STREAM)
+                socket.getaddrinfo(self.hostname, None, socket.AF_INET, socket.SOCK_STREAM)
                 return f"http://{self.hostname}:{self.http_port}"
             except socket.gaierror:
                 return f"http://localhost:{self.http_port}"
