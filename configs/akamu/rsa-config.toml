@@ -3,12 +3,8 @@
 # Dogtag RA mode: delegates signing to the Dogtag RSA IoT Sub-CA.
 # Reference: https://akamu.dev/doc/user/configuration.html#casigner
 
-listen_addr = "0.0.0.0:8443"
-base_url    = "https://akamu-rsa.cert-lab.local:8446"
-
-[tls]
-cert_file = "/certs/akamu-rsa.cert.pem"
-key_file  = "/certs/akamu-rsa.key.pem"
+listen_addr = "0.0.0.0:8080"
+base_url    = "http://akamu-rsa.cert-lab.local:8446"
 
 [database]
 url = "sqlite:///app/data/akamu.db"

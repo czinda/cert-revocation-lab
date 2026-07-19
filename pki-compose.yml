@@ -279,7 +279,7 @@ services:
       pki-net:
         ipv4_address: 172.26.0.18
     ports:
-      - "8446:8443"
+      - "8446:8080"
     user: "1001:1001"
     read_only: true
     tmpfs:
@@ -289,7 +289,7 @@ services:
     cap_drop:
       - ALL
     healthcheck:
-      test: ["CMD-SHELL", "curl -skf https://localhost:8443/acme/directory > /dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/acme/directory > /dev/null || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 5
