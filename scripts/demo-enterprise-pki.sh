@@ -104,20 +104,21 @@ demo_trust_audit() {
     echo -e "  ${BOLD}Step 1: CA Hierarchy Health${NC}"
     echo ""
 
-    local ca_list="dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-kra"
-    for ca in $ca_list; do
+    declare -A ca_endpoints=(
+        ["dogtag-root-ca"]="/ca/admin/ca/getStatus"
+        ["dogtag-intermediate-ca"]="/ca/admin/ca/getStatus"
+        ["dogtag-iot-ca"]="/ca/admin/ca/getStatus"
+        ["dogtag-ocsp"]="/ocsp/admin/ocsp/getStatus"
+        ["dogtag-kra"]="/kra/admin/kra/getStatus"
+    )
+    for ca in dogtag-root-ca dogtag-intermediate-ca dogtag-iot-ca dogtag-ocsp dogtag-kra; do
         if container_running "$ca"; then
-            local status
-            status=$(sudo podman exec "$ca" curl -sk https://localhost:8443/ca/admin/ca/getStatus 2>/dev/null | grep -o '"Status" : "[^"]*"' | cut -d'"' -f4)
+            local status endpoint="${ca_endpoints[$ca]}"
+            status=$(sudo podman exec "$ca" curl -sk "https://localhost:8443${endpoint}" 2>/dev/null | grep -o '"Status" : "[^"]*"' | cut -d'"' -f4)
             if [ "$status" = "running" ]; then
                 pass "$ca — $status"
             else
-                status=$(sudo podman exec "$ca" curl -sk https://localhost:8443/ocsp/admin/ocsp/getStatus 2>/dev/null | grep -o '"Status" : "[^"]*"' | cut -d'"' -f4)
-                if [ "$status" = "running" ]; then
-                    pass "$ca — $status"
-                else
-                    fail "$ca — status unknown"
-                fi
+                fail "$ca — status unknown"
             fi
         else
             fail "$ca — not running"
@@ -177,10 +178,10 @@ demo_est_enrollment() {
 
     local cacerts_raw
     cacerts_raw=$(curl -sk "$EST_URL/.well-known/est/cacerts" 2>/dev/null)
-    if echo "$cacerts_raw" | base64 -d 2>/dev/null | openssl pkcs7 -inform DER -print_certs 2>/dev/null | grep -q "BEGIN CERTIFICATE"; then
+    if echo "$cacerts_raw" | tr -d '\r\n' | base64 -d 2>/dev/null | openssl pkcs7 -inform DER -print_certs 2>/dev/null | grep -q "BEGIN CERTIFICATE"; then
         pass "CA trust chain retrieved (PKCS#7 bundle)"
         local chain_count
-        chain_count=$(echo "$cacerts_raw" | base64 -d | openssl pkcs7 -inform DER -print_certs 2>/dev/null | grep -c "BEGIN CERTIFICATE")
+        chain_count=$(echo "$cacerts_raw" | tr -d '\r\n' | base64 -d | openssl pkcs7 -inform DER -print_certs 2>/dev/null | grep -c "BEGIN CERTIFICATE")
         info "Chain contains $chain_count certificates (Root → Intermediate → IoT Sub-CA)"
     else
         fail "Could not retrieve CA certificates from EST"
@@ -195,12 +196,12 @@ demo_est_enrollment() {
 
     local device="demo-device-$$"
     local otp_json
-    otp_json=$(curl -sk -X POST "$EST_URL/admin/otp" \
+    otp_json=$(curl -sk -X POST "$EST_URL/admin/otp/generate" \
         -H "Authorization: Bearer $ADMIN_TOKEN" \
         -H "Content-Type: application/json" \
         -d "{\"entity_id\": \"$device\", \"ttl_seconds\": 300}" 2>/dev/null)
     local otp
-    otp=$(echo "$otp_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('password',''))" 2>/dev/null)
+    otp=$(echo "$otp_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('token','') or d.get('password',''))" 2>/dev/null)
     if [ -n "$otp" ]; then
         pass "OTP generated for $device (expires in 300s)"
         info "OTP: ${otp:0:8}... (truncated for display)"
@@ -230,7 +231,7 @@ demo_est_enrollment() {
         -H "Content-Transfer-Encoding: base64" \
         -d "$csr_b64" 2>/dev/null)
 
-    if echo "$est_resp" | base64 -d 2>/dev/null | openssl x509 -inform DER -out "$TMPDIR/est-cert.pem" 2>/dev/null; then
+    if echo "$est_resp" | tr -d '\r\n' | base64 -d 2>/dev/null | openssl pkcs7 -inform DER -print_certs 2>/dev/null | openssl x509 -out "$TMPDIR/est-cert.pem" 2>/dev/null; then
         pass "Certificate enrolled via EST"
         show_cert "Issued Certificate:" "$(cat "$TMPDIR/est-cert.pem")"
         echo ""
@@ -261,12 +262,12 @@ demo_sskg() {
 
     local device="sskg-device-$$"
     local otp_json
-    otp_json=$(curl -sk -X POST "$EST_URL/admin/otp" \
+    otp_json=$(curl -sk -X POST "$EST_URL/admin/otp/generate" \
         -H "Authorization: Bearer $ADMIN_TOKEN" \
         -H "Content-Type: application/json" \
         -d "{\"entity_id\": \"$device\", \"ttl_seconds\": 300}" 2>/dev/null)
     local otp
-    otp=$(echo "$otp_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('password',''))" 2>/dev/null)
+    otp=$(echo "$otp_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('token','') or d.get('password',''))" 2>/dev/null)
     if [ -n "$otp" ]; then
         pass "OTP generated for $device"
     else
