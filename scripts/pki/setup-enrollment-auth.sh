@@ -83,13 +83,10 @@ else
         -subj "/CN=enrollment-agent,OU=IoT CA,O=Cert-Lab,C=US" 2>/dev/null
 
     info "Submitting CSR to IoT CA..."
+    # Copy CSR into the CA container (stdin piping is unreliable across podman exec)
+    $PODMAN cp /tmp/agent.csr "$IOT_CA:/tmp/agent.csr"
+
     ISSUE_OUT=$($PODMAN exec "$IOT_CA" bash -c '
-        NICK=$(certutil -L -d /root/.dogtag/nssdb 2>/dev/null | grep "u,u,u" | sed "s/\s*u,u,u\s*//" | head -1)
-        [ -z "$NICK" ] && exit 1
-        HOST=$(hostname)
-        cat > /tmp/agent.csr
-    ' < /tmp/agent.csr 2>/dev/null && \
-    $PODMAN exec "$IOT_CA" bash -c '
         NICK=$(certutil -L -d /root/.dogtag/nssdb 2>/dev/null | grep "u,u,u" | sed "s/\s*u,u,u\s*//" | head -1)
         HOST=$(hostname)
         REQ=$(pki -d /root/.dogtag/nssdb -n "$NICK" \
