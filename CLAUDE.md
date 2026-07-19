@@ -455,6 +455,15 @@ The `agnosticd/configs/cert-revocation-lab/` directory deploys the lab onto a si
 - sudo access (for rootful PKI containers and FreeIPA)
 - 16GB+ RAM recommended
 
+## Dogtag Investigation Protocol
+
+Before declaring a Dogtag capability missing or broken, demonstrate it with a direct `curl` or `pki` CLI reproduction and paste the output. Design changes require the repro. Specifically:
+
+1. Test with Dogtag's own tools first (`pki ca-cert-request-submit`, `pki kra-key-retrieve`, `curl` to EE/agent servlets)
+2. If the tool succeeds but kipuka fails, the bug is in kipuka's request format — diff the wire traffic
+3. If the tool also fails, capture the CLI repro + KRA/CA debug log + `CS.cfg` config and file upstream
+4. Do not attribute failures to "known Dogtag limitations" without a reproduction that proves it
+
 ## Known Limitations
 
 - **podman-compose health conditions**: May not honor `service_healthy`; mitigated by `start-lab.sh` DS probing and init script `wait_for_ds()`
