@@ -60,8 +60,12 @@ class CAConfig:
     def host_url(self) -> str:
         """URL for accessing this CA from the host machine.
 
-        PQ CAs use HTTP because OpenSSL < 3.5 cannot process ML-DSA-87 TLS certs.
-        RSA/ECC CAs use HTTPS with verify=False.
+        When the container hostname resolves (dnsmasq running), use the
+        container-internal URL directly (hostname + container port) since
+        the host can route to the podman network.  When DNS is unavailable,
+        fall back to localhost + host_port (port-mapped path).
+
+        http_port forces HTTP scheme (PQ mode where TLS isn't available).
         """
         import socket
         if self.http_port:
@@ -71,10 +75,11 @@ class CAConfig:
             except socket.gaierror:
                 return f"http://localhost:{self.http_port}"
         try:
-            socket.getaddrinfo(self.hostname, self.host_port, socket.AF_INET, socket.SOCK_STREAM)
-            return f"https://{self.hostname}:{self.host_port}"
+            socket.getaddrinfo(self.hostname, None, socket.AF_INET, socket.SOCK_STREAM)
+            return self.url
         except socket.gaierror:
-            return f"https://localhost:{self.host_port}"
+            scheme = "http" if self.url.startswith("http://") else "https"
+            return f"{scheme}://localhost:{self.host_port}"
 
 
 # Enrollment backend: "akamu" (Akamu ACME + Kipuka EST) or "dogtag" (Dogtag RAs)
@@ -87,13 +92,13 @@ _ENROLLMENT_CONFIGS: dict[str, dict[str, dict[str, CAConfig]]] = {
             "est": CAConfig(container="kipuka-rsa", instance="kipuka",
                             url="https://kipuka-rsa.cert-lab.local:9443", nss_db="", host_port=8447),
             "acme": CAConfig(container="akamu-rsa", instance="akamu",
-                             url="http://akamu-rsa.cert-lab.local:8080", nss_db="", host_port=8446, http_port=8483),
+                             url="http://akamu-rsa.cert-lab.local:8080", nss_db="", host_port=8446),
         },
         "ecc": {
             "est": CAConfig(container="kipuka-ecc", instance="kipuka",
                             url="https://kipuka-ecc.cert-lab.local:9443", nss_db="", host_port=8466),
             "acme": CAConfig(container="akamu-ecc", instance="akamu",
-                             url="http://akamu-ecc.cert-lab.local:8080", nss_db="", host_port=8469, http_port=8496),
+                             url="http://akamu-ecc.cert-lab.local:8080", nss_db="", host_port=8469),
         },
         "pqc": {
             "est": CAConfig(container="kipuka-pq", instance="kipuka",

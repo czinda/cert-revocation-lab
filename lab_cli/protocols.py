@@ -167,81 +167,116 @@ def _get_container_gateway_ip(container: str) -> Optional[str]:
 
 
 def _acme_via_akamu_cli(acme_url: str, domain: str, container: str, pki_type: PKIType = PKIType.RSA) -> ProtocolResult:
-    """Issue certificate using akamu-cli in a Fedora container with host networking."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        certs_dir = Path(tmpdir)
-        cert_file = certs_dir / f"{domain}.pem"
+    """Issue certificate using akamu-cli with host networking + port proxy.
 
-        cmd = [
-            "sudo", "podman", "run", "--rm", "--network", "host",
-            "--entrypoint", "/app/akamu-cli",
-            "-v", f"{tmpdir}:/certs",
-            f"quay.io/czinda/akamu:latest",
-            "issue",
-            "--server", acme_url + "/directory",
-            "--domain", domain,
-            "--account-key", "/certs/account.pem",
-            "--challenge", "http-01",
-            "--http-port", "8880",
-            "--cert-key-type", "ml-dsa-87" if pki_type == PKIType.PQC else "rsa:2048",
-            "--out", f"/certs/{domain}.pem",
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    akamu-cli runs with ``--network host`` so its HTTP-01 challenge server
+    on port 8880 binds on the host.  akamu (the server) validates the
+    challenge by connecting to ``<domain>:8880`` — dnsmasq resolves
+    *.cert-lab.local to the gateway IP (172.26.0.1).  A socat proxy
+    forwards gateway:8880 → localhost:8880 so the container can reach it.
+    """
+    pki = pki_type.value
+    if pki in CA_CONFIGS and "acme" in CA_CONFIGS[pki]:
+        ca = CA_CONFIGS[pki]["acme"]
+        cli_acme_url = f"http://localhost:{ca.host_port}/acme"
+        akamu_host = ca.hostname
+    else:
+        cli_acme_url = acme_url
+        akamu_host = "akamu-rsa.cert-lab.local"
 
-        cert_content = ""
-        # File is root-owned (sudo podman) — always use sudo cat
-        cat_result = subprocess.run(
-            ["sudo", "cat", str(cert_file)],
-            capture_output=True, text=True, timeout=5,
+    gateway_ip = _get_container_gateway_ip(container) or "172.26.0.1"
+
+    # akamu-cli binds its challenge server on port 8881 (host networking).
+    # socat forwards gateway_ip:8880 → 127.0.0.1:8881 so the akamu container
+    # (which connects to <domain>:8880 via the gateway) reaches the solver.
+    cli_challenge_port = "8881"
+    socat_cmd = [
+        "sudo", "socat",
+        f"TCP-LISTEN:8880,bind={gateway_ip},fork,reuseaddr",
+        f"TCP:127.0.0.1:{cli_challenge_port}",
+    ]
+    socat_proc = subprocess.Popen(socat_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            certs_dir = Path(tmpdir)
+            cert_file = certs_dir / f"{domain}.pem"
+
+            cmd = [
+                "sudo", "podman", "run", "--rm", "--network", "host",
+                "--add-host", f"{akamu_host}:127.0.0.1",
+                "--entrypoint", "/app/akamu-cli",
+                "-v", f"{tmpdir}:/certs",
+                f"quay.io/czinda/akamu:latest",
+                "issue",
+                "--server", cli_acme_url + "/directory",
+                "--domain", domain,
+                "--account-key", "/certs/account.pem",
+                "--challenge", "http-01",
+                "--http-port", cli_challenge_port,
+                "--cert-key-type", "ml-dsa-87" if pki_type == PKIType.PQC else "rsa:2048",
+                "--out", f"/certs/{domain}.pem",
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+
+            cert_content = ""
+            cat_result = subprocess.run(
+                ["sudo", "cat", str(cert_file)],
+                capture_output=True, text=True, timeout=5,
+            )
+            if cat_result.returncode == 0 and "BEGIN CERTIFICATE" in cat_result.stdout:
+                cert_content = cat_result.stdout
+    finally:
+        try:
+            socat_proc.terminate()
+            socat_proc.wait(timeout=5)
+        except Exception:
+            socat_proc.kill()
+
+    if result.returncode == 0 and cert_content:
+        details = {"acme_url": acme_url, "domain": domain, "client": "akamu-cli"}
+        info = subprocess.run(
+            ["sudo", "podman", "exec", "-i", container,
+             "openssl", "x509", "-noout", "-subject", "-issuer", "-serial", "-dates"],
+            input=cert_content, capture_output=True, text=True, timeout=5,
         )
-        if cat_result.returncode == 0 and "BEGIN CERTIFICATE" in cat_result.stdout:
-            cert_content = cat_result.stdout
-
-        if result.returncode == 0 and cert_content:
-            details = {"acme_url": acme_url, "domain": domain, "client": "akamu-cli"}
-            # Use container OpenSSL for cert details (handles ML-DSA OIDs)
-            info = subprocess.run(
-                ["sudo", "podman", "exec", "-i", container,
-                 "openssl", "x509", "-noout", "-subject", "-issuer", "-serial", "-dates"],
-                input=cert_content, capture_output=True, text=True, timeout=5,
-            )
-            if info.returncode == 0:
-                for line in info.stdout.strip().splitlines():
-                    k, _, v = line.partition("=")
-                    details[k.strip()] = v.strip()
-            sig = subprocess.run(
-                ["sudo", "podman", "exec", "-i", container,
-                 "openssl", "x509", "-noout", "-text"],
-                input=cert_content, capture_output=True, text=True, timeout=5,
-            )
-            if sig.returncode == 0:
-                for line in sig.stdout.splitlines():
-                    if "Signature Algorithm" in line:
-                        raw = line.strip().split(":", 1)[-1].strip()
-                        details["signature_algorithm"] = PQ_OID_MAP.get(raw, raw)
-                        break
-            serial = None
-            s = subprocess.run(
-                ["sudo", "podman", "exec", "-i", container,
-                 "openssl", "x509", "-noout", "-serial"],
-                input=cert_content, capture_output=True, text=True, timeout=5,
-            )
-            if s.returncode == 0 and "=" in s.stdout:
-                serial = f"0x{s.stdout.strip().split('=', 1)[1]}"
-
-            return ProtocolResult(
-                success=True,
-                message="Certificate issued via ACME (akamu-cli)",
-                certificate=cert_content,
-                serial=serial,
-                details=details,
-            )
+        if info.returncode == 0:
+            for line in info.stdout.strip().splitlines():
+                k, _, v = line.partition("=")
+                details[k.strip()] = v.strip()
+        sig = subprocess.run(
+            ["sudo", "podman", "exec", "-i", container,
+             "openssl", "x509", "-noout", "-text"],
+            input=cert_content, capture_output=True, text=True, timeout=5,
+        )
+        if sig.returncode == 0:
+            for line in sig.stdout.splitlines():
+                if "Signature Algorithm" in line:
+                    raw = line.strip().split(":", 1)[-1].strip()
+                    details["signature_algorithm"] = PQ_OID_MAP.get(raw, raw)
+                    break
+        serial = None
+        s = subprocess.run(
+            ["sudo", "podman", "exec", "-i", container,
+             "openssl", "x509", "-noout", "-serial"],
+            input=cert_content, capture_output=True, text=True, timeout=5,
+        )
+        if s.returncode == 0 and "=" in s.stdout:
+            serial = f"0x{s.stdout.strip().split('=', 1)[1]}"
 
         return ProtocolResult(
-            success=False,
-            message=f"akamu-cli: {result.stderr.strip()[:300] or result.stdout.strip()[:300]}",
-            details={"stdout": result.stdout[:200]},
+            success=True,
+            message="Certificate issued via ACME (akamu-cli)",
+            certificate=cert_content,
+            serial=serial,
+            details=details,
         )
+
+    return ProtocolResult(
+        success=False,
+        message=f"akamu-cli: {result.stderr.strip()[:300] or result.stdout.strip()[:300]}",
+        details={"stdout": result.stdout[:200]},
+    )
 
 
 def acme_issue_certificate(
@@ -275,13 +310,28 @@ def acme_issue_certificate(
     # Resolve the correct akamu container for this PKI type
     akamu_container = _get_acme_container(pki_type)
 
-    # Try akamu-cli first (built into the akamu container, supports ML-DSA)
+    # akamu-cli with HTTP-01 requires the akamu container to reach the
+    # challenge server on the host.  This works when Technitium DNS runs
+    # on the host (Beaker), but fails on media (dnsmasq in container,
+    # UFW drops FORWARD, gateway port unreachable).
+    # Try akamu-cli; fall through to certbot if it fails.
     cli_check = subprocess.run(
         ["sudo", "podman", "exec", akamu_container, "test", "-x", "/app/akamu-cli"],
         capture_output=True, timeout=5,
     )
     if cli_check.returncode == 0:
-        return _acme_via_akamu_cli(acme_url, domain, akamu_container, pki_type)
+        try:
+            return _acme_via_akamu_cli(acme_url, domain, akamu_container, pki_type)
+        except subprocess.TimeoutExpired:
+            return ProtocolResult(
+                success=False,
+                message="HTTP-01 challenge timed out — akamu cannot reach the challenge "
+                        "server through the container network (UFW/firewall blocks "
+                        "gateway routing). Use 'lab issue' for direct Dogtag issuance "
+                        "or deploy on a host with Technitium DNS for full ACME testing.",
+            )
+        except Exception as e:
+            return ProtocolResult(success=False, message=f"akamu-cli error: {e}")
 
     # Fallback: ensure domain resolves inside akamu container for certbot.
     # Certbot runs on the HOST at port 80.  Akamu validates the HTTP-01
