@@ -259,9 +259,12 @@ services:
     depends_on:
       dogtag-ecc-iot-ca:
         condition: service_healthy
+    environment:
+      KRB5_CONFIG: /etc/krb5.conf
     volumes:
       - ./configs/akamu/ecc-config.toml:/app/conf/config.toml:ro,z
       - ./data/certs/ecc:/certs:ro,z
+      - ./data/certs/ecc/krb5.conf:/etc/krb5.conf:ro,z
       - akamu-ecc-data:/app/data
     extra_hosts:
       - "ecc-root-ca.cert-lab.local:172.28.0.12"
@@ -302,6 +305,8 @@ services:
     volumes:
       - ./configs/kipuka/ecc-config.toml:/etc/kipuka/kipuka.toml:ro
       - ./data/certs/ecc:/etc/kipuka/certs:ro
+      - ./data/certs/ecc/kipuka.keytab:/etc/krb5.keytab:ro,z
+      - ./data/certs/ecc/krb5.conf:/etc/krb5.conf:ro,z
       - kipuka-ecc-data:/var/lib/kipuka
     extra_hosts:
       - "ecc-root-ca.cert-lab.local:172.28.0.12"

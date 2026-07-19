@@ -230,6 +230,44 @@ KRBEOF
         fi
     done
     # No podman cp needed — keytabs are mounted as persistent volumes
+
+    # ── Step 5b: Create demo Kerberos users ────────────────────────────────
+    echo ""
+    echo "--- Step 5b: Demo Kerberos Users ---"
+    for user_spec in "certops:Cert:Operator:certops@${DOMAIN}" "svc-acme:ACME:Service:svc-acme@${DOMAIN}"; do
+        IFS=: read -r u_login u_first u_last u_email <<< "$user_spec"
+        $PODMAN exec freeipa bash -c "
+            echo '${ADMIN_PASSWORD}' | kinit admin 2>/dev/null
+            ipa user-show ${u_login} 2>/dev/null && exit 0
+            ipa user-add ${u_login} --first=${u_first} --last=${u_last} \
+                --email=${u_email} --password <<PASS
+${ADMIN_PASSWORD}
+${ADMIN_PASSWORD}
+PASS
+            ipa user-mod ${u_login} --setattr=krbPasswordExpiration=20271231235959Z 2>/dev/null
+        " 2>/dev/null && ok "User ${u_login} exists" || warn "Failed to create ${u_login}"
+    done
+
+    # Generate keytabs for demo users
+    for u_login in certops svc-acme; do
+        KEYTAB_FILE="${CERTS_DIR}/${u_login}.keytab"
+        if [ -s "$KEYTAB_FILE" ]; then
+            ok "Keytab exists: $KEYTAB_FILE"
+            continue
+        fi
+        info "Creating keytab for ${u_login}@${REALM}..."
+        $PODMAN exec freeipa bash -c "
+            echo '${ADMIN_PASSWORD}' | kinit admin 2>/dev/null
+            ipa-getkeytab -s ipa.${DOMAIN} -p ${u_login}@${REALM} -k /tmp/${u_login}.keytab
+        " 2>/dev/null
+        $PODMAN cp "freeipa:/tmp/${u_login}.keytab" "$KEYTAB_FILE" 2>/dev/null
+        chmod 644 "$KEYTAB_FILE" 2>/dev/null
+        if [ -s "$KEYTAB_FILE" ]; then
+            ok "Keytab created: $KEYTAB_FILE"
+        else
+            warn "Keytab creation failed for ${u_login}"
+        fi
+    done
 fi
 
 echo ""

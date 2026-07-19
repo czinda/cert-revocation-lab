@@ -31,6 +31,13 @@ validate_dnssec = false
 [profiles]
 refresh_interval_secs = 3600
 
+# Kerberos GSSAPI — SPNEGO authentication for EAB credential derivation.
+# Requires a keytab for HTTP/akamu-ecc.cert-lab.local from FreeIPA.
+# Uncomment when FreeIPA is deployed and keytab provisioned.
+#[server.gssapi]
+#keytab_file = "/certs/akamu.keytab"
+#service_name = "HTTP"
+
 [star]
 # RFC 8739 — Short-Term Automatic Renewal
 enabled = true

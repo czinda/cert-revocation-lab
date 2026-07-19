@@ -749,6 +749,27 @@ start_pki_hierarchy() {
         log_info "Dogtag ACME/EST RA initialization handled by init-pki-hierarchy.sh"
     fi
 
+    # Fix SELinux labels and ownership on RSA cert files for kipuka/akamu (uid 1001)
+    if command -v chcon &>/dev/null; then
+        chcon -R -t container_file_t "$SCRIPT_DIR/data/certs/rsa" 2>/dev/null || true
+    fi
+    chown -R 1001:0 "$SCRIPT_DIR/data/certs/rsa" 2>/dev/null || true
+    chmod 640 "$SCRIPT_DIR/data/certs/rsa"/*.key.pem 2>/dev/null || true
+    chmod 640 "$SCRIPT_DIR/data/certs/rsa"/dogtag/*.key.pem 2>/dev/null || true
+    chmod 644 "$SCRIPT_DIR/data/certs/rsa"/*.cert.pem "$SCRIPT_DIR/data/certs/rsa"/*.crt 2>/dev/null || true
+
+    # Restart akamu/kipuka after cert provisioning so they pick up the new certs
+    if [ "$ENROLLMENT_BACKEND" = "akamu" ]; then
+        log_info "Restarting RSA enrollment servers with provisioned certs..."
+        for svc in akamu-rsa kipuka-rsa; do
+            if is_running_as_root; then
+                podman restart "$svc" 2>/dev/null || true
+            else
+                sudo podman restart "$svc" 2>/dev/null || true
+            fi
+        done
+    fi
+
     log_success "PKI hierarchy initialized"
 }
 
@@ -1070,6 +1091,27 @@ start_ecc_pki_hierarchy() {
         fi
     else
         log_info "Dogtag ACME/EST RA initialization handled by init-ecc-pki-hierarchy.sh"
+    fi
+
+    # Fix SELinux labels and ownership on ECC cert files for kipuka/akamu (uid 1001)
+    if command -v chcon &>/dev/null; then
+        chcon -R -t container_file_t "$SCRIPT_DIR/data/certs/ecc" 2>/dev/null || true
+    fi
+    chown -R 1001:0 "$SCRIPT_DIR/data/certs/ecc" 2>/dev/null || true
+    chmod 640 "$SCRIPT_DIR/data/certs/ecc"/*.key.pem 2>/dev/null || true
+    chmod 640 "$SCRIPT_DIR/data/certs/ecc"/dogtag/*.key.pem 2>/dev/null || true
+    chmod 644 "$SCRIPT_DIR/data/certs/ecc"/*.cert.pem "$SCRIPT_DIR/data/certs/ecc"/*.crt 2>/dev/null || true
+
+    # Restart akamu/kipuka after cert provisioning so they pick up the new certs
+    if [ "$ENROLLMENT_BACKEND" = "akamu" ]; then
+        log_info "Restarting ECC enrollment servers with provisioned certs..."
+        for svc in akamu-ecc kipuka-ecc; do
+            if is_running_as_root; then
+                podman restart "$svc" 2>/dev/null || true
+            else
+                sudo podman restart "$svc" 2>/dev/null || true
+            fi
+        done
     fi
 
     log_success "ECC PKI hierarchy initialized"

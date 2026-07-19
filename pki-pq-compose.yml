@@ -329,12 +329,12 @@ services:
     depends_on:
       dogtag-pq-iot-ca:
         condition: service_healthy
+    environment:
+      KRB5_CONFIG: /etc/krb5.conf
     volumes:
       - ./configs/akamu/pq-config.toml:/app/conf/config.toml:ro,z
       - ./data/certs/pq:/certs:ro,z
-      - ./data/certs/akamu-pq.keytab:/etc/krb5.keytab:ro,z
-      - ./configs/krb5.conf:/etc/krb5.conf:ro,z
-      - ./data/certs/ipa-ca.pem:/etc/pki/tls/certs/ipa-ca.pem:ro,z
+      - ./data/certs/pq/krb5.conf:/etc/krb5.conf:ro,z
       - akamu-pq-data:/app/data
       - kryoptic-pq-socket:/var/run/kryoptic:ro
     extra_hosts:
@@ -381,6 +381,8 @@ services:
     volumes:
       - ./configs/kipuka/pq-config.toml:/etc/kipuka/kipuka.toml:ro
       - ./data/certs/pq:/etc/kipuka/certs:ro
+      - ./data/certs/pq/kipuka.keytab:/etc/krb5.keytab:ro,z
+      - ./data/certs/pq/krb5.conf:/etc/krb5.conf:ro,z
       - kipuka-pq-data:/var/lib/kipuka
       - kryoptic-pq-data:/var/lib/softhsm:ro
       - kryoptic-pq-socket:/var/run/kryoptic:ro
