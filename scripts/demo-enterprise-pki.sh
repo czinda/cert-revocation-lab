@@ -8,12 +8,13 @@
 #   2.  Zero-Touch Device Onboarding  — EST enrollment (RFC 7030)
 #   3.  Constrained Device Support    — Server-side key generation (SSKG)
 #   4.  Automated Certificate Lifecycle — ACME directory + capabilities
-#   5.  Identity-Driven Authorization — Kerberos → EAB binding
-#   6.  The Signing Authority         — Dogtag direct issuance
-#   7.  Real-Time Trust Validation    — OCSP pre-revocation check
-#   8.  Incident Response             — Revocation + OCSP confirmation
-#   9.  Security Automation           — Event-driven architecture overview
-#  10.  Enterprise Summary            — Dashboard + key takeaways
+#   5.  Identity-Driven Authorization — Kerberos → EAB binding (ACME)
+#   6.  Kerberos EST Enrollment       — SPNEGO-authenticated EST (no OTP)
+#   7.  The Signing Authority         — Dogtag direct issuance
+#   8.  Real-Time Trust Validation    — OCSP pre-revocation check
+#   9.  Incident Response             — Revocation + OCSP confirmation
+#  10.  Security Automation           — Event-driven architecture overview
+#  11.  Enterprise Summary            — Dashboard + key takeaways
 #
 # Usage:
 #   sudo bash scripts/demo-enterprise-pki.sh              # Full demo
@@ -411,11 +412,12 @@ demo_kerberos_eab() {
     info "In production, the user already has a ticket from their desktop login."
     echo ""
 
-    local keytab="$PROJECT_DIR/data/certs/rsa/admin.keytab"
+    local keytab="$PROJECT_DIR/data/certs/rsa/certops.keytab"
+    local principal="certops@$REALM"
     if [ ! -f "$keytab" ]; then
-        sudo podman exec freeipa ipa-getkeytab -s ipa.cert-lab.local \
-            -p "admin@$REALM" -k /certs/rsa/admin.keytab 2>/dev/null
-        sudo podman exec freeipa chmod 644 /certs/rsa/admin.keytab 2>/dev/null
+        keytab="$PROJECT_DIR/data/certs/rsa/admin.keytab"
+        principal="admin@$REALM"
+        warn "certops keytab not found — falling back to admin"
     fi
 
     cat > "$TMPDIR/krb5.conf" << KRBEOF
@@ -434,8 +436,8 @@ $REALM = {
 cert-lab.local = $REALM
 KRBEOF
 
-    if KRB5_CONFIG="$TMPDIR/krb5.conf" kinit -kt "$keytab" "admin@$REALM" 2>/dev/null; then
-        pass "Kerberos TGT obtained for admin@$REALM"
+    if KRB5_CONFIG="$TMPDIR/krb5.conf" kinit -kt "$keytab" "$principal" 2>/dev/null; then
+        pass "Kerberos TGT obtained for $principal"
         KRB5_CONFIG="$TMPDIR/krb5.conf" klist 2>/dev/null | grep -E "principal|krbtgt" | while IFS= read -r line; do
             info "  $line"
         done
@@ -474,10 +476,112 @@ KRBEOF
 }
 
 # =============================================================================
-# Section 6: The Signing Authority (Dogtag Direct Issuance)
+# Section 6: Kerberos EST Enrollment (SPNEGO, no OTP)
+# =============================================================================
+demo_kerberos_est() {
+    header "Section 6: Kerberos EST Enrollment (SPNEGO)"
+
+    info "Enterprise context: EST enrollment typically requires an OTP for"
+    info "initial trust.  With Kerberos integration, the user's existing"
+    info "domain credential (TGT) authenticates the enrollment — no OTP"
+    info "provisioning step, no shared secret, full audit trail via principal."
+    info "This is how a domain-joined workstation gets its certificate."
+    echo ""
+
+    if ! ipa_available; then
+        skip "FreeIPA not running — Kerberos EST requires the KDC"
+        return
+    fi
+
+    # Reuse krb5.conf from Section 5 or create it
+    if [ ! -f "$TMPDIR/krb5.conf" ]; then
+        cat > "$TMPDIR/krb5.conf" << KRBEOF
+[libdefaults]
+default_realm = $REALM
+dns_lookup_kdc = false
+dns_lookup_realm = false
+rdns = false
+[realms]
+$REALM = {
+    kdc = localhost:8800
+    admin_server = localhost:4640
+}
+[domain_realm]
+.cert-lab.local = $REALM
+cert-lab.local = $REALM
+KRBEOF
+    fi
+
+    local keytab="$PROJECT_DIR/data/certs/rsa/certops.keytab"
+    local principal="certops@$REALM"
+    if [ ! -f "$keytab" ]; then
+        keytab="$PROJECT_DIR/data/certs/rsa/admin.keytab"
+        principal="admin@$REALM"
+    fi
+
+    divider
+    echo -e "  ${BOLD}Step 1: Authenticate as $principal${NC}"
+    echo ""
+
+    if KRB5_CONFIG="$TMPDIR/krb5.conf" kinit -kt "$keytab" "$principal" 2>/dev/null; then
+        pass "Kerberos TGT obtained for $principal"
+    else
+        fail "kinit failed for $principal"; return
+    fi
+
+    divider
+    echo -e "  ${BOLD}Step 2: EST simpleenroll with SPNEGO (no OTP)${NC}"
+    info "The CSR is submitted with Authorization: Negotiate — kipuka"
+    info "validates the SPNEGO token against its keytab and enrolls"
+    info "the certificate without requiring a pre-provisioned OTP."
+    echo ""
+
+    local cn="${principal%%@*}-workstation-$$.cert-lab.local"
+    openssl req -new -newkey rsa:2048 -nodes \
+        -keyout "$TMPDIR/krb-est-key.pem" \
+        -out "$TMPDIR/krb-est-csr.pem" \
+        -subj "/CN=$cn/O=Cert-Lab/C=US" 2>/dev/null
+
+    local csr_b64
+    csr_b64=$(openssl req -in "$TMPDIR/krb-est-csr.pem" -outform DER 2>/dev/null | base64 -w0)
+
+    local kipuka_ip
+    kipuka_ip=$(getent hosts kipuka-rsa.cert-lab.local | awk '{print $1}')
+
+    local http_code
+    http_code=$(KRB5_CONFIG="$TMPDIR/krb5.conf" curl -sk -o "$TMPDIR/krb-est-resp" -w '%{http_code}' \
+        --negotiate -u : \
+        --resolve "kipuka-rsa.cert-lab.local:9443:$kipuka_ip" \
+        -X POST "https://kipuka-rsa.cert-lab.local:9443/.well-known/est/simpleenroll" \
+        -H "Content-Type: application/pkcs10" \
+        -H "Content-Transfer-Encoding: base64" \
+        -d "$csr_b64" 2>/dev/null)
+
+    if [ "$http_code" = "200" ]; then
+        pass "Certificate enrolled via Kerberos/SPNEGO (HTTP $http_code)"
+
+        if cat "$TMPDIR/krb-est-resp" | tr -d '\r\n' | base64 -d 2>/dev/null | \
+            openssl pkcs7 -inform DER -print_certs 2>/dev/null | \
+            openssl x509 -out "$TMPDIR/krb-est-cert.pem" 2>/dev/null; then
+            show_cert "Kerberos-Enrolled Certificate:" "$(cat "$TMPDIR/krb-est-cert.pem")"
+        fi
+
+        echo ""
+        info "No OTP was used — the Kerberos principal ($principal)"
+        info "was the sole authentication factor.  The certificate's audit"
+        info "trail links directly to the authenticated identity."
+        info "Compare: OTP enrollment (Section 2) required admin provisioning."
+    else
+        fail "Kerberos EST enrollment failed (HTTP $http_code)"
+        cat "$TMPDIR/krb-est-resp" 2>/dev/null | head -3
+    fi
+}
+
+# =============================================================================
+# Section 7: The Signing Authority (Dogtag Direct Issuance)
 # =============================================================================
 demo_dogtag_issue() {
-    header "Section 6: The Signing Authority (Dogtag PKI)"
+    header "Section 7: The Signing Authority (Dogtag PKI)"
 
     info "Enterprise context: Dogtag PKI is a FIPS 140-2 validated CA."
     info "Akamu and Kipuka are Registration Authorities — they handle"
@@ -543,7 +647,7 @@ demo_dogtag_issue() {
 # Section 7: Real-Time Trust Validation (OCSP)
 # =============================================================================
 demo_ocsp_check() {
-    header "Section 7: Real-Time Trust Validation (OCSP)"
+    header "Section 8: Real-Time Trust Validation (OCSP)"
 
     info "Enterprise context: OCSP (RFC 6960) provides real-time certificate"
     info "status.  This lab uses a DEDICATED OCSP responder — separate from"
@@ -552,7 +656,7 @@ demo_ocsp_check() {
     echo ""
 
     if [ -z "$DEMO_SERIAL" ]; then
-        warn "No certificate from Section 6 — running Section 6 first"
+        warn "No certificate from Section 7 — running Section 7 first"
         demo_dogtag_issue
     fi
 
@@ -586,7 +690,7 @@ demo_ocsp_check() {
 # Section 8: Incident Response (Revocation)
 # =============================================================================
 demo_revocation() {
-    header "Section 8: Incident Response (Certificate Revocation)"
+    header "Section 9: Incident Response (Certificate Revocation)"
 
     info "Enterprise context: When a private key is compromised, the"
     info "certificate must be revoked IMMEDIATELY.  The revocation reason"
@@ -596,7 +700,7 @@ demo_revocation() {
     echo ""
 
     if [ -z "$DEMO_SERIAL" ]; then
-        warn "No certificate from Section 6 — running Section 6 first"
+        warn "No certificate from Section 7 — running Section 7 first"
         demo_dogtag_issue
     fi
 
@@ -635,7 +739,7 @@ demo_revocation() {
     fi
 
     echo ""
-    info "In the full event-driven flow (Section 9), this revocation"
+    info "In the full event-driven flow (Section 10), this revocation"
     info "would be triggered automatically by a security event from the"
     info "EDR/SIEM → Kafka → Event-Driven Ansible → Dogtag pipeline."
     info "Mean time to revoke: seconds, not hours."
@@ -645,7 +749,7 @@ demo_revocation() {
 # Section 9: Security Automation (Event-Driven Architecture)
 # =============================================================================
 demo_eda_architecture() {
-    header "Section 9: Security Automation (Event-Driven Architecture)"
+    header "Section 10: Security Automation (Event-Driven Architecture)"
 
     info "Enterprise context: Event-Driven Ansible (EDA) connects security"
     info "monitoring (EDR, SIEM, XDR) to the PKI revocation pipeline."
@@ -704,7 +808,7 @@ demo_eda_architecture() {
 # Section 10: Enterprise Summary
 # =============================================================================
 demo_summary() {
-    header "Section 10: Enterprise Summary"
+    header "Section 11: Enterprise Summary"
 
     echo -e "  ${BOLD}Protocol Coverage:${NC}"
     echo -e "    EST  (RFC 7030) — Device enrollment, server-side keygen, re-enrollment"
@@ -757,10 +861,11 @@ run_section 2  && demo_est_enrollment
 run_section 3  && demo_sskg
 run_section 4  && demo_acme_directory
 run_section 5  && demo_kerberos_eab
-run_section 6  && demo_dogtag_issue
-run_section 7  && demo_ocsp_check
-run_section 8  && demo_revocation
-run_section 9  && demo_eda_architecture
-run_section 10 && demo_summary
+run_section 6  && demo_kerberos_est
+run_section 7  && demo_dogtag_issue
+run_section 8  && demo_ocsp_check
+run_section 9  && demo_revocation
+run_section 10 && demo_eda_architecture
+run_section 11 && demo_summary
 
 exit $([ "$FAILURES" -eq 0 ] && echo 0 || echo 1)
