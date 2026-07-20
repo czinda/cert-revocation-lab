@@ -45,11 +45,12 @@ eab_master_secret = "Y2VydC1sYWItZWFiLW1hc3Rlci1zZWNyZXQtMzJieXRlcyE"
 [profiles]
 refresh_interval_secs = 3600
 
-# ── EAB / Kerberos Binding ───────────────────────────────────────────────
-# EAB credentials are derived from Kerberos principals via HKDF-SHA256.
-# GET /acme/eab with Authorization: Negotiate returns (kid, hmac_key).
-# To enforce EAB on all accounts, set external_account_required = true
-# in the ACME directory meta (akamu config, not here).
+# ── Admin API ────────────────────────────────────────────────────────────
+# NOT available in Dogtag RA mode — akamu requires a local signing key to
+# issue admin session certificates. The default CA is Dogtag-backed
+# (external signer), so /admin/* endpoints are disabled.
+# Use the lab CLI (lab acme-certs, lab acme-status) for equivalent queries
+# or query the Dogtag IoT Sub-CA REST API directly.
 
 [star]
 # RFC 8739 — Short-Term Automatic Renewal
