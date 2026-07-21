@@ -494,13 +494,14 @@ def acme_issue(
 
     acme_url = _get_acme_url(pki_type)
     if acme_url is None:
-        console.print(f"[red]✗ ACME not available for {pki_type.value} PKI (backend={ENROLLMENT_BACKEND})[/red]")
+        console.print(f"[red]✗ ACME not available for {pki_type.value} PKI (server={ENROLLMENT_BACKEND})[/red]")
         raise typer.Exit(1)
 
     console.print(f"\n[bold cyan]ACME Certificate Issuance[/bold cyan]\n")
     console.print(f"  Domain:   {domain}")
     console.print(f"  PKI:      {pki_type.value.upper()}")
-    console.print(f"  Backend:  {'akamu' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag'}")
+    console.print(f"  Server:   {'akamu (ACME RA)' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag (ACME RA)'}")
+    console.print(f"  CA:       Dogtag IoT Sub-CA")
     console.print(f"  Endpoint: {acme_url}/directory")
     console.print()
 
@@ -578,7 +579,7 @@ def est_enroll(
 
     est_url = _get_est_url(pki_type)
     if est_url is None:
-        console.print(f"[red]✗ EST not available for {pki_type.value} PKI (backend={ENROLLMENT_BACKEND})[/red]")
+        console.print(f"[red]✗ EST not available for {pki_type.value} PKI (server={ENROLLMENT_BACKEND})[/red]")
         raise typer.Exit(1)
 
     # Generate device name if not provided
@@ -590,7 +591,8 @@ def est_enroll(
     console.print(f"\n[bold cyan]EST Certificate Enrollment[/bold cyan]\n")
     console.print(f"  Device:   {device_fqdn}")
     console.print(f"  PKI:      {pki_type.value.upper()}")
-    console.print(f"  Backend:  {'akamu' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag'}")
+    console.print(f"  Server:   {'kipuka (EST RA)' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag (EST RA)'}")
+    console.print(f"  CA:       Dogtag IoT Sub-CA")
     console.print(f"  Endpoint: {est_url}")
 
     # Auto-generate OTP if not provided and using kipuka backend
@@ -700,7 +702,8 @@ def est_gssapi_enroll(
     console.print(f"\n[bold cyan]EST GSSAPI Certificate Enrollment[/bold cyan]\n")
     console.print(f"  Device:    [bold]{device_fqdn}[/bold]")
     console.print(f"  PKI:       [bold]{pki_type.value.upper()}[/bold]")
-    console.print(f"  Backend:   [bold]{ENROLLMENT_BACKEND}[/bold]")
+    console.print(f"  Server:    [bold]{'kipuka (EST RA)' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag (EST RA)'}[/bold]")
+    console.print(f"  CA:        [bold]Dogtag IoT Sub-CA[/bold]")
     console.print(f"  Endpoint:  [bold]{est_url}[/bold]")
     console.print(f"  Principal: [bold]{principal}@{realm}[/bold]")
     console.print(f"  Auth:      [bold]GSSAPI (Kerberos SPNEGO)[/bold]")
@@ -1216,12 +1219,12 @@ def est_cacerts(
     """
     est_url = _get_est_url(pki_type)
     if est_url is None:
-        console.print(f"[red]✗ EST not available for {pki_type.value} PKI (backend={ENROLLMENT_BACKEND})[/red]")
+        console.print(f"[red]✗ EST not available for {pki_type.value} PKI (server={ENROLLMENT_BACKEND})[/red]")
         raise typer.Exit(1)
 
     console.print(f"\n[bold cyan]EST CA Certificates[/bold cyan]\n")
     console.print(f"  PKI:      {pki_type.value.upper()}")
-    console.print(f"  Backend:  {'akamu' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag'}")
+    console.print(f"  Server:   {'kipuka (EST RA)' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag (EST RA)'}")
     console.print(f"  Endpoint: {est_url}/cacerts")
     console.print()
 
@@ -1292,7 +1295,7 @@ def est_reenroll(
 
     est_url = _get_est_url(pki_type)
     if est_url is None:
-        console.print(f"[red]EST not available for {pki_type.value} PKI (backend={ENROLLMENT_BACKEND})[/red]")
+        console.print(f"[red]EST not available for {pki_type.value} PKI (server={ENROLLMENT_BACKEND})[/red]")
         raise typer.Exit(1)
 
     if not device:
@@ -1303,7 +1306,8 @@ def est_reenroll(
     console.print(f"\n[bold cyan]EST Certificate Renewal (simplereenroll)[/bold cyan]\n")
     console.print(f"  Device:   {device_fqdn}")
     console.print(f"  PKI:      {pki_type.value.upper()}")
-    console.print(f"  Backend:  {'akamu' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag'}")
+    console.print(f"  Server:   {'kipuka (EST RA)' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag (EST RA)'}")
+    console.print(f"  CA:       Dogtag IoT Sub-CA")
     console.print(f"  Endpoint: {est_url}")
     console.print()
 
@@ -3278,8 +3282,10 @@ def enrollment_status_cmd():
     Checks every deployed PKI type's akamu (ACME) and kipuka (EST) instances
     and displays a summary table.
     """
-    console.print(f"\n[bold cyan]Enrollment Backend Status[/bold cyan]")
-    console.print(f"  Backend: [bold]{ENROLLMENT_BACKEND}[/bold]\n")
+    server_label = "akamu (ACME) + kipuka (EST)" if ENROLLMENT_BACKEND == "akamu" else "dogtag (ACME/EST RA)"
+    console.print(f"\n[bold cyan]Enrollment Server Status[/bold cyan]")
+    console.print(f"  Servers:    [bold]{server_label}[/bold]")
+    console.print(f"  Signing CA: [bold]Dogtag IoT Sub-CA[/bold]\n")
 
     with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
         task = progress.add_task("Checking all enrollment endpoints...", total=None)
@@ -3289,7 +3295,7 @@ def enrollment_status_cmd():
     table = Table(show_header=True, header_style="bold")
     table.add_column("PKI", style="cyan", width=5)
     table.add_column("Service", width=8)
-    table.add_column("Backend", width=10)
+    table.add_column("Server", width=10)
     table.add_column("Status", width=12)
     table.add_column("Endpoint")
 
