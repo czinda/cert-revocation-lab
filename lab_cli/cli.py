@@ -3197,7 +3197,9 @@ def est_otp_list_cmd(
         otp_id = str(otp.get("id", "?"))
         entity = otp.get("entity_id", "?")
         expires = otp.get("expires_at", "?")
-        uses = str(otp.get("remaining_uses", otp.get("max_uses", "?")))
+        max_use = otp.get("max_usage", 1)
+        used = otp.get("usage_count", 0)
+        uses = str(max_use - used)
         table.add_row(otp_id, entity, expires, uses)
     console.print(table)
 
