@@ -10,6 +10,18 @@ When an acronym appears for the first time in a script, it's spelled out in pare
 
 ---
 
+## Index Card (00)
+
+### 00 — Demo Index
+
+**What's on screen:** Color-formatted table of contents showing all 22 demos grouped by protocol (EST, ACME, Cross-Protocol) with RFC references, plus the RA architecture diagram.
+
+**Script:**
+
+> This is the index card — an overview of every demo in the suite. Twenty-one recordings covering both enrollment protocols and their shared infrastructure. EST on the left handles device onboarding. ACME on the right handles automated server certificate management. And at the bottom, the architecture that ties them together: two protocol servers, one signing CA.
+
+---
+
 ## EST Protocol — Kipuka (01–10)
 
 *EST (Enrollment over Secure Transport, RFC 7030) is the protocol for device-initiated certificate enrollment. Kipuka is the Rust-based EST server that proxies enrollment requests to the Dogtag IoT Sub-CA (Certificate Authority).*
@@ -192,25 +204,25 @@ When an acronym appears for the first time in a script, it's spelled out in pare
 
 ### 15 — ACME Kerberos EAB
 
-**What's on screen:** `kinit` as certops@CERT-LAB.LOCAL, then `curl --negotiate` to akamu's `/acme/eab` endpoint returning a KID (Key Identifier) and HMAC (Hash-based Message Authentication Code) key.
+**What's on screen:** `kinit` as certops@CERT-LAB.LOCAL, then `demo-eab-enroll-verify.sh` fetches EAB (External Account Binding) credentials via SPNEGO (Simple and Protected GSSAPI Negotiation Mechanism), creates an ACME account with the EAB binding, issues a certificate via the full HTTP-01 flow, and runs `./lab verify` to confirm issuance.
 
 **Script:**
 
-> External Account Binding ties an ACME account to an enterprise identity. We authenticate with a Kerberos ticket, and akamu derives EAB credentials using HKDF-SHA256 (HMAC-based Key Derivation Function with SHA-256). The KID and HMAC key are deterministic — the same Kerberos principal always gets the same credentials.
+> This is the full Kerberos-to-certificate flow for ACME. We authenticate as certops, and akamu derives EAB credentials from the Kerberos principal using HKDF-SHA256 (HMAC-based Key Derivation Function with SHA-256). The KID (Key Identifier) and HMAC (Hash-based Message Authentication Code) key are deterministic — same principal, same credentials every time. Then akamu-cli creates an ACME account bound to those EAB credentials, runs the HTTP-01 challenge, and issues the certificate. At the end, `./lab verify` confirms the certificate is VALID in the Dogtag CA (Certificate Authority).
 >
-> **Why this matters:** Without EAB, anyone who can reach your ACME server can create an account and request certificates — you're relying on network controls alone. With Kerberos EAB, the ACME account is cryptographically bound to a verified identity. Every certificate issued through that account traces back to a specific person or service in your directory. When your CISO asks "who authorized this certificate?", the answer isn't "someone on the network" — it's "certops@CERT-LAB.LOCAL, authenticated via Kerberos at 14:32 UTC."
+> **Why this matters:** Without EAB, anyone who can reach your ACME server can create an account and request certificates — you're relying on network controls alone. With Kerberos EAB, the ACME account is cryptographically bound to a verified identity. Every certificate issued through that account traces back to a specific person or service in your directory. When your CISO (Chief Information Security Officer) asks "who authorized this certificate?", the answer isn't "someone on the network" — it's "certops@CERT-LAB.LOCAL, authenticated via Kerberos at 14:32 UTC."
 
 ---
 
 ### 16 — ACME ARI
 
-**What's on screen:** `curl` to akamu's directory showing the `renewalInfo` endpoint, with an explanation of what ARI (ACME Renewal Information) does.
+**What's on screen:** `demo-ari-query.sh` shows the ARI (ACME Renewal Information) endpoint from the directory, issues a certificate via EST, computes the RFC 9702 certID (`base64url(AKI).base64url(Serial)`), and queries `/acme/renewal-info/{certID}`. Returns 404 for the EST-issued cert because ARI only tracks ACME-issued certificates — the endpoint itself is functional.
 
 **Script:**
 
-> ARI — ACME Renewal Information, RFC 9702. The CA advertises a `renewalInfo` endpoint that tells clients when to renew their certificates. Instead of every client independently deciding to renew 30 days before expiry, the CA suggests a renewal window.
+> ARI — ACME Renewal Information, RFC 9702. We issue a certificate, compute its unique ARI identifier from the Authority Key Identifier and serial number, then query the renewal-info endpoint. The certID format is `base64url(AKI).base64url(Serial)` — a dot-separated pair. For ACME-issued certs, this endpoint returns a suggested renewal window. Our test cert was issued via EST (Enrollment over Secure Transport), so ARI doesn't have data for it — that's expected and confirms the endpoint is protocol-aware.
 >
-> **Why this matters:** Picture 10,000 devices all with certificates expiring on the same day. Without ARI, they all hit the CA simultaneously at the 30-day mark — a thundering herd that overwhelms the CA and causes enrollment failures. ARI spreads the load: each client gets a personalized renewal window. The CA stays healthy, renewals succeed, and no one gets paged at 3 AM because the PKI fell over from a burst of simultaneous requests.
+> **Why this matters:** Picture 10,000 devices all with certificates expiring on the same day. Without ARI, they all hit the CA simultaneously at the 30-day mark — a thundering herd that overwhelms the CA and causes enrollment failures. ARI spreads the load: each client gets a personalized renewal window. The CA stays healthy, renewals succeed, and no one gets paged at 3 AM because the PKI (Public Key Infrastructure) fell over from a burst of simultaneous requests.
 
 ---
 
