@@ -1444,46 +1444,58 @@ def acme_list_certs(pki_type: PKIType) -> ProtocolResult:
 
 
 def acme_revoke_cert(pki_type: PKIType, cert_pem: str, reason: int = 1) -> ProtocolResult:
-    """Revoke a certificate via ACME protocol (RFC 8555 §7.6)."""
-    acme_url = _get_acme_url(pki_type)
-    if acme_url is None:
-        return ProtocolResult(success=False, message=f"ACME not available for {pki_type.value}")
+    """Revoke a certificate via ACME protocol (RFC 8555 §7.6).
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False) as pf:
-        pf.write(cert_pem)
-        cert_file = pf.name
+    Uses akamu-cli revoke which handles JWS signing with the account key.
+    The account key must exist from a prior acme-issue run.
+    """
+    pki = pki_type.value
+    if pki not in CA_CONFIGS or "acme" not in CA_CONFIGS[pki]:
+        return ProtocolResult(success=False, message=f"ACME not available for {pki}")
 
-    try:
-        der_cmd = ["openssl", "x509", "-in", cert_file, "-outform", "DER"]
-        result = subprocess.run(der_cmd, capture_output=True, timeout=10)
-        if result.returncode != 0:
-            return ProtocolResult(success=False, message="Failed to convert cert to DER")
+    ca = CA_CONFIGS[pki]["acme"]
+    cli_acme_url = f"http://localhost:{ca.host_port}/acme/directory"
 
-        cert_b64 = base64.urlsafe_b64encode(result.stdout).decode("ascii").rstrip("=")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cert_file = Path(tmpdir) / "revoke.pem"
+        cert_file.write_text(cert_pem)
 
-        payload = json.dumps({"certificate": cert_b64, "reason": reason})
+        project_dir = Path(__file__).parent.parent
+        certs_dir = project_dir / "data" / "certs" / pki
+
+        acct_key = certs_dir / "account.pem"
+        if not acct_key.exists():
+            return ProtocolResult(
+                success=False,
+                message="No ACME account key found — run ./lab acme-issue first to create one",
+            )
+
         cmd = [
-            "curl", "-sk", "-X", "POST",
-            "-H", "Content-Type: application/jose+json",
-            "--data", payload,
-            f"{acme_url}/revoke-cert",
+            "sudo", "podman", "run", "--rm", "--network", "host",
+            "--entrypoint", "/app/akamu-cli",
+            "-v", f"{tmpdir}:/tmp/revoke:ro",
+            "-v", f"{certs_dir}:/certs:ro",
+            "quay.io/czinda/akamu:latest",
+            "revoke",
+            "--server", cli_acme_url,
+            "--account-key", "/certs/account.pem",
+            "--cert", "/tmp/revoke/revoke.pem",
+            "--reason", str(reason),
         ]
-        cmd.extend(["-w", "\n%{http_code}", "-o", "-"])
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
-            return ProtocolResult(success=False, message=f"Revocation request failed: {result.stderr}")
 
-        lines = result.stdout.strip().rsplit("\n", 1)
-        http_code = lines[-1].strip() if len(lines) > 0 else ""
-        if http_code in ("200", "204"):
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            return ProtocolResult(success=False, message="akamu-cli revoke timed out")
+
+        output = (result.stdout + result.stderr).strip()
+        if result.returncode == 0:
             return ProtocolResult(success=True, message="Certificate revoked via ACME")
 
         return ProtocolResult(
             success=False,
-            message=f"Revocation failed (HTTP {http_code}): {result.stdout[:200]}",
+            message=f"Revocation failed: {output[:300]}",
         )
-    finally:
-        Path(cert_file).unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
