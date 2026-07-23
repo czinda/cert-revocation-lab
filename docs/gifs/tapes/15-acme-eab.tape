@@ -22,4 +22,4 @@ Type "# Step 2: Fetch EAB credentials, issue cert, verify"
 Enter
 Type `bash scripts/demo-eab-enroll-verify.sh`
 Enter
-Sleep 20s
+Sleep 45s
