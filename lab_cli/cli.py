@@ -3110,6 +3110,7 @@ def star_status(
 @app.command("est-status")
 def est_status_cmd(
     pki_type: PKIType = typer.Option(PKIType.RSA, "--pki-type", "-p", help="PKI type"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show agent cert, keytab, and GSSAPI config"),
 ):
     """Show kipuka EST server health (DB, HSM, CA backends, uptime)."""
     result = est_get_status(pki_type)
@@ -3127,16 +3128,87 @@ def est_status_cmd(
         console.print(f"  [dim]Admin API requires authentication — showing EST cacerts probe only[/dim]")
         return
 
-    for key in ["status", "uptime", "version"]:
+    for key in ["status", "version"]:
         if key in d:
             console.print(f"  {key}: {d[key]}")
 
-    for subsys in ["db", "hsm", "ca"]:
+    uptime = d.get("uptime_secs")
+    if uptime is not None:
+        hours = int(uptime) // 3600
+        mins = (int(uptime) % 3600) // 60
+        console.print(f"  uptime: {hours}h {mins}m")
+
+    for subsys in ["database", "db", "hsm"]:
         if subsys in d:
             sub = d[subsys]
+            if sub is None:
+                console.print(f"  {subsys}: [dim]not configured[/dim]")
+                continue
             sub_status = sub.get("status", "?") if isinstance(sub, dict) else sub
             color = "green" if sub_status == "healthy" else "yellow"
             console.print(f"  {subsys}: [{color}]{sub_status}[/{color}]")
+
+    ca_count = d.get("ca_count")
+    healthy_ca = d.get("healthy_ca_count")
+    if ca_count is not None:
+        color = "green" if healthy_ca == ca_count else "yellow"
+        console.print(f"  ca backends: [{color}]{healthy_ca}/{ca_count} healthy[/{color}]")
+
+    if verbose:
+        import subprocess
+        project_dir = Path(__file__).parent.parent
+        pki = pki_type.value
+        if pki == "pqc":
+            pki = "pq"
+        certs_dir = project_dir / "data" / "certs" / pki
+        config_file = project_dir / "configs" / "kipuka" / f"{'rsa' if pki_type == PKIType.RSA else pki}-config.toml"
+
+        console.print(f"\n  [bold]Agent Identity (mTLS to Dogtag)[/bold]")
+        agent_cert = certs_dir / "dogtag" / "agent.pem"
+        if agent_cert.exists():
+            try:
+                out = subprocess.run(
+                    ["openssl", "x509", "-in", str(agent_cert), "-noout", "-subject", "-issuer"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                for line in out.stdout.strip().splitlines():
+                    console.print(f"    {line}")
+            except Exception:
+                console.print(f"    [yellow]could not read agent cert[/yellow]")
+        else:
+            console.print(f"    [red]✗ agent cert not found: {agent_cert}[/red]")
+
+        console.print(f"\n  [bold]Kerberos Keytab (GSSAPI Enrollment)[/bold]")
+        keytab = certs_dir / "kipuka.keytab"
+        if keytab.exists() and keytab.stat().st_size > 0:
+            try:
+                out = subprocess.run(
+                    ["klist", "-kt", str(keytab)],
+                    capture_output=True, text=True, timeout=5,
+                )
+                for line in out.stdout.strip().splitlines():
+                    console.print(f"    {line}")
+            except Exception:
+                console.print(f"    [green]✓ keytab exists[/green] ({keytab.stat().st_size} bytes)")
+        else:
+            console.print(f"    [yellow]⚠ keytab empty or missing — GSSAPI enrollment unavailable[/yellow]")
+
+        console.print(f"\n  [bold]GSSAPI Config[/bold]")
+        if config_file.exists():
+            in_gssapi = False
+            shown = False
+            for line in config_file.read_text().splitlines():
+                if "gssapi" in line.lower() and not line.strip().startswith("#"):
+                    in_gssapi = True
+                if in_gssapi:
+                    console.print(f"    {line}")
+                    shown = True
+                    if line.strip() == "" and shown:
+                        break
+            if not shown:
+                console.print(f"    [yellow]⚠ GSSAPI not configured in {config_file.name}[/yellow]")
+        else:
+            console.print(f"    [dim]config file not found[/dim]")
 
 
 @app.command("est-otp-generate")
