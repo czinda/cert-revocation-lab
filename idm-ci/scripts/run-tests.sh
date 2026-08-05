@@ -17,7 +17,8 @@ PKI_MODE="${PKI_MODE:-all}"
 GIT_BRANCH="${GIT_BRANCH:-main}"
 BUILD_DOGTAG="${BUILD_DOGTAG:-false}"
 RUN_FULL_TESTS="${RUN_FULL_TESTS:-false}"
-INVENTORY=".mrack/ansible-inventory.yaml"
+ENROLLMENT_BACKEND="${ENROLLMENT_BACKEND:-akamu}"
+INVENTORY="${INVENTORY:-.mrack/ansible-inventory.yaml}"
 
 if [ ! -f "$INVENTORY" ]; then
     echo "ERROR: $INVENTORY not found. Run prepare-hosts.sh first."
@@ -28,6 +29,7 @@ echo "=== Deploying cert-revocation-lab ==="
 echo "  PKI Mode:      $PKI_MODE"
 echo "  Branch:        $GIT_BRANCH"
 echo "  Build Dogtag:  $BUILD_DOGTAG"
+echo "  Enrollment:    $ENROLLMENT_BACKEND"
 echo "  Full tests:    $RUN_FULL_TESTS"
 echo ""
 
@@ -35,7 +37,8 @@ ansible-playbook -i "$INVENTORY" \
     ansible/prepare-certlab.yml \
     -e "cert_lab_pki_mode=$PKI_MODE" \
     -e "cert_lab_repo_branch=$GIT_BRANCH" \
-    -e "cert_lab_build_dogtag=$BUILD_DOGTAG"
+    -e "cert_lab_build_dogtag=$BUILD_DOGTAG" \
+    -e "cert_lab_enrollment_backend=$ENROLLMENT_BACKEND"
 
 if [ "$RUN_FULL_TESTS" = "true" ]; then
     echo ""

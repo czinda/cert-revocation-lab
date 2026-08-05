@@ -8,7 +8,7 @@ ssh_key_filename: ~/.ssh/id_ed25519
 
 post_provisioning_check:
     ssh:
-        enabled: true
+        enabled: false
         port: 22
         timeout: 10
 
@@ -17,7 +17,8 @@ beaker:
     max_retry: 3
 
     distros:
-        fedora-latest: Fedora-42%
+        fedora-latest: Fedora-43%
+        fedora-43: Fedora-43%
         fedora-42: Fedora-42%
         fedora-41: Fedora-41%
         fedora-40: Fedora-40%
@@ -28,6 +29,7 @@ beaker:
 
     distro_variants:
         default: BaseOS
+        Fedora-43%: Server
         Fedora-42%: Server
         Fedora-41%: Server
         Fedora-40%: Server
@@ -40,8 +42,15 @@ beaker:
                     _value: 16
                     _op: ">="
                 - memory:
-                    _value: 65536
+                    _value: 32768
                     _op: ">="
+                - or:
+                    - hostname:
+                        _value: "%.rdu2.%"
+                        _op: "like"
+                    - hostname:
+                        _value: "%.bos.%"
+                        _op: "like"
 
     pubkey: ~/.ssh/id_ed25519.pub
     reserve_duration: 259200

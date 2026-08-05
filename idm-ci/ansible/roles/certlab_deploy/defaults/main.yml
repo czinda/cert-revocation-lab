@@ -24,6 +24,15 @@ cert_lab_deploy_dir: /opt/cert-revocation-lab
 cert_lab_pki_mode: all
 
 # =============================================================================
+# Enrollment Backend
+# =============================================================================
+# Controls which ACME/EST servers are deployed:
+#   akamu  -> Akamu (ACME) + Kipuka (EST), Rust-based RAs (default)
+#   dogtag -> Dogtag built-in ACME + EST lightweight RA instances
+
+cert_lab_enrollment_backend: akamu
+
+# =============================================================================
 # Custom Dogtag Build
 # =============================================================================
 # When true, builds Dogtag PKI from upstream master branch before deploying.

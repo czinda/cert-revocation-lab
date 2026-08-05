@@ -284,7 +284,7 @@
       {{ {'rsa': '--rsa', 'ecc': '--ecc', 'pqc': '--pqc',
           'dual': '--dual', 'all': '--all'}[cert_lab_pki_mode | default('all')] }}
 
-- name: "Run start-lab.sh {{ _pki_flag }}"
+- name: "Run start-lab.sh {{ _pki_flag }} (backend={{ cert_lab_enrollment_backend | default('akamu') }})"
   ansible.builtin.command:
     cmd: "bash start-lab.sh {{ _pki_flag }}"
     chdir: "{{ cert_lab_deploy_dir }}"
@@ -293,6 +293,7 @@
   changed_when: true
   environment:
     NONINTERACTIVE: "1"
+    ENROLLMENT_BACKEND: "{{ cert_lab_enrollment_backend | default('akamu') }}"
 
 # =========================================================================
 # Phase 10: EDA Authentication Setup

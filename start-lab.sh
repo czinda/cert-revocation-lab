@@ -712,10 +712,19 @@ start_pki_hierarchy() {
             fi
         done
 
-        # Step 4: Start enrollment servers (akamu/kipuka)
+        # Step 4: Start enrollment servers
         if [ "$ENROLLMENT_BACKEND" = "akamu" ]; then
             log_info "Starting enrollment servers (akamu + kipuka)..."
             for svc in dnsmasq-rsa kryoptic-hsm akamu-rsa kipuka-rsa; do
+                if is_rootful_running "$svc"; then
+                    log_success "$svc already running"
+                else
+                    _podman_start "$svc" || log_warn "Failed to start $svc (non-fatal)"
+                fi
+            done
+        elif [ "$ENROLLMENT_BACKEND" = "dogtag" ]; then
+            log_info "Starting enrollment servers (dogtag EST + ACME RA)..."
+            for svc in dogtag-acme-ca dogtag-est-ca; do
                 if is_rootful_running "$svc"; then
                     log_success "$svc already running"
                 else

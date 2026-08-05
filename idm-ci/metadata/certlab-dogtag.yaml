@@ -1,0 +1,13 @@
+---
+# mrack host definition for cert-revocation-lab (Dogtag enrollment backend)
+#
+# Separate topology from certlab.yaml so both machines can coexist:
+#   certlab.yaml        -> akamu/kipuka (default) enrollment backend
+#   certlab-dogtag.yaml -> dogtag built-in ACME/EST RA backend
+
+domains:
+  - name: certlab-dogtag.test
+    hosts:
+      - name: certlab.certlab-dogtag.test
+        group: certlab
+        os: fedora-43

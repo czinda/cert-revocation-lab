@@ -184,7 +184,7 @@ EOF
 class=org.dogtagpki.acme.issuer.PKIIssuer
 url=${INTERMEDIATE_CA_URL}
 profile=acmeServerCert
-username=admin
+username=caadmin
 password=${PKI_PASSWORD}
 EOF
 
