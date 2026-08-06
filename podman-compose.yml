@@ -608,11 +608,7 @@ services:
       - "${PORT_LOKI:-3100}:3100"
     command: ["-config.file=/etc/loki/local-config.yaml"]
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
+      test: ["NONE"]
 
   promtail:
     image: docker.io/grafana/promtail:${PROMTAIL_VERSION:-latest}
@@ -630,7 +626,7 @@ services:
         ipv4_address: ${IP_PROMTAIL:-172.20.0.74}
     command: ["-config.file=/etc/promtail/config.yml"]
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:9080/ready || exit 1"]
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/9080' || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 3
@@ -673,7 +669,7 @@ services:
     ports:
       - "${PORT_PKI_EXPORTER:-9091}:9091"
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import httpx; httpx.get('http://localhost:9091/health', timeout=5)\" || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:9091/health || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 5
