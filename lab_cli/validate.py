@@ -678,7 +678,7 @@ def tier_3_kafka(config: LabConfig, auto_fix: bool = False) -> TestCategory:
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(5)
-        result = sock.connect_ex(("localhost", 9092))
+        result = sock.connect_ex(("kafka.cert-lab.local", 9092))
         sock.close()
         if result == 0:
             category.tests.append(TestCase(
@@ -870,7 +870,8 @@ def tier_4_pki(config: LabConfig, auto_fix: bool = False) -> TestCategory:
             status = get_container_status(ca_container, rootful=True)
             if status == "running":
                 # Check if CA is responding via host port mapping
-                url = f"https://localhost:{port}/ca/admin/ca/getStatus"
+                ca_host = ca_container.replace("dogtag-", "") + ".cert-lab.local"
+                url = f"https://{ca_host}:{port}/ca/admin/ca/getStatus"
                 success, _, body = check_http_endpoint(url, timeout=10.0, verify_ssl=False)
                 if success and "running" in body.lower():
                     category.tests.append(TestCase(
@@ -999,10 +1000,7 @@ def tier_5_freeipa(config: LabConfig, auto_fix: bool = False) -> TestCategory:
         message="running",
     ))
 
-    # Check if FreeIPA is responding via host port mapping
-    # Use localhost since FreeIPA runs rootful and ipa.cert-lab.local
-    # may resolve to a rootless network IP that can't reach it
-    url = "https://localhost:4443/ipa/config/ca.crt"
+    url = "https://ipa.cert-lab.local:4443/ipa/config/ca.crt"
     headers = {"Host": "ipa.cert-lab.local"}
 
     freeipa_ready = False
@@ -1199,7 +1197,8 @@ def tier_8_security_tools(config: LabConfig, auto_fix: bool = False) -> TestCate
                 continue
 
         # Check health endpoint
-        url = f"http://localhost:{port}{health_path}"
+        svc_host = f"{container}.cert-lab.local"
+        url = f"http://{svc_host}:{port}{health_path}"
         if wait_for_http(url, max_wait=TIMEOUTS["mock"]):
             # Check Kafka connection
             success, _, body = check_http_endpoint(url)
@@ -1246,7 +1245,8 @@ def tier_8_security_tools(config: LabConfig, auto_fix: bool = False) -> TestCate
         status = get_container_status(container, rootful=False)
 
         if status == "running":
-            url = f"http://localhost:{port}{health_path}"
+            svc_host = f"{container}.cert-lab.local"
+            url = f"http://{svc_host}:{port}{health_path}"
             if wait_for_http(url, max_wait=30):
                 category.tests.append(TestCase(
                     name=container,

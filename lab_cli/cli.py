@@ -2105,7 +2105,7 @@ def validate(
 def ct_submit(
     pki_type: str = typer.Option("rsa", "--pki-type", "-p", help="PKI type (rsa, ecc, pqc)"),
     ca_level: str = typer.Option("iot", "--ca-level", "-l", help="CA level to import from"),
-    ct_url: str = typer.Option("http://localhost:8086", "--ct-url", help="CT log URL"),
+    ct_url: str = typer.Option("http://ct-log.cert-lab.local:8086", "--ct-url", help="CT log URL"),
     max_certs: int = typer.Option(100, "--max", help="Max certificates to import"),
 ):
     """Submit certificates from a Dogtag CA to the CT log."""
@@ -2144,7 +2144,7 @@ def ct_verify(
     serial: str = typer.Option(..., "--serial", "-s", help="Certificate serial number (hex)"),
     device_id: Optional[str] = typer.Option(None, "--device-id", "-d", help="Device hostname (triggers Kafka event if not found)"),
     pki_type: str = typer.Option("rsa", "--pki-type", "-p", help="PKI type (rsa, ecc, pqc)"),
-    ct_url: str = typer.Option("http://localhost:8086", "--ct-url", help="CT log URL"),
+    ct_url: str = typer.Option("http://ct-log.cert-lab.local:8086", "--ct-url", help="CT log URL"),
 ):
     """Verify a certificate against the CT log."""
     import httpx
@@ -2181,7 +2181,7 @@ def ct_verify(
 
 @app.command("ct-stats")
 def ct_stats(
-    ct_url: str = typer.Option("http://localhost:8086", "--ct-url", help="CT log URL"),
+    ct_url: str = typer.Option("http://ct-log.cert-lab.local:8086", "--ct-url", help="CT log URL"),
 ):
     """Show CT log statistics."""
     import httpx
@@ -2343,7 +2343,7 @@ def policy_check(
     validity: int = typer.Option(365, "--validity", help="Validity in days"),
     org: str = typer.Option("Cert-Lab", "--org", "-o", help="Organization"),
     country: str = typer.Option("US", "--country", help="Country code"),
-    policy_url: str = typer.Option("http://localhost:8089", "--policy-url", help="Policy engine URL"),
+    policy_url: str = typer.Option("http://policy.cert-lab.local:8089", "--policy-url", help="Policy engine URL"),
 ):
     """Validate a certificate request against the policy engine."""
     import httpx
@@ -2392,7 +2392,7 @@ def policy_check(
 
 @app.command("crl-list")
 def crl_list(
-    cdp_url: str = typer.Option("http://localhost:8088", "--cdp-url", help="CDP server URL"),
+    cdp_url: str = typer.Option("http://crl.cert-lab.local:8088", "--cdp-url", help="CDP server URL"),
 ):
     """List available CRLs from the CDP server."""
     import httpx
@@ -2433,7 +2433,7 @@ def crl_list(
 def crl_check(
     serial: str = typer.Argument(..., help="Certificate serial number to check"),
     ca_label: str = typer.Option("rsa-intermediate", "--ca", help="CA label (e.g., rsa-root, ecc-intermediate)"),
-    cdp_url: str = typer.Option("http://localhost:8088", "--cdp-url", help="CDP server URL"),
+    cdp_url: str = typer.Option("http://crl.cert-lab.local:8088", "--cdp-url", help="CDP server URL"),
 ):
     """Check if a serial number appears in a CRL from the CDP server."""
     import subprocess

@@ -92,31 +92,17 @@ def _can_resolve(hostname: str) -> bool:
 
 
 def _build_url(pki_type: PKIType, ca_level: str, suffix: str = "") -> Optional[str]:
-    """Build a URL for a CA from CA_CONFIGS.
+    """Build a URL for a CA from CA_CONFIGS using host_url.
 
-    When the container hostname resolves via DNS, uses the container's
-    internal URL (hostname + container port) — this reaches the service
-    directly on its network IP. When DNS is unavailable, falls back to
-    localhost + host_port (the port-mapped path through the host).
-
-    When http_port is set, forces HTTP scheme (for PQ where TLS isn't
-    available on the client side).
+    Uses CAConfig.host_url which constructs hostname:host_port URLs.
+    The *.cert-lab.local wildcard DNS resolves to 127.0.0.1, so the
+    host_port (the externally-mapped port) is always correct.
     """
     pki = pki_type.value
     if pki not in CA_CONFIGS or ca_level not in CA_CONFIGS[pki]:
         return None
     ca = CA_CONFIGS[pki][ca_level]
-
-    if ca.http_port and _can_resolve(ca.hostname):
-        return f"http://{ca.hostname}:{ca.http_port}{suffix}"
-    if ca.http_port:
-        return f"http://localhost:{ca.http_port}{suffix}"
-
-    if _can_resolve(ca.hostname):
-        return f"{ca.url}{suffix}"
-
-    scheme = "http" if ca.url.startswith("http://") else "https"
-    return f"{scheme}://localhost:{ca.host_port}{suffix}"
+    return f"{ca.host_url}{suffix}"
 
 
 def _get_acme_url(pki_type: PKIType) -> Optional[str]:
@@ -178,7 +164,7 @@ def _acme_via_akamu_cli(acme_url: str, domain: str, container: str, pki_type: PK
     pki = pki_type.value
     if pki in CA_CONFIGS and "acme" in CA_CONFIGS[pki]:
         ca = CA_CONFIGS[pki]["acme"]
-        cli_acme_url = f"http://localhost:{ca.host_port}/acme"
+        cli_acme_url = f"http://{ca.hostname}:{ca.host_port}/acme"
         akamu_host = ca.hostname
     else:
         cli_acme_url = acme_url
@@ -1454,7 +1440,7 @@ def acme_revoke_cert(pki_type: PKIType, cert_pem: str, reason: int = 1) -> Proto
         return ProtocolResult(success=False, message=f"ACME not available for {pki}")
 
     ca = CA_CONFIGS[pki]["acme"]
-    cli_acme_url = f"http://localhost:{ca.host_port}/acme/directory"
+    cli_acme_url = f"http://{ca.hostname}:{ca.host_port}/acme/directory"
 
     with tempfile.TemporaryDirectory() as tmpdir:
         cert_file = Path(tmpdir) / "revoke.pem"

@@ -31,6 +31,19 @@ class EventSource(str, Enum):
     SIEM = "siem"
 
 
+LAB_DOMAIN = os.getenv("LAB_DOMAIN", "cert-lab.local")
+
+
+def _service_url(hostname: str, port: str | int, scheme: str = "http") -> str:
+    """Build a service URL using the DNS hostname.
+
+    All *.cert-lab.local hostnames resolve to 127.0.0.1 via dnsmasq,
+    so hostname:port and localhost:port reach the same place — but the
+    hostname form is self-documenting in CLI output and logs.
+    """
+    return f"{scheme}://{hostname}.{LAB_DOMAIN}:{port}"
+
+
 PQ_OID_MAP = {
     "2.16.840.1.101.3.4.3.17": "ML-DSA-44",
     "2.16.840.1.101.3.4.3.18": "ML-DSA-65",
@@ -67,19 +80,10 @@ class CAConfig:
 
         http_port forces HTTP scheme (PQ mode where TLS isn't available).
         """
-        import socket
         if self.http_port:
-            try:
-                socket.getaddrinfo(self.hostname, None, socket.AF_INET, socket.SOCK_STREAM)
-                return f"http://{self.hostname}:{self.http_port}"
-            except socket.gaierror:
-                return f"http://localhost:{self.http_port}"
-        try:
-            socket.getaddrinfo(self.hostname, None, socket.AF_INET, socket.SOCK_STREAM)
-            return self.url
-        except socket.gaierror:
-            scheme = "http" if self.url.startswith("http://") else "https"
-            return f"{scheme}://localhost:{self.host_port}"
+            return f"http://{self.hostname}:{self.http_port}"
+        scheme = "http" if self.url.startswith("http://") else "https"
+        return f"{scheme}://{self.hostname}:{self.host_port}"
 
 
 # Enrollment backend: "akamu" (Akamu ACME + Kipuka EST) or "dogtag" (Dogtag RAs)
@@ -247,15 +251,15 @@ SIEM_ALERT_TYPES: dict[str, str] = {
 class LabConfig:
     """Main configuration for the lab CLI."""
 
-    # URLs (configurable via PORT_* env vars for shared hosts)
-    edr_url: str = field(default_factory=lambda: f"http://localhost:{os.getenv('PORT_EDR', '8082')}")
-    siem_url: str = field(default_factory=lambda: f"http://localhost:{os.getenv('PORT_SIEM', '8083')}")
-    ct_log_url: str = field(default_factory=lambda: f"http://localhost:{os.getenv('PORT_CT_LOG', '8086')}")
-    crl_cdp_url: str = field(default_factory=lambda: f"http://localhost:{os.getenv('PORT_CRL', '8088')}")
-    policy_engine_url: str = field(default_factory=lambda: f"http://localhost:{os.getenv('PORT_POLICY', '8089')}")
-    chain_visualizer_url: str = field(default_factory=lambda: f"http://localhost:{os.getenv('PORT_CHAIN_VIZ', '8090')}")
-    pin_validator_url: str = field(default_factory=lambda: f"http://localhost:{os.getenv('PORT_PIN_VALIDATOR', '8091')}")
-    kmip_server_url: str = field(default_factory=lambda: f"http://localhost:{os.getenv('PORT_KMIP_API', '8092')}")
+    # Service URLs — use DNS hostnames (*.cert-lab.local resolves to 127.0.0.1 via dnsmasq)
+    edr_url: str = field(default_factory=lambda: _service_url("edr", os.getenv("PORT_EDR", "8082")))
+    siem_url: str = field(default_factory=lambda: _service_url("siem", os.getenv("PORT_SIEM", "8083")))
+    ct_log_url: str = field(default_factory=lambda: _service_url("ct-log", os.getenv("PORT_CT_LOG", "8086")))
+    crl_cdp_url: str = field(default_factory=lambda: _service_url("crl", os.getenv("PORT_CRL", "8088")))
+    policy_engine_url: str = field(default_factory=lambda: _service_url("policy", os.getenv("PORT_POLICY", "8089")))
+    chain_visualizer_url: str = field(default_factory=lambda: _service_url("chain-viz", os.getenv("PORT_CHAIN_VIZ", "8090")))
+    pin_validator_url: str = field(default_factory=lambda: _service_url("pin-validator", os.getenv("PORT_PIN_VALIDATOR", "8091")))
+    kmip_server_url: str = field(default_factory=lambda: _service_url("kmip", os.getenv("PORT_KMIP_API", "8092")))
 
     # Domain
     lab_domain: str = "cert-lab.local"
@@ -301,14 +305,14 @@ class LabConfig:
         # so the PORT_* values were not yet available.
         self.admin_password = os.getenv("ADMIN_PASSWORD", "RedHat123")
         self.pki_admin_password = os.getenv("PKI_ADMIN_PASSWORD", self.admin_password)
-        self.edr_url = f"http://localhost:{os.getenv('PORT_EDR', '8082')}"
-        self.siem_url = f"http://localhost:{os.getenv('PORT_SIEM', '8083')}"
-        self.ct_log_url = f"http://localhost:{os.getenv('PORT_CT_LOG', '8086')}"
-        self.crl_cdp_url = f"http://localhost:{os.getenv('PORT_CRL', '8088')}"
-        self.policy_engine_url = f"http://localhost:{os.getenv('PORT_POLICY', '8089')}"
-        self.chain_visualizer_url = f"http://localhost:{os.getenv('PORT_CHAIN_VIZ', '8090')}"
-        self.pin_validator_url = f"http://localhost:{os.getenv('PORT_PIN_VALIDATOR', '8091')}"
-        self.kmip_server_url = f"http://localhost:{os.getenv('PORT_KMIP_API', '8092')}"
+        self.edr_url = _service_url("edr", os.getenv("PORT_EDR", "8082"))
+        self.siem_url = _service_url("siem", os.getenv("PORT_SIEM", "8083"))
+        self.ct_log_url = _service_url("ct-log", os.getenv("PORT_CT_LOG", "8086"))
+        self.crl_cdp_url = _service_url("crl", os.getenv("PORT_CRL", "8088"))
+        self.policy_engine_url = _service_url("policy", os.getenv("PORT_POLICY", "8089"))
+        self.chain_visualizer_url = _service_url("chain-viz", os.getenv("PORT_CHAIN_VIZ", "8090"))
+        self.pin_validator_url = _service_url("pin-validator", os.getenv("PORT_PIN_VALIDATOR", "8091"))
+        self.kmip_server_url = _service_url("kmip", os.getenv("PORT_KMIP_API", "8092"))
 
     def get_ca_config(self, pki_type: Optional[PKIType] = None, ca_level: Optional[CALevel] = None) -> CAConfig:
         """Get CA configuration for the specified PKI type and level."""
