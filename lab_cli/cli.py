@@ -168,13 +168,15 @@ def status(
     # Build categories based on deployed PKIs
     categories = {
         "Core Services": ["mock_edr", "mock_siem", "kafka", "eda", "zookeeper"],
+        "Lab Services": ["mock_ct_log", "crl_server", "policy_engine", "chain_visualizer",
+                         "pin_validator", "kmip_server"],
     }
 
     # Only add PKI categories for deployed (or requested) PKI types
     pki_category_map = {
-        "rsa": ("RSA PKI", ["rsa_root_ca", "rsa_intermediate_ca", "rsa_iot_ca", "rsa_acme_ca"]),
-        "ecc": ("ECC PKI", ["ecc_root_ca", "ecc_intermediate_ca", "ecc_iot_ca"]),
-        "pqc": ("PQC PKI", ["pqc_root_ca", "pqc_intermediate_ca", "pqc_iot_ca"]),
+        "rsa": ("RSA PKI", ["rsa_root_ca", "rsa_intermediate_ca", "rsa_iot_ca", "rsa_est_ca", "rsa_acme_ca"]),
+        "ecc": ("ECC PKI", ["ecc_root_ca", "ecc_intermediate_ca", "ecc_iot_ca", "ecc_est_ca", "ecc_acme_ca"]),
+        "pqc": ("PQC PKI", ["pqc_root_ca", "pqc_intermediate_ca", "pqc_iot_ca", "pqc_est_ca", "pqc_acme_ca"]),
     }
 
     for pki_type in (deployed_pkis if not all_pki else ["rsa", "ecc", "pqc"]):
