@@ -10,9 +10,9 @@ REFRESH_INTERVAL="${CRL_REFRESH_INTERVAL:-300}"  # 5 minutes default
 
 # CA endpoints to fetch CRLs from (hostname:port:label)
 # These are populated from environment or defaults
-RSA_CAS="${RSA_CA_ENDPOINTS:-root-ca.cert-lab.local:8443:rsa-root,intermediate-ca.cert-lab.local:8443:rsa-intermediate,iot-ca.cert-lab.local:8443:rsa-iot}"
-ECC_CAS="${ECC_CA_ENDPOINTS:-ecc-root-ca.cert-lab.local:8443:ecc-root,ecc-intermediate-ca.cert-lab.local:8443:ecc-intermediate,ecc-iot-ca.cert-lab.local:8443:ecc-iot}"
-PQ_CAS="${PQ_CA_ENDPOINTS:-pq-root-ca.cert-lab.local:8443:pq-root,pq-intermediate-ca.cert-lab.local:8443:pq-intermediate,pq-iot-ca.cert-lab.local:8443:pq-iot}"
+RSA_CAS="${RSA_CA_ENDPOINTS:-root-ca.cert-lab.local:8443:rsa-root,intermediate-ca.cert-lab.local:8444:rsa-intermediate,iot-ca.cert-lab.local:8445:rsa-iot}"
+ECC_CAS="${ECC_CA_ENDPOINTS:-ecc-root-ca.cert-lab.local:8463:ecc-root,ecc-intermediate-ca.cert-lab.local:8464:ecc-intermediate,ecc-iot-ca.cert-lab.local:8465:ecc-iot}"
+PQ_CAS="${PQ_CA_ENDPOINTS:-pq-root-ca.cert-lab.local:8453:pq-root,pq-intermediate-ca.cert-lab.local:8454:pq-intermediate,pq-iot-ca.cert-lab.local:8455:pq-iot}"
 
 mkdir -p "$CRL_DIR"
 
@@ -26,17 +26,22 @@ fetch_crl() {
     local tmp_file="/tmp/crl_${label}.html"
 
     if curl -sk --connect-timeout 10 --max-time 30 "$url" -o "$tmp_file" 2>/dev/null; then
-        # Extract PEM CRL from HTML response
         if grep -q "BEGIN X509 CRL" "$tmp_file" 2>/dev/null; then
             sed -n '/BEGIN X509 CRL/,/END X509 CRL/p' "$tmp_file" > "$pem_file"
-            # Convert PEM to DER for standard CDP serving
             openssl crl -in "$pem_file" -outform DER -out "$der_file" 2>/dev/null
-            local count
-            count=$(openssl crl -in "$pem_file" -noout -text 2>/dev/null | grep -c "Serial Number:" || echo "0")
-            echo "[$(date '+%H:%M:%S')] $label: fetched CRL ($count revoked entries)"
+        elif openssl crl -in "$tmp_file" -inform DER -noout 2>/dev/null; then
+            cp "$tmp_file" "$der_file"
+            openssl crl -in "$der_file" -inform DER -outform PEM -out "$pem_file" 2>/dev/null
+        else
+            echo "[$(date '+%H:%M:%S')] $label: CRL fetch failed (CA may not be running)"
             rm -f "$tmp_file"
-            return 0
+            return 1
         fi
+        local count
+        count=$(openssl crl -in "$pem_file" -noout -text 2>/dev/null | grep -c "Serial Number:" || echo "0")
+        echo "[$(date '+%H:%M:%S')] $label: fetched CRL ($count revoked entries)"
+        rm -f "$tmp_file"
+        return 0
     fi
 
     echo "[$(date '+%H:%M:%S')] $label: CRL fetch failed (CA may not be running)"
