@@ -2714,23 +2714,22 @@ def hsm_status():
             raise typer.Exit(1)
 
         data = json_mod.loads(result.stdout)
-        console.print(f"[green]HSM Status: {data.get('status', 'unknown')}[/green]")
-        console.print(f"  Module: {data.get('module', 'kryoptic')}")
-        console.print(f"  Initialized: {data.get('initialized', False)}")
+        initialized = data.get("initialized", False)
+        status_msg = data.get("message", data.get("status", "unknown"))
+        module = data.get("pkcs11_module", data.get("module", "kryoptic"))
+        console.print(f"[green]HSM Status: {status_msg}[/green]")
+        console.print(f"  Module: {module}")
+        console.print(f"  Initialized: {initialized}")
 
         slots = data.get("slots", [])
         if slots:
             table = Table(title="Token Slots")
-            table.add_column("Slot")
+            table.add_column("Slot", style="cyan")
             table.add_column("Label")
-            table.add_column("Status")
 
-            for slot in slots:
-                table.add_row(
-                    str(slot.get("id", "")),
-                    slot.get("label", ""),
-                    slot.get("status", ""),
-                )
+            for i, slot in enumerate(slots):
+                label = slot.get("label", slot) if isinstance(slot, dict) else str(slot)
+                table.add_row(str(i), label)
             console.print(table)
 
     except subprocess.TimeoutExpired:
