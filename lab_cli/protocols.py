@@ -1779,13 +1779,17 @@ def est_serverkeygen(
             return ProtocolResult(
                 success=False,
                 message=response[:200],
-                details={"hint": "Check kipuka config: [est] serverkeygen = true"},
+                details={"hint": f"Check EST server config ({ENROLLMENT_BACKEND} backend)"},
             )
 
+        hint = ("Dogtag EST RA does not support server-side key generation. "
+                "Use the akamu/kipuka backend (ENROLLMENT_BACKEND=akamu)."
+                if ENROLLMENT_BACKEND == "dogtag"
+                else "Check kipuka config: [est] serverkeygen = true")
         return ProtocolResult(
             success=False,
             message=f"Unexpected response: {response[:200]}",
-            details={"hint": "Server keygen may not be enabled in kipuka config"},
+            details={"hint": hint},
         )
 
 
