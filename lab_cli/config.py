@@ -35,13 +35,13 @@ LAB_DOMAIN = os.getenv("LAB_DOMAIN", "cert-lab.local")
 
 
 def _service_url(hostname: str, port: str | int, scheme: str = "http") -> str:
-    """Build a service URL using the DNS hostname.
+    """Build a service URL for host-side access via port mapping.
 
-    All *.cert-lab.local hostnames resolve to 127.0.0.1 via dnsmasq,
-    so hostname:port and localhost:port reach the same place — but the
-    hostname form is self-documenting in CLI output and logs.
+    Uses localhost because host port mappings bind to 0.0.0.0:{port}
+    which is only reachable via localhost, not via the container's
+    bridge IP (where only the internal port is listening).
     """
-    return f"{scheme}://{hostname}.{LAB_DOMAIN}:{port}"
+    return f"{scheme}://localhost:{port}"
 
 
 PQ_OID_MAP = {
@@ -71,19 +71,15 @@ class CAConfig:
 
     @property
     def host_url(self) -> str:
-        """URL for accessing this CA from the host machine.
+        """URL for accessing this CA from the host via port mapping.
 
-        When the container hostname resolves (dnsmasq running), use the
-        container-internal URL directly (hostname + container port) since
-        the host can route to the podman network.  When DNS is unavailable,
-        fall back to localhost + host_port (port-mapped path).
-
-        http_port forces HTTP scheme (PQ mode where TLS isn't available).
+        Always uses localhost + host_port because DNS hostnames may resolve
+        to the host IP where port collisions between CAs make the internal
+        port unreliable (e.g. est-ca:8443 hits root-ca:8443 on the host).
         """
         if self.http_port:
-            return f"http://{self.hostname}:{self.http_port}"
-        scheme = "http" if self.url.startswith("http://") else "https"
-        return f"{scheme}://{self.hostname}:{self.host_port}"
+            return f"http://localhost:{self.http_port}"
+        return f"https://localhost:{self.host_port}"
 
 
 # Enrollment backend: "akamu" (Akamu ACME + Kipuka EST) or "dogtag" (Dogtag RAs)

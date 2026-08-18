@@ -25,6 +25,8 @@ services:
       DS_SUFFIX_NAME: ecc-root-ca
     volumes:
       - ds-ecc-root-data:/data
+      - ./scripts/ds-entrypoint.sh:/ds-entrypoint.sh:ro,z
+    command: ["/bin/bash", "/ds-entrypoint.sh"]
     networks:
       pki-ecc-net:
         ipv4_address: 172.28.0.14
@@ -45,6 +47,8 @@ services:
       DS_SUFFIX_NAME: ecc-intermediate-ca
     volumes:
       - ds-ecc-intermediate-data:/data
+      - ./scripts/ds-entrypoint.sh:/ds-entrypoint.sh:ro,z
+    command: ["/bin/bash", "/ds-entrypoint.sh"]
     networks:
       pki-ecc-net:
         ipv4_address: 172.28.0.15
@@ -65,6 +69,8 @@ services:
       DS_SUFFIX_NAME: ecc-iot-ca
     volumes:
       - ds-ecc-iot-data:/data
+      - ./scripts/ds-entrypoint.sh:/ds-entrypoint.sh:ro,z
+    command: ["/bin/bash", "/ds-entrypoint.sh"]
     networks:
       pki-ecc-net:
         ipv4_address: 172.28.0.16
@@ -382,6 +388,8 @@ services:
       DS_SUFFIX_NAME: ecc-ocsp
     volumes:
       - ds-ecc-ocsp-data:/data
+      - ./scripts/ds-entrypoint.sh:/ds-entrypoint.sh:ro,z
+    command: ["/bin/bash", "/ds-entrypoint.sh"]
     networks:
       pki-ecc-net:
         ipv4_address: 172.28.0.21
@@ -453,6 +461,8 @@ services:
       DS_SUFFIX_NAME: kra
     volumes:
       - ds-ecc-kra-data:/data
+      - ./scripts/ds-entrypoint.sh:/ds-entrypoint.sh:ro,z
+    command: ["/bin/bash", "/ds-entrypoint.sh"]
     networks:
       pki-ecc-net:
         ipv4_address: 172.28.0.24

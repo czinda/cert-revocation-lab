@@ -5,13 +5,15 @@
 # Ports:
 #   5696 - KMIP protocol (TLS)
 #   8000 - FastAPI management API (HTTP)
+#
+# Uses Python 3.11 (UBI9) because PyKMIP 0.10 requires ssl.wrap_socket,
+# which was removed in Python 3.12.
 
-FROM quay.io/hummingbird/python:3.12-builder
+FROM registry.access.redhat.com/ubi9/python-311:latest
 
 WORKDIR /app
 
 USER 0
-RUN dnf install -y gcc python3-devel openssl && dnf clean all
 
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
@@ -19,9 +21,11 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 COPY app.py .
 COPY kmip_server.conf .
 COPY entrypoint.sh .
-RUN chmod +x entrypoint.sh && mkdir -p /app/certs && chown 65532:0 /app/certs
+RUN chmod +x entrypoint.sh && \
+    mkdir -p /app/certs /var/log/pykmip /app/policies /data/kmip && \
+    chown -R 1001:0 /app/certs /var/log/pykmip /app/policies /data/kmip
 
-USER 65532
+USER 1001
 
 EXPOSE 5696 8000
 

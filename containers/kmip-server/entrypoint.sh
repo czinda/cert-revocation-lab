@@ -18,12 +18,14 @@ if [ ! -f "$CERT_DIR/server.pem" ]; then
 fi
 
 # Start PyKMIP server in background
-python -c "
-from kmip.services.server import KmipProxyKmipServer
-import kmip.services.server as srv
-server = srv.KmipServer(config_path='/app/kmip_server.conf')
+python3 -c "
+from kmip.services.server import KmipServer
+server = KmipServer(config_path='/app/kmip_server.conf')
+server.start()
 server.serve()
 " &
 
+sleep 2
+
 # Start FastAPI management API
-exec uvicorn app:app --host 0.0.0.0 --port 8000
+exec python3 -m uvicorn app:app --host 0.0.0.0 --port 8000

@@ -72,7 +72,7 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper.${LAB_DOMAIN:-cert-lab.local}:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka.${LAB_DOMAIN:-cert-lab.local}:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka.${LAB_DOMAIN:-cert-lab.local}:9092,PLAINTEXT_HOST://localhost:19092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
@@ -86,8 +86,8 @@ services:
       lab-network:
         ipv4_address: ${IP_KAFKA:-172.20.0.31}
     ports:
-      - "9092:9092"
-      - "29092:29092"
+      - "19092:9092"
+      - "19093:29092"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]

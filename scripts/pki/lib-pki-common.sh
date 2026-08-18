@@ -389,6 +389,119 @@ check_initialized() {
     return 0
 }
 
+# Workaround for Dogtag 11.10.1 (fc44) regression: pkispawn --skip-configuration
+# creates the instance as "pki-tomcat" instead of using pki_instance_name from the
+# config. This renames it to the expected name so Phase 2 can find the subsystem.
+#
+# Idempotent: safe to call multiple times (no-op if already renamed).
+# Called from both phase1_generate_csr (after pkispawn) and phase2_install_cert
+# (before pkispawn) to handle the case where Phase 1 and Phase 2 run in
+# separate invocations.
+#
+# Usage: fix_instance_name <expected_instance_name>
+fix_instance_name() {
+    local expected="$1"
+    local base="/var/lib/pki"
+
+    # Already renamed — still fix symlinks and stubs (idempotent)
+    if [ -d "${base}/${expected}" ] && [ ! -d "${base}/pki-tomcat" ]; then
+        log_info "Instance already at ${expected}"
+        # Fall through to symlink repair and stub creation below
+    fi
+
+    if [ -d "${base}/pki-tomcat" ]; then
+        if [ -d "${base}/${expected}" ]; then
+            # Both exist. Keep whichever has a real NSS database (Phase 1 output).
+            if [ -f "${base}/${expected}/conf/alias/cert9.db" ] || \
+               [ -f "${base}/${expected}/conf/alias/cert8.db" ]; then
+                log_warn "Both pki-tomcat and ${expected} exist — removing stale pki-tomcat"
+                rm -rf "${base}/pki-tomcat"
+            else
+                log_warn "Both pki-tomcat and ${expected} exist — ${expected} has no NSS db, removing it"
+                rm -rf "${base}/${expected}"
+            fi
+        fi
+
+        if [ -d "${base}/pki-tomcat" ]; then
+            log_warn "pkispawn created instance as pki-tomcat instead of ${expected} — renaming"
+            mv "${base}/pki-tomcat" "${base}/${expected}"
+            if [ -d "/etc/pki/pki-tomcat" ]; then
+                mv /etc/pki/pki-tomcat "/etc/pki/${expected}"
+            fi
+            if [ -d "/var/log/pki/pki-tomcat" ]; then
+                mv /var/log/pki/pki-tomcat "/var/log/pki/${expected}"
+            fi
+            # Fix server.xml references
+            sed -i "s|pki-tomcat|${expected}|g" "${base}/${expected}/conf/server.xml" 2>/dev/null || true
+            # Fix sysconfig references
+            if [ -d "/etc/sysconfig/pki/tomcat/pki-tomcat" ]; then
+                mv "/etc/sysconfig/pki/tomcat/pki-tomcat" "/etc/sysconfig/pki/tomcat/${expected}" 2>/dev/null || true
+            fi
+            if [ -f "/etc/sysconfig/pki/tomcat/${expected}/${expected}" ]; then
+                sed -i "s|pki-tomcat|${expected}|g" "/etc/sysconfig/pki/tomcat/${expected}/${expected}" 2>/dev/null || true
+            elif [ -f "/etc/sysconfig/pki/tomcat/${expected}/pki-tomcat" ]; then
+                mv "/etc/sysconfig/pki/tomcat/${expected}/pki-tomcat" \
+                   "/etc/sysconfig/pki/tomcat/${expected}/${expected}" 2>/dev/null || true
+                sed -i "s|pki-tomcat|${expected}|g" "/etc/sysconfig/pki/tomcat/${expected}/${expected}" 2>/dev/null || true
+            fi
+            # Fix ALL symlinks that still reference pki-tomcat — top-level AND subdirs.
+            # pkispawn creates symlinks like alias -> /var/lib/pki/pki-tomcat/conf/alias
+            local link target
+            while IFS= read -r -d '' link; do
+                if [ -L "$link" ]; then
+                    target="$(readlink "$link")"
+                    if echo "$target" | grep -q "pki-tomcat"; then
+                        local new_target="${target//pki-tomcat/${expected}}"
+                        ln -sfn "$new_target" "$link"
+                    fi
+                fi
+            done < <(find "${base}/${expected}" -maxdepth 3 -type l -print0 2>/dev/null)
+            log_info "Instance renamed to ${expected}"
+        fi
+    fi
+
+    mkdir -p "${base}/${expected}/conf/ca"
+    # Patch nssdb.py: Python 3.14 pkispawn builds certutil commands with None
+    # elements (missing token name), causing ' '.join(cmd) to crash.
+    local nssdb_py="/usr/lib/python3.14/site-packages/pki/nssdb.py"
+    if [ -f "$nssdb_py" ] && ! grep -q "filter.*None" "$nssdb_py"; then
+        log_info "Patching nssdb.py for Python 3.14 None-in-cmd bug"
+        sed -i "s|self.run(cmd, input=cert_data|cmd = [x for x in cmd if x is not None]; self.run(cmd, input=cert_data|" "$nssdb_py" 2>/dev/null
+    fi
+    # Phase 2 (--skip-installation) needs CS.cfg to find the CA subsystem.
+    # Phase 1 (--skip-configuration) doesn't populate it — Python 3.14 pkispawn
+    # crashes with NoneType when it can't load the subsystem. Create a stub.
+    # Also handle the case where Phase 1 created an empty (0-byte) CS.cfg.
+    local cs_cfg="${base}/${expected}/conf/ca/CS.cfg"
+    if [ ! -f "$cs_cfg" ] || [ ! -s "$cs_cfg" ]; then
+        log_info "Creating CS.cfg stub for Phase 2"
+        cat > "$cs_cfg" <<STUB
+cs.type=CA
+subsystem.0.class=com.netscape.cmscore.selftests.SelfTestSubsystem
+subsystem.0.id=selftests
+ca.signing.tokenname=internal
+ca.signing.nickname=ca_signing
+ca.ocsp_signing.tokenname=internal
+ca.ocsp_signing.nickname=ca_ocsp_signing
+ca.audit_signing.tokenname=internal
+ca.audit_signing.nickname=ca_audit_signing
+ca.subsystem.tokenname=internal
+ca.subsystem.nickname=subsystemCert cert-${expected}
+ca.sslserver.tokenname=internal
+ca.sslserver.nickname=Server-Cert cert-${expected}
+STUB
+        chown pkiuser:pkiuser "$cs_cfg" 2>/dev/null
+    fi
+    if [ ! -f "${base}/${expected}/conf/ca/registry.cfg" ]; then
+        cat > "${base}/${expected}/conf/ca/registry.cfg" <<STUB
+types=ca
+ca.class=com.netscape.ca.CertificateAuthority
+ca.id=ca
+STUB
+        chown pkiuser:pkiuser "${base}/${expected}/conf/ca/registry.cfg" 2>/dev/null
+    fi
+}
+
 # Prepare pkispawn config with variable substitution
 # Usage: prepare_config <template> <output>
 prepare_config() {

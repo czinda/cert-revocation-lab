@@ -3,6 +3,7 @@ Service health checks and status monitoring.
 """
 
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Optional
 
@@ -138,7 +139,7 @@ def check_kafka(config: LabConfig) -> ServiceStatus:
 
 def check_eda(config: LabConfig) -> ServiceStatus:
     """Check EDA server status."""
-    return check_container("eda-server")
+    return check_container("eda-server", use_sudo=True)
 
 
 def check_all_services(
@@ -159,22 +160,28 @@ def check_all_services(
     """
     results = {}
 
-    # HTTP services
-    results["mock_edr"] = check_http_service("mock_edr", config.edr_url)
-    results["mock_siem"] = check_http_service("mock_siem", config.siem_url)
-    results["mock_ct_log"] = check_http_service("mock_ct_log", config.ct_log_url)
-    results["crl_server"] = check_http_service("crl_server", config.crl_cdp_url)
-    results["policy_engine"] = check_http_service("policy_engine", config.policy_engine_url)
-    results["chain_visualizer"] = check_http_service("chain_visualizer", config.chain_visualizer_url)
-    results["pin_validator"] = check_http_service("pin_validator", config.pin_validator_url)
-    results["kmip_server"] = check_http_service("kmip_server", config.kmip_server_url)
+    http_checks = {
+        "mock_edr": ("mock_edr", config.edr_url),
+        "mock_siem": ("mock_siem", config.siem_url),
+        "mock_ct_log": ("mock_ct_log", config.ct_log_url),
+        "crl_server": ("crl_server", config.crl_cdp_url),
+        "policy_engine": ("policy_engine", config.policy_engine_url),
+        "chain_visualizer": ("chain_visualizer", config.chain_visualizer_url),
+        "pin_validator": ("pin_validator", config.pin_validator_url),
+        "kmip_server": ("kmip_server", config.kmip_server_url),
+    }
 
-    # Kafka (via EDR health check)
-    results["kafka"] = check_kafka(config)
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        futures = {
+            pool.submit(check_http_service, name, url, 3.0): key
+            for key, (name, url) in http_checks.items()
+        }
+        futures[pool.submit(check_kafka, config)] = "kafka"
+        futures[pool.submit(check_container, "eda-server", True)] = "eda"
+        futures[pool.submit(check_container, "zookeeper")] = "zookeeper"
 
-    # Containers
-    results["eda"] = check_container("eda-server")
-    results["zookeeper"] = check_container("zookeeper")
+        for future in as_completed(futures):
+            results[futures[future]] = future.result()
 
     # Auto-detect deployed PKI types if not specified
     if pki_types is None:

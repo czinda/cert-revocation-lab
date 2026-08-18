@@ -10,6 +10,13 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Source .env for PORT_* and other config (export only non-comment, non-empty lines)
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    set -a
+    source <(grep -v '^\s*#' "$SCRIPT_DIR/.env" | grep -v '^\s*$')
+    set +a
+fi
+
 # Use venv Python if available, otherwise system Python
 if [ -f "$SCRIPT_DIR/.venv/bin/python" ]; then
     PYTHON="$SCRIPT_DIR/.venv/bin/python"

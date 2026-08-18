@@ -27,7 +27,7 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from kmip import enums as kmip_enums
-from kmip.services.kmip_client import ProxyKmipClient
+from kmip.pie.client import ProxyKmipClient
 from pydantic import BaseModel
 
 logging.basicConfig(level=logging.INFO)
@@ -57,8 +57,8 @@ def _kmip_client():
         cert=f"{CERT_DIR}/server.pem",
         key=f"{CERT_DIR}/server-key.pem",
         ca=f"{CERT_DIR}/ca-chain.pem",
-        ssl_version=ssl.PROTOCOL_TLS_CLIENT,
         config="client",
+        config_file="/app/kmip_server.conf",
     )
     try:
         client.open()
@@ -156,22 +156,46 @@ def _resolve_usage_mask(masks: list[str]) -> list:
     return result
 
 
+_ALGO_NAMES = {1: "DES", 2: "3DES", 3: "AES", 4: "RSA", 5: "DSA",
+               6: "ECDSA", 7: "HMAC-SHA1", 9: "HMAC-SHA256"}
+_STATE_NAMES_BY_INT = {1: "Pre-Active", 2: "Active", 3: "Deactivated",
+                       4: "Compromised", 5: "Destroyed", 6: "Destroyed-Compromised"}
+
+
+def _unwrap(val):
+    """Unwrap PyKMIP attribute value, stopping at Enum (return name, not int)."""
+    if isinstance(val, Enum):
+        return val.name
+    if hasattr(val, "value"):
+        inner = val.value
+        if isinstance(inner, Enum):
+            return inner.name
+        if hasattr(inner, "value") and not isinstance(inner, (str, int, float)):
+            return _unwrap(inner)
+        return inner
+    return val
+
+
 def _key_info(client, uid: str) -> dict:
-    """Retrieve key metadata from KMIP server and return as dict."""
+    """Retrieve key metadata and return normalized dict for the CLI."""
     try:
         attrs = client.get_attributes(uid=uid)
-        # attrs is a tuple of (uid, list-of-Attribute)
         attr_list = attrs[1] if isinstance(attrs, tuple) else attrs
-        info = {"uid": uid}
+        raw = {}
         for attr in attr_list:
-            name = attr.attribute_name.value if hasattr(attr.attribute_name, "value") else str(attr.attribute_name)
-            val = attr.attribute_value
-            if hasattr(val, "value"):
-                val = val.value
-            if isinstance(val, Enum):
-                val = val.name
-            info[name] = str(val)
-        return info
+            name = str(_unwrap(attr.attribute_name))
+            raw[name] = _unwrap(attr.attribute_value)
+
+        algo_int = raw.get("Cryptographic Algorithm")
+        state_int = raw.get("State")
+        return {
+            "uid": uid,
+            "name": str(raw.get("Name", "")),
+            "algorithm": _ALGO_NAMES.get(algo_int, str(algo_int)) if algo_int else "",
+            "length": raw.get("Cryptographic Length", ""),
+            "state": _STATE_NAMES_BY_INT.get(state_int, str(state_int)) if state_int else "unknown",
+            "object_type": str(raw.get("Object Type", "")),
+        }
     except Exception as exc:
         logger.warning("Could not get attributes for %s: %s", uid, exc)
         return {"uid": uid, "error": str(exc)}
@@ -180,6 +204,9 @@ def _key_info(client, uid: str) -> dict:
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+_ASYMMETRIC_ALGOS = {"RSA", "ECDSA"}
+
 
 @app.post("/keys", summary="Create a managed key object")
 def create_key(req: CreateKeyRequest):
@@ -190,23 +217,48 @@ def create_key(req: CreateKeyRequest):
     masks = _resolve_usage_mask(req.usage_mask)
 
     with _kmip_client() as client:
-        uid = client.create(
-            algorithm=algo,
-            length=req.length,
-            name=req.name,
-            cryptographic_usage_mask=masks,
-        )
-        logger.info("Created key uid=%s name=%s algo=%s len=%d", uid, req.name, req.algorithm, req.length)
-        return {
-            "uid": uid,
-            "name": req.name,
-            "algorithm": req.algorithm,
-            "length": req.length,
-            "usage_mask": req.usage_mask,
-            "pki_type": req.pki_type,
-            "ca_level": req.ca_level,
-            "state": "Pre-Active",
-        }
+        if req.algorithm.value in _ASYMMETRIC_ALGOS:
+            pub_uid, priv_uid = client.create_key_pair(
+                algorithm=algo,
+                length=req.length,
+                public_name=f"{req.name}-public",
+                private_name=f"{req.name}-private",
+                public_usage_mask=[kmip_enums.CryptographicUsageMask.VERIFY],
+                private_usage_mask=[kmip_enums.CryptographicUsageMask.SIGN],
+            )
+            uid = priv_uid
+            logger.info("Created key pair pub=%s priv=%s name=%s", pub_uid, priv_uid, req.name)
+            return {
+                "uid": priv_uid,
+                "public_uid": pub_uid,
+                "name": req.name,
+                "algorithm": req.algorithm,
+                "length": req.length,
+                "usage_mask": req.usage_mask,
+                "pki_type": req.pki_type,
+                "ca_level": req.ca_level,
+                "state": "Pre-Active",
+                "type": "key_pair",
+            }
+        else:
+            uid = client.create(
+                algorithm=algo,
+                length=req.length,
+                name=req.name,
+                cryptographic_usage_mask=masks,
+            )
+            logger.info("Created symmetric key uid=%s name=%s", uid, req.name)
+            return {
+                "uid": uid,
+                "name": req.name,
+                "algorithm": req.algorithm,
+                "length": req.length,
+                "usage_mask": req.usage_mask,
+                "pki_type": req.pki_type,
+                "ca_level": req.ca_level,
+                "state": "Pre-Active",
+                "type": "symmetric",
+            }
 
 
 @app.get("/keys", summary="List all managed key objects")

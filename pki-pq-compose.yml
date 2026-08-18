@@ -28,6 +28,8 @@ services:
       DS_SUFFIX_NAME: pq-root-ca
     volumes:
       - ds-pq-root-data:/data
+      - ./scripts/ds-entrypoint.sh:/ds-entrypoint.sh:ro,z
+    command: ["/bin/bash", "/ds-entrypoint.sh"]
     networks:
       pki-pq-net:
         ipv4_address: 172.27.0.14
@@ -48,6 +50,8 @@ services:
       DS_SUFFIX_NAME: pq-intermediate-ca
     volumes:
       - ds-pq-intermediate-data:/data
+      - ./scripts/ds-entrypoint.sh:/ds-entrypoint.sh:ro,z
+    command: ["/bin/bash", "/ds-entrypoint.sh"]
     networks:
       pki-pq-net:
         ipv4_address: 172.27.0.15
@@ -68,6 +72,8 @@ services:
       DS_SUFFIX_NAME: pq-iot-ca
     volumes:
       - ds-pq-iot-data:/data
+      - ./scripts/ds-entrypoint.sh:/ds-entrypoint.sh:ro,z
+    command: ["/bin/bash", "/ds-entrypoint.sh"]
     networks:
       pki-pq-net:
         ipv4_address: 172.27.0.16
@@ -465,6 +471,8 @@ services:
       DS_SUFFIX_NAME: pq-ocsp
     volumes:
       - ds-pq-ocsp-data:/data
+      - ./scripts/ds-entrypoint.sh:/ds-entrypoint.sh:ro,z
+    command: ["/bin/bash", "/ds-entrypoint.sh"]
     networks:
       pki-pq-net:
         ipv4_address: 172.27.0.21
@@ -540,6 +548,8 @@ services:
       DS_SUFFIX_NAME: kra
     volumes:
       - ds-pq-kra-data:/data
+      - ./scripts/ds-entrypoint.sh:/ds-entrypoint.sh:ro,z
+    command: ["/bin/bash", "/ds-entrypoint.sh"]
     networks:
       pki-pq-net:
         ipv4_address: 172.27.0.24
@@ -613,6 +623,8 @@ services:
       DS_SUFFIX_NAME: ops-ca
     volumes:
       - ds-pq-ops-data:/data
+      - ./scripts/ds-entrypoint.sh:/ds-entrypoint.sh:ro,z
+    command: ["/bin/bash", "/ds-entrypoint.sh"]
     networks:
       pki-pq-net:
         ipv4_address: 172.27.0.26

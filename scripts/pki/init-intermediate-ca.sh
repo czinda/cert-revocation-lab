@@ -87,6 +87,8 @@ phase1_generate_csr() {
     pkispawn -s CA -f /tmp/step1.cfg --skip-configuration -v
     rm -f /tmp/step1.cfg
 
+    fix_instance_name "$PKI_INSTANCE"
+
     log_info "CSR generated: $CSR_FILE"
     print_sign_action "$CSR_FILE" "$SIGNED_CERT" "$SIGNER_CONTAINER" "$ROOT_CA_URL" "caCACert"
 }
@@ -96,6 +98,11 @@ phase2_install_cert() {
 
     [ -f "$SIGNED_CERT" ] || { log_error "Signed cert not found: $SIGNED_CERT"; return 1; }
     [ -f "${CERTS_DIR}/root-ca.crt" ] || { log_error "${ROOT_CA_LABEL} cert not found"; return 1; }
+
+    # Ensure instance is renamed from pki-tomcat to expected name.
+    # fix_instance_name is idempotent — safe to call even if Phase 1 already ran it.
+    # Required when Phase 1 ran in a previous invocation (CSR exists, Phase 1 skipped).
+    fix_instance_name "$PKI_INSTANCE"
 
     export_pki_env
     prepare_config "${CONFIG_DIR}/${CONFIG_PREFIX}intermediate-ca-step2.cfg" /tmp/step2.cfg
