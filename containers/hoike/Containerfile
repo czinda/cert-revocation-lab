@@ -1,0 +1,47 @@
+# hoike — OCSP responder with PKCS#11 HSM signing
+#
+# Build from the hoike repo with PKCS#11 feature enabled:
+#   podman build -f containers/hoike/Containerfile -t localhost/hoike:latest ~/git/hoike/
+#
+# Requires SoftHSM2 in the runtime image for PKCS#11 token access.
+#
+# Ports:
+#   2560 - OCSP HTTP responder
+#
+# Assisted-by: Claude Code (claude.ai/code)
+
+# ── Stage 1: Build ──────────────────────────────
+FROM docker.io/library/rust:1.97-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY . .
+
+RUN cargo build --release --features pkcs11 \
+    && strip target/release/hoike target/release/ahu
+
+# ── Stage 2: Runtime ────────────────────────────
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+
+RUN microdnf install -y softhsm openssl opensc \
+    && microdnf clean all
+
+COPY --from=builder /build/target/release/hoike /usr/local/bin/hoike
+COPY --from=builder /build/target/release/ahu /usr/local/bin/ahu
+
+RUN mkdir -p /var/lib/hoike/bundles \
+             /var/lib/hoike/state \
+             /var/lib/hoike/crl \
+             /var/lib/hoike/tokens \
+             /etc/hoike \
+    && chown -R 1001:0 /var/lib/hoike /etc/hoike
+
+EXPOSE 2560
+
+USER 1001
+
+ENTRYPOINT ["hoike"]
+CMD ["serve", "--config", "/etc/hoike/hoike.toml"]
