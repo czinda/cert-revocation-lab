@@ -31,10 +31,12 @@ RUN cargo build --release --locked --features pkcs11 \
     && strip target/release/hoike target/release/ahu
 
 # ── Stage 2: runtime ────────────────────────────────────────────
-FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+# Fedora base because softhsm is not in UBI9 repos.
+FROM registry.fedoraproject.org/fedora:latest
 
-RUN microdnf install -y curl openssl shadow-utils softhsm opensc \
-    && microdnf clean all \
+RUN dnf install -y --setopt=install_weak_deps=False \
+        curl openssl shadow-utils softhsm opensc \
+    && dnf clean all \
     && useradd -r -u 1001 -g 0 -d /var/lib/hoike -s /sbin/nologin hoike \
     && mkdir -p /var/lib/hoike/bundles /var/lib/hoike/state \
                /var/lib/hoike/transfer /var/lib/hoike/tokens \
@@ -43,8 +45,6 @@ RUN microdnf install -y curl openssl shadow-utils softhsm opensc \
 
 COPY --from=builder /build/target/release/hoike /usr/local/bin/hoike
 COPY --from=builder /build/target/release/ahu   /usr/local/bin/ahu
-COPY containers/hoike/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
 
 USER 1001
 WORKDIR /var/lib/hoike
