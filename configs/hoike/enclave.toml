@@ -1,0 +1,21 @@
+# hoike enclave — identical serving code, zero connectivity.
+#
+# Gossip disabled. No forward_to. Bundles arrive on the transfer volume and are
+# imported explicitly with `hoike import`, which is where the full per-entry
+# verification pass belongs (spec §3.1: verify on import across a trust
+# boundary, since that is the one moment provenance is least certain).
+
+[server]
+mode        = "edge"
+listen      = "0.0.0.0:2560"
+max_request = 8192
+
+[storage]
+bundle_dir = "/var/lib/hoike/bundles"
+state_db   = "/var/lib/hoike/state"
+max_chain  = 24
+
+[gossip]
+enabled = false
+
+include = "/etc/hoike/ca-identity.toml"

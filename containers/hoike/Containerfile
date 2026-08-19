@@ -1,47 +1,54 @@
-# hoike — OCSP responder with PKCS#11 HSM signing
+# hoike — lab build with PKCS#11 HSM signing (Kryoptic / SoftHSM2)
 #
-# Build from the hoike repo with PKCS#11 feature enabled:
-#   podman build -f containers/hoike/Containerfile -t localhost/hoike:latest ~/git/hoike/
+# Deliberately NOT the upstream distroless Containerfile. The lab needs:
+#   - a shell and curl, because every lab service has a compose healthcheck
+#   - openssl, so `lab hoike-*` tests can build OCSP requests in-container
+#   - softhsm + pkcs11-tool for PKCS#11 HSM token access
+#   - a writable state dir owned by a non-root user
 #
-# Requires SoftHSM2 in the runtime image for PKCS#11 token access.
-#
-# Ports:
-#   2560 - OCSP HTTP responder
+# Build: podman build -f containers/hoike/Containerfile -t localhost/hoike:lab .
 #
 # Assisted-by: Claude Code (claude.ai/code)
 
-# ── Stage 1: Build ──────────────────────────────
+ARG HOIKE_REF=main
+
+# ── Stage 1: build ──────────────────────────────────────────────
 FROM docker.io/library/rust:1.97-slim AS builder
 
+ARG HOIKE_REF
+ARG HOIKE_REPO=https://github.com/czinda/hoike.git
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    pkg-config libssl-dev \
+        git pkg-config libssl-dev ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-COPY . .
+RUN git clone --depth 1 --branch "${HOIKE_REF}" "${HOIKE_REPO}" .
 
-RUN cargo build --release --features pkcs11 \
+# --locked so the lab builds exactly what the repo pins.
+# --features pkcs11 enables PKCS#11 HSM signing via cryptoki.
+RUN cargo build --release --locked --features pkcs11 \
     && strip target/release/hoike target/release/ahu
 
-# ── Stage 2: Runtime ────────────────────────────
+# ── Stage 2: runtime ────────────────────────────────────────────
 FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 
-RUN microdnf install -y softhsm openssl opensc \
-    && microdnf clean all
+RUN microdnf install -y curl openssl shadow-utils softhsm opensc \
+    && microdnf clean all \
+    && useradd -r -u 1001 -g 0 -d /var/lib/hoike -s /sbin/nologin hoike \
+    && mkdir -p /var/lib/hoike/bundles /var/lib/hoike/state \
+               /var/lib/hoike/transfer /var/lib/hoike/tokens \
+    && chown -R 1001:0 /var/lib/hoike \
+    && chmod -R g=u /var/lib/hoike
 
 COPY --from=builder /build/target/release/hoike /usr/local/bin/hoike
-COPY --from=builder /build/target/release/ahu /usr/local/bin/ahu
-
-RUN mkdir -p /var/lib/hoike/bundles \
-             /var/lib/hoike/state \
-             /var/lib/hoike/crl \
-             /var/lib/hoike/tokens \
-             /etc/hoike \
-    && chown -R 1001:0 /var/lib/hoike /etc/hoike
-
-EXPOSE 2560
+COPY --from=builder /build/target/release/ahu   /usr/local/bin/ahu
+COPY containers/hoike/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 USER 1001
+WORKDIR /var/lib/hoike
+EXPOSE 2560 7946/udp
 
-ENTRYPOINT ["hoike"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["serve", "--config", "/etc/hoike/hoike.toml"]

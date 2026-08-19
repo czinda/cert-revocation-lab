@@ -1,0 +1,21 @@
+# hoike edge — keyless. Loads bundles produced by the signer, serves bytes.
+#
+# There is no signing key here and there must never be one. `nonce_policy`
+# stays "ignore": "live" is rejected at config validation in edge mode, which
+# is the behaviour test_edge_rejects_live_nonce asserts.
+
+[server]
+mode        = "edge"
+listen      = "0.0.0.0:2560"
+max_request = 8192
+
+[storage]
+bundle_dir = "/var/lib/hoike/bundles"
+state_db   = "/var/lib/hoike/state"
+max_chain  = 24
+
+[gossip]
+enabled = true
+bind    = "0.0.0.0:7946"
+
+include = "/etc/hoike/ca-identity.toml"

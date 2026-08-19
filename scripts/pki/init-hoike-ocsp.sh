@@ -32,21 +32,21 @@ log_error() { echo -e "${RED}[HOIKE-OCSP]${NC} $1"; }
 # ── PKI-type-specific variables ──────────────────────────────────────────
 case "$PKI_TYPE" in
     rsa)
-        HOIKE_CONTAINER="hoike-rsa"
+        HOIKE_CONTAINER="hoike-signer"
         ISSUING_CA_CONTAINER="dogtag-iot-ca"
         ISSUING_CA_INSTANCE="pki-iot-ca"
         CERT_DIR="${PROJECT_DIR}/data/certs/rsa"
         CDP_URL="http://localhost:8088/crl/rsa-iot.crl"
         ;;
     ecc)
-        HOIKE_CONTAINER="hoike-ecc"
+        HOIKE_CONTAINER="hoike-signer"
         ISSUING_CA_CONTAINER="dogtag-ecc-iot-ca"
         ISSUING_CA_INSTANCE="pki-ecc-iot-ca"
         CERT_DIR="${PROJECT_DIR}/data/certs/ecc"
         CDP_URL="http://localhost:8088/crl/ecc-iot.crl"
         ;;
     pq)
-        HOIKE_CONTAINER="hoike-pq"
+        HOIKE_CONTAINER="hoike-signer"
         ISSUING_CA_CONTAINER="dogtag-pq-iot-ca"
         ISSUING_CA_INSTANCE="pki-pq-iot-ca"
         CERT_DIR="${PROJECT_DIR}/data/certs/pq"
@@ -299,6 +299,26 @@ else
     log_warn "Could not fetch CRL from ${CDP_URL} — hoike will retry at batch_interval"
 fi
 
+# ── Step 8: Generate CA identity config ─────────────────────────────────
+log_info "Step 8: Generating CA identity config (ca-identity.toml)..."
+
+CA_IDENTITY="${PROJECT_DIR}/configs/hoike/ca-identity.toml"
+python3 "${PROJECT_DIR}/scripts/pki/gen-ca-identity.py" \
+    --certs-dir "${PROJECT_DIR}/data/certs" \
+    --pkcs11-module "$PKCS11_MODULE" \
+    --pkcs11-token "$TOKEN_LABEL" \
+    --pkcs11-key-label "$KEY_LABEL" \
+    --pkcs11-pin-env "HOIKE_HSM_PIN" \
+    > "$CA_IDENTITY" 2>&1 || true
+
+if [ -s "$CA_IDENTITY" ]; then
+    CA_COUNT=$(grep -c '^\[\[ca\]\]' "$CA_IDENTITY" || echo 0)
+    log_info "Generated ca-identity.toml with ${CA_COUNT} CA(s)"
+else
+    log_warn "No CA certificates found — ca-identity.toml is empty"
+    log_warn "Generate manually: python3 scripts/pki/gen-ca-identity.py --certs-dir data/certs > configs/hoike/ca-identity.toml"
+fi
+
 # ── Cleanup ──────────────────────────────────────────────────────────────
 rm -f /tmp/hoike-ocsp.csr /tmp/hoike-ocsp-signed.crt /tmp/hoike-ocsp-signed.der /tmp/rsa-iot.crl 2>/dev/null
 sudo podman exec "$HOIKE_CONTAINER" rm -f /tmp/ocsp-csr-key.pem /tmp/ocsp.csr /tmp/ocsp-pub.der /tmp/hoike-ocsp-signed.der 2>/dev/null || true
@@ -315,7 +335,8 @@ echo "  Algorithm:   ECDSA P-256"
 echo "  Module:      ${PKCS11_MODULE}"
 echo "  Container:   ${HOIKE_CONTAINER}"
 echo "  CRL source:  ${CDP_URL}"
+echo "  CA identity: ${CA_IDENTITY}"
 echo ""
-echo "  Restart hoike to pick up the new key:"
+echo "  Next steps:"
 echo "    sudo podman restart ${HOIKE_CONTAINER}"
 echo ""

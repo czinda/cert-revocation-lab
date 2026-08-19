@@ -492,45 +492,203 @@ services:
       retries: 5
       start_period: 120s
 
-  # ── Hoike OCSP Responder (PKCS#11 HSM signing) ──────────────────────────
-  # Dedicated OCSP responder using pre-signed response bundles.
-  # Signing key stored in SoftHSM2 (PKCS#11), CRL source from IoT Sub-CA.
-  # Build: podman build -f containers/hoike/Containerfile -t localhost/hoike:latest ~/git/hoike/
-  hoike-rsa:
-    profiles: [akamu]
-    image: ${HOIKE_IMAGE:-localhost/hoike:pkcs11}
-    container_name: hoike-rsa
-    hostname: hoike-rsa.${LAB_DOMAIN:-cert-lab.local}
+  # ===========================================================================
+  # Hoike OCSP Responder — pre-signed response bundles with HSM signing
+  # ===========================================================================
+  #
+  # Topology:
+  #   crl-server → hoike-signer (PKCS#11) → gossip → edge-1/2/3 → hoike-lb
+  #                     └── transfer volume → enclave (air-gapped)
+  #
+  # Build: podman build -f containers/hoike/Containerfile -t localhost/hoike:lab .
+  #        OR set HOIKE_IMAGE to use a pre-built image.
+
+  # ── Signer tier — holds PKCS#11 key, ingests CRLs, produces bundles ──
+  hoike-signer:
+    profiles: [hoike]
+    image: ${HOIKE_IMAGE:-localhost/hoike:lab}
+    container_name: hoike-signer
+    hostname: hoike-signer.${LAB_DOMAIN:-cert-lab.local}
     dns: 172.26.0.2
     depends_on:
       dogtag-iot-ca:
         condition: service_healthy
     environment:
+      HOIKE_ROLE: signer-hsm
+      HOIKE_CONFIG: /etc/hoike/hoike.toml
+      HOIKE_BUNDLE_DIR: /var/lib/hoike/bundles
+      HOIKE_TRANSFER_DIR: /var/lib/hoike/transfer
       HOIKE_HSM_PIN: ${HSM_USER_PIN:-1234}
       SOFTHSM2_CONF: /etc/hoike/softhsm2.conf
-      RUST_LOG: info
+      RUST_LOG: "${HOIKE_LOG:-hoike=info,ahu=info}"
     volumes:
-      - ./configs/hoike/rsa-config.toml:/etc/hoike/hoike.toml:ro
+      - ./configs/hoike/signer.toml:/etc/hoike/hoike.toml:ro,z
+      - ./configs/hoike/ca-identity.toml:/etc/hoike/ca-identity.toml:ro,z
       - ./configs/hoike/softhsm2.conf:/etc/hoike/softhsm2.conf:ro
-      - hoike-rsa-data:/var/lib/hoike
-      - ./data/certs/rsa:/certs:ro,z
+      - hoike-bundles:/var/lib/hoike/bundles:z
+      - hoike-transfer:/var/lib/hoike/transfer:z
+      - hoike-signer-state:/var/lib/hoike/state:z
+      - hoike-signer-tokens:/var/lib/hoike/tokens:z
     extra_hosts:
+      - "crl.cert-lab.local:host-gateway"
       - "root-ca.cert-lab.local:172.26.0.12"
       - "intermediate-ca.cert-lab.local:172.26.0.11"
       - "iot-ca.cert-lab.local:172.26.0.13"
-      - "ocsp.cert-lab.local:172.26.0.22"
-      - "hoike-rsa.cert-lab.local:172.26.0.25"
     networks:
       pki-net:
-        ipv4_address: 172.26.0.25
-    ports:
-      - "2560:2560"
+        ipv4_address: 172.26.0.80
     healthcheck:
-      test: ["CMD-SHELL", "cat < /dev/tcp/localhost/2560 || exit 1"]
+      test: ["CMD-SHELL", "ahu verify $(ls -t /var/lib/hoike/bundles/*.ahu 2>/dev/null | head -1) >/dev/null 2>&1 || exit 1"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 180s
+    restart: unless-stopped
+
+  # ── Edge tier — keyless, serves pre-signed bundles ──
+  hoike-edge-1:
+    profiles: [hoike]
+    image: ${HOIKE_IMAGE:-localhost/hoike:lab}
+    container_name: hoike-edge-1
+    hostname: hoike-edge-1.${LAB_DOMAIN:-cert-lab.local}
+    dns: 172.26.0.2
+    environment:
+      HOIKE_ROLE: edge
+      HOIKE_CONFIG: /etc/hoike/hoike.toml
+      HOIKE_BUNDLE_DIR: /var/lib/hoike/bundles
+      RUST_LOG: "${HOIKE_LOG:-hoike=info,ahu=info}"
+    volumes:
+      - ./configs/hoike/edge.toml:/etc/hoike/hoike.toml:ro,z
+      - ./configs/hoike/ca-identity.toml:/etc/hoike/ca-identity.toml:ro,z
+      - hoike-bundles:/var/lib/hoike/bundles:ro,z
+      - hoike-edge1-state:/var/lib/hoike/state:z
+    networks:
+      pki-net:
+        ipv4_address: 172.26.0.81
+    depends_on:
+      - hoike-signer
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:2560/ -o /dev/null || exit 1"]
       interval: 15s
       timeout: 5s
-      retries: 5
-      start_period: 30s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  hoike-edge-2:
+    profiles: [hoike]
+    image: ${HOIKE_IMAGE:-localhost/hoike:lab}
+    container_name: hoike-edge-2
+    hostname: hoike-edge-2.${LAB_DOMAIN:-cert-lab.local}
+    dns: 172.26.0.2
+    environment:
+      HOIKE_ROLE: edge
+      HOIKE_CONFIG: /etc/hoike/hoike.toml
+      HOIKE_BUNDLE_DIR: /var/lib/hoike/bundles
+      RUST_LOG: "${HOIKE_LOG:-hoike=info,ahu=info}"
+    volumes:
+      - ./configs/hoike/edge.toml:/etc/hoike/hoike.toml:ro,z
+      - ./configs/hoike/ca-identity.toml:/etc/hoike/ca-identity.toml:ro,z
+      - hoike-bundles:/var/lib/hoike/bundles:ro,z
+      - hoike-edge2-state:/var/lib/hoike/state:z
+    networks:
+      pki-net:
+        ipv4_address: 172.26.0.82
+    depends_on:
+      - hoike-signer
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:2560/ -o /dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  hoike-edge-3:
+    profiles: [hoike]
+    image: ${HOIKE_IMAGE:-localhost/hoike:lab}
+    container_name: hoike-edge-3
+    hostname: hoike-edge-3.${LAB_DOMAIN:-cert-lab.local}
+    dns: 172.26.0.2
+    environment:
+      HOIKE_ROLE: edge
+      HOIKE_CONFIG: /etc/hoike/hoike.toml
+      HOIKE_BUNDLE_DIR: /var/lib/hoike/bundles
+      RUST_LOG: "${HOIKE_LOG:-hoike=info,ahu=info}"
+    volumes:
+      - ./configs/hoike/edge.toml:/etc/hoike/hoike.toml:ro,z
+      - ./configs/hoike/ca-identity.toml:/etc/hoike/ca-identity.toml:ro,z
+      - hoike-bundles:/var/lib/hoike/bundles:ro,z
+      - hoike-edge3-state:/var/lib/hoike/state:z
+    networks:
+      pki-net:
+        ipv4_address: 172.26.0.83
+    depends_on:
+      - hoike-signer
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:2560/ -o /dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  # ── Load balancer — the AIA URL clients hit ──
+  hoike-lb:
+    profiles: [hoike]
+    image: docker.io/library/haproxy:${HAPROXY_VERSION:-2.9-alpine}
+    container_name: hoike-lb
+    hostname: hoike-lb.${LAB_DOMAIN:-cert-lab.local}
+    dns: 172.26.0.2
+    volumes:
+      - ./configs/hoike/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro,z
+    networks:
+      pki-net:
+        ipv4_address: 172.26.0.84
+    ports:
+      - "${PORT_HOIKE_LB:-8093}:8080"
+      - "${PORT_HOIKE_STATS:-8099}:8404"
+    depends_on:
+      - hoike-edge-1
+      - hoike-edge-2
+      - hoike-edge-3
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8404/stats >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  # ── Enclave — air-gapped, bundles arrive by file copy ──
+  hoike-enclave:
+    profiles: [hoike]
+    image: ${HOIKE_IMAGE:-localhost/hoike:lab}
+    container_name: hoike-enclave
+    hostname: hoike-enclave.enclave.local
+    environment:
+      HOIKE_ROLE: enclave
+      HOIKE_CONFIG: /etc/hoike/hoike.toml
+      HOIKE_BUNDLE_DIR: /var/lib/hoike/bundles
+      RUST_LOG: "${HOIKE_LOG:-hoike=info,ahu=info}"
+    volumes:
+      - ./configs/hoike/enclave.toml:/etc/hoike/hoike.toml:ro,z
+      - ./configs/hoike/ca-identity.toml:/etc/hoike/ca-identity.toml:ro,z
+      - hoike-transfer:/var/lib/hoike/transfer:ro,z
+      - hoike-enclave-bundles:/var/lib/hoike/bundles:z
+      - hoike-enclave-state:/var/lib/hoike/state:z
+    networks:
+      hoike-enclave-net:
+        ipv4_address: 172.31.0.5
+    ports:
+      - "${PORT_HOIKE_ENCLAVE:-8098}:2560"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:2560/ -o /dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
 
   # 389DS for KRA (RSA-4096)
   ds-kra:
@@ -608,6 +766,13 @@ services:
 networks:
   pki-net:
     external: true
+  hoike-enclave-net:
+    driver: bridge
+    internal: true
+    ipam:
+      driver: default
+      config:
+        - subnet: ${HOIKE_ENCLAVE_SUBNET:-172.31.0.0/24}
 
 volumes:
   ds-root-data:
@@ -631,4 +796,12 @@ volumes:
   ds-kra-data:
   pki-kra-data:
   pki-kra-logs:
-  hoike-rsa-data:
+  hoike-bundles:
+  hoike-transfer:
+  hoike-signer-state:
+  hoike-signer-tokens:
+  hoike-edge1-state:
+  hoike-edge2-state:
+  hoike-edge3-state:
+  hoike-enclave-bundles:
+  hoike-enclave-state:
