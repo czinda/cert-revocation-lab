@@ -34,14 +34,15 @@ class EventSource(str, Enum):
 LAB_DOMAIN = os.getenv("LAB_DOMAIN", "cert-lab.local")
 
 
-def _service_url(hostname: str, port: str | int, scheme: str = "http") -> str:
-    """Build a service URL for host-side access via port mapping.
+def _service_url(hostname: str, port: str | int = 8000, scheme: str = "http") -> str:
+    """Build a service URL using the container's DNS hostname.
 
-    Uses localhost because host port mappings bind to 0.0.0.0:{port}
-    which is only reachable via localhost, not via the container's
-    bridge IP (where only the internal port is listening).
+    All lab service containers listen on port 8000 internally.
+    The hostname.cert-lab.local DNS resolves to the container's
+    bridge IP via podman's dnsname plugin, so the host can reach
+    each container directly without port mapping.
     """
-    return f"{scheme}://localhost:{port}"
+    return f"{scheme}://{hostname}.{LAB_DOMAIN}:{port}"
 
 
 PQ_OID_MAP = {
@@ -71,15 +72,15 @@ class CAConfig:
 
     @property
     def host_url(self) -> str:
-        """URL for accessing this CA from the host via port mapping.
+        """URL for accessing this CA using its DNS hostname.
 
-        Always uses localhost + host_port because DNS hostnames may resolve
-        to the host IP where port collisions between CAs make the internal
-        port unreliable (e.g. est-ca:8443 hits root-ca:8443 on the host).
+        Container hostnames (*.cert-lab.local) resolve to bridge IPs
+        via podman's dnsname plugin. The host can route to these IPs
+        directly, so we use the container's internal port (from self.url).
         """
         if self.http_port:
-            return f"http://localhost:{self.http_port}"
-        return f"https://localhost:{self.host_port}"
+            return f"http://{self.hostname}:{self.http_port}"
+        return self.url
 
 
 # Enrollment backend: "akamu" (Akamu ACME + Kipuka EST) or "dogtag" (Dogtag RAs)
@@ -247,15 +248,16 @@ SIEM_ALERT_TYPES: dict[str, str] = {
 class LabConfig:
     """Main configuration for the lab CLI."""
 
-    # Service URLs — use DNS hostnames (*.cert-lab.local resolves to 127.0.0.1 via dnsmasq)
-    edr_url: str = field(default_factory=lambda: _service_url("edr", os.getenv("PORT_EDR", "8082")))
-    siem_url: str = field(default_factory=lambda: _service_url("siem", os.getenv("PORT_SIEM", "8083")))
-    ct_log_url: str = field(default_factory=lambda: _service_url("ct-log", os.getenv("PORT_CT_LOG", "8086")))
-    crl_cdp_url: str = field(default_factory=lambda: _service_url("crl", os.getenv("PORT_CRL", "8088")))
-    policy_engine_url: str = field(default_factory=lambda: _service_url("policy", os.getenv("PORT_POLICY", "8089")))
-    chain_visualizer_url: str = field(default_factory=lambda: _service_url("chain-viz", os.getenv("PORT_CHAIN_VIZ", "8090")))
-    pin_validator_url: str = field(default_factory=lambda: _service_url("pin-validator", os.getenv("PORT_PIN_VALIDATOR", "8091")))
-    kmip_server_url: str = field(default_factory=lambda: _service_url("kmip", os.getenv("PORT_KMIP_API", "8092")))
+    # Service URLs — DNS hostnames resolve to container bridge IPs via dnsname plugin
+    # All lab services listen on port 8000 internally
+    edr_url: str = field(default_factory=lambda: _service_url("edr"))
+    siem_url: str = field(default_factory=lambda: _service_url("siem"))
+    ct_log_url: str = field(default_factory=lambda: _service_url("ct-log"))
+    crl_cdp_url: str = field(default_factory=lambda: _service_url("crl", 8080))
+    policy_engine_url: str = field(default_factory=lambda: _service_url("policy"))
+    chain_visualizer_url: str = field(default_factory=lambda: _service_url("chain-viz"))
+    pin_validator_url: str = field(default_factory=lambda: _service_url("pin-validator"))
+    kmip_server_url: str = field(default_factory=lambda: _service_url("kmip"))
 
     # Domain
     lab_domain: str = "cert-lab.local"
@@ -296,19 +298,9 @@ class LabConfig:
                     value = value.strip().strip('"').strip("'")
                     os.environ.setdefault(key, value)
 
-        # Refresh all fields that depend on environment variables.
-        # The dataclass default_factory lambdas ran before .env was loaded,
-        # so the PORT_* values were not yet available.
+        # Refresh credentials after .env load
         self.admin_password = os.getenv("ADMIN_PASSWORD", "RedHat123")
         self.pki_admin_password = os.getenv("PKI_ADMIN_PASSWORD", self.admin_password)
-        self.edr_url = _service_url("edr", os.getenv("PORT_EDR", "8082"))
-        self.siem_url = _service_url("siem", os.getenv("PORT_SIEM", "8083"))
-        self.ct_log_url = _service_url("ct-log", os.getenv("PORT_CT_LOG", "8086"))
-        self.crl_cdp_url = _service_url("crl", os.getenv("PORT_CRL", "8088"))
-        self.policy_engine_url = _service_url("policy", os.getenv("PORT_POLICY", "8089"))
-        self.chain_visualizer_url = _service_url("chain-viz", os.getenv("PORT_CHAIN_VIZ", "8090"))
-        self.pin_validator_url = _service_url("pin-validator", os.getenv("PORT_PIN_VALIDATOR", "8091"))
-        self.kmip_server_url = _service_url("kmip", os.getenv("PORT_KMIP_API", "8092"))
 
     def get_ca_config(self, pki_type: Optional[PKIType] = None, ca_level: Optional[CALevel] = None) -> CAConfig:
         """Get CA configuration for the specified PKI type and level."""

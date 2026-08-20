@@ -369,18 +369,18 @@ demo_verify() {
 
     divider
     narrator "${BOLD}CRL Distribution Point:${NC}"
-    cmd "$LAB_CMD crl-list --cdp-url http://localhost:8088"
+    cmd "$LAB_CMD crl-list "
     echo ""
-    $LAB_CMD crl-list --cdp-url http://localhost:8088 2>&1 || true
+    $LAB_CMD crl-list  2>&1 || true
 
     echo ""
     divider
     narrator "${BOLD}Policy Engine:${NC}"
     narrator "Validates certificate requests against CA/Browser Forum"
     narrator "Baseline Requirements before issuance."
-    cmd "$LAB_CMD policy-check demo.cert-lab.local --policy-url http://localhost:8089"
+    cmd "$LAB_CMD policy-check demo.cert-lab.local"
     echo ""
-    $LAB_CMD policy-check demo.cert-lab.local --policy-url http://localhost:8089 2>&1 || true
+    $LAB_CMD policy-check demo.cert-lab.local 2>&1 || true
 
     pass "Revocation verification mechanisms confirmed"
 

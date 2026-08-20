@@ -2345,7 +2345,7 @@ def policy_check(
     validity: int = typer.Option(365, "--validity", help="Validity in days"),
     org: str = typer.Option("Cert-Lab", "--org", "-o", help="Organization"),
     country: str = typer.Option("US", "--country", help="Country code"),
-    policy_url: str = typer.Option("http://policy.cert-lab.local:8089", "--policy-url", help="Policy engine URL"),
+    policy_url: str = typer.Option("http://policy.cert-lab.local:8000", "--policy-url", help="Policy engine URL"),
 ):
     """Validate a certificate request against the policy engine."""
     import httpx
@@ -2394,7 +2394,7 @@ def policy_check(
 
 @app.command("crl-list")
 def crl_list(
-    cdp_url: str = typer.Option("http://crl.cert-lab.local:8088", "--cdp-url", help="CDP server URL"),
+    cdp_url: str = typer.Option("http://crl.cert-lab.local:8080", "--cdp-url", help="CDP server URL"),
 ):
     """List available CRLs from the CDP server."""
     import httpx
@@ -2435,7 +2435,7 @@ def crl_list(
 def crl_check(
     serial: str = typer.Argument(..., help="Certificate serial number to check"),
     ca_label: str = typer.Option("rsa-intermediate", "--ca", help="CA label (e.g., rsa-root, ecc-intermediate)"),
-    cdp_url: str = typer.Option("http://crl.cert-lab.local:8088", "--cdp-url", help="CDP server URL"),
+    cdp_url: str = typer.Option("http://crl.cert-lab.local:8080", "--cdp-url", help="CDP server URL"),
 ):
     """Check if a serial number appears in a CRL from the CDP server."""
     import subprocess
