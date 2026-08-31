@@ -1,0 +1,26 @@
+# ── Hoike Edge Node — RSA-4096 PKI Hierarchy ───────────────────────────
+#
+# Edge mode: keyless, serves pre-signed bundles from the signer.
+# Forwards nonce-bearing requests upstream to Dogtag OCSP.
+#
+# Network: 172.26.0.0/24 (CERT-LAB pki-net)
+# ───────────────────────────────────────────────────────────────────────
+
+[server]
+mode    = "edge"
+listen  = "0.0.0.0:2560"
+
+[storage]
+bundle_dir = "/var/lib/hoike/bundles"
+state_db   = "/var/lib/hoike/state"
+
+[gossip]
+enabled   = true
+bind      = "0.0.0.0:7946"
+seeds     = ["172.26.0.25:7946", "172.26.0.32:7946"]
+node_name = "hoike-rsa-edge-1"
+
+[[ca]]
+label        = "rsa-iot"
+nonce_policy = "forward"
+forward_to   = "http://ocsp.cert-lab.local:8080/ocsp"

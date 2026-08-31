@@ -32,21 +32,21 @@ log_error() { echo -e "${RED}[HOIKE-OCSP]${NC} $1"; }
 # ── PKI-type-specific variables ──────────────────────────────────────────
 case "$PKI_TYPE" in
     rsa)
-        HOIKE_CONTAINER="hoike-signer"
+        HOIKE_CONTAINER="hoike-rsa-signer"
         ISSUING_CA_CONTAINER="dogtag-iot-ca"
         ISSUING_CA_INSTANCE="pki-iot-ca"
         CERT_DIR="${PROJECT_DIR}/data/certs/rsa"
         CDP_URL="http://localhost:8088/crl/rsa-iot.crl"
         ;;
     ecc)
-        HOIKE_CONTAINER="hoike-signer"
+        HOIKE_CONTAINER="hoike-ecc-signer"
         ISSUING_CA_CONTAINER="dogtag-ecc-iot-ca"
         ISSUING_CA_INSTANCE="pki-ecc-iot-ca"
         CERT_DIR="${PROJECT_DIR}/data/certs/ecc"
         CDP_URL="http://localhost:8088/crl/ecc-iot.crl"
         ;;
     pq)
-        HOIKE_CONTAINER="hoike-signer"
+        HOIKE_CONTAINER="hoike-pq-signer"
         ISSUING_CA_CONTAINER="dogtag-pq-iot-ca"
         ISSUING_CA_INSTANCE="pki-pq-iot-ca"
         CERT_DIR="${PROJECT_DIR}/data/certs/pq"
@@ -282,7 +282,7 @@ fi
 # ── Step 7: Fetch initial CRL ────────────────────────────────────────────
 log_info "Step 7: Fetching initial CRL from CDP server..."
 
-CRL_PATH="/var/lib/hoike/crl/rsa-iot.crl"
+CRL_PATH="/var/lib/hoike/crl/${PKI_TYPE}-iot.crl"
 
 curl -sf "$CDP_URL" -o /tmp/rsa-iot.crl 2>/dev/null
 if [ -f /tmp/rsa-iot.crl ] && [ -s /tmp/rsa-iot.crl ]; then

@@ -1,0 +1,40 @@
+# ── Hoike OCSP Responder — ML-DSA-87 PKI Hierarchy ─────────────────────
+#
+# Combined mode with Kryoptic PKCS#11.
+# Kryoptic supports ML-DSA via the latchset/kryoptic Rust implementation,
+# making this the post-quantum interop demo with RHCS 11.0.
+#
+# Network: 172.27.0.0/24 (CERT-LAB pki-pq-net)
+# ───────────────────────────────────────────────────────────────────────
+
+[server]
+mode    = "combined"
+listen  = "0.0.0.0:2560"
+
+[storage]
+bundle_dir = "/var/lib/hoike/bundles"
+state_db   = "/var/lib/hoike/state"
+
+[gossip]
+enabled   = true
+bind      = "0.0.0.0:7946"
+seeds     = ["172.27.0.31:7946", "172.27.0.32:7946"]
+node_name = "hoike-pq-signer"
+
+[[ca]]
+label          = "pq-iot"
+batch_interval = 300
+validity_secs  = 86400
+nonce_policy   = "forward"
+forward_to     = "http://pq-ocsp.cert-lab.local:8080/ocsp"
+
+[ca.source]
+type = "crl"
+path = "/var/lib/hoike/crl/pq-iot.crl"
+
+[ca.signing_key]
+type        = "pkcs11"
+module      = "/usr/lib64/pkcs11/libsofthsm2.so"
+token_label = "hoike-ocsp"
+key_label   = "ocsp-signing"
+pin_env     = "HOIKE_HSM_PIN"

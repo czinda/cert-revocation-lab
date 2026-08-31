@@ -6,7 +6,7 @@
 #   - softhsm + pkcs11-tool for PKCS#11 HSM token access
 #   - a writable state dir owned by a non-root user
 #
-# Build: podman build -f containers/hoike/Containerfile -t localhost/hoike:lab .
+# Build: podman build -f containers/hoike/Containerfile -t localhost/hoike:lab containers/hoike/
 #
 # Assisted-by: Claude Code (claude.ai/code)
 
@@ -45,6 +45,8 @@ RUN dnf install -y --setopt=install_weak_deps=False \
 
 COPY --from=builder /build/target/release/hoike /usr/local/bin/hoike
 COPY --from=builder /build/target/release/ahu   /usr/local/bin/ahu
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 USER 1001
 WORKDIR /var/lib/hoike

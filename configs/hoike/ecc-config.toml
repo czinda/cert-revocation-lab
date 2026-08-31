@@ -1,0 +1,39 @@
+# ── Hoike OCSP Responder — ECC P-384 PKI Hierarchy ─────────────────────
+#
+# Combined mode: signer + edge in one process.
+# Signing key in Kryoptic — shared token volume from PKI hierarchy.
+#
+# Network: 172.28.0.0/24 (CERT-LAB pki-ecc-net)
+# ───────────────────────────────────────────────────────────────────────
+
+[server]
+mode    = "combined"
+listen  = "0.0.0.0:2560"
+
+[storage]
+bundle_dir = "/var/lib/hoike/bundles"
+state_db   = "/var/lib/hoike/state"
+
+[gossip]
+enabled   = true
+bind      = "0.0.0.0:7946"
+seeds     = ["172.28.0.31:7946", "172.28.0.32:7946"]
+node_name = "hoike-ecc-signer"
+
+[[ca]]
+label          = "ecc-iot"
+batch_interval = 300
+validity_secs  = 86400
+nonce_policy   = "forward"
+forward_to     = "http://ecc-ocsp.cert-lab.local:8080/ocsp"
+
+[ca.source]
+type = "crl"
+path = "/var/lib/hoike/crl/ecc-iot.crl"
+
+[ca.signing_key]
+type        = "pkcs11"
+module      = "/var/lib/kryoptic/libkryoptic_pkcs11.so"
+token_label = "ECC OCSP Responder"
+key_label   = "ocsp-signing"
+pin_env     = "HOIKE_HSM_PIN"

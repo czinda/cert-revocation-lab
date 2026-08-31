@@ -977,6 +977,136 @@ start_pq_pki_hierarchy() {
     log_success "PQ PKI containers started (hierarchy init may be partial)"
 }
 
+# Phase 5: Deploy Hoike OCSP Responder Fleet
+deploy_hoike() {
+    if [ ! -f hoike-compose.yml ]; then
+        log_info "hoike-compose.yml not found, skipping Hoike OCSP deployment"
+        return
+    fi
+
+    log_phase "Phase 5: Deploying Hoike OCSP Responder Fleet"
+
+    # Build hoike profiles list from active PKI hierarchies
+    local profiles=""
+    if [ "$START_RSA_PKI" = true ]; then profiles="${profiles} --profile rsa"; fi
+    if [ "$START_ECC_PKI" = true ]; then profiles="${profiles} --profile ecc"; fi
+    if [ "$START_PQ_PKI"  = true ]; then profiles="${profiles} --profile pq";  fi
+
+    if [ -z "$profiles" ]; then
+        log_warn "No PKI hierarchies active, skipping Hoike"
+        return
+    fi
+
+    # Ensure the hoike container image exists
+    local hoike_image="${HOIKE_IMAGE:-localhost/hoike:lab}"
+    if ! sudo podman image exists "$hoike_image" 2>/dev/null; then
+        if [ -f containers/hoike/Containerfile ]; then
+            log_info "Building hoike container image ($hoike_image)..."
+            sudo podman build -f containers/hoike/Containerfile \
+                -t "$hoike_image" containers/hoike/ || {
+                log_warn "Hoike image build failed — skipping Hoike deployment"
+                return
+            }
+            log_success "Hoike image built: $hoike_image"
+        else
+            log_warn "Hoike Containerfile not found and image $hoike_image not available"
+            return
+        fi
+    else
+        log_success "Hoike image already available: $hoike_image"
+    fi
+
+    # Ensure external networks exist for all declared hierarchies.
+    # podman-compose validates ALL declared external networks even when
+    # profiles filter out the services that use them.
+    for net in pki-net pki-ecc-net pki-pq-net; do
+        if ! sudo podman network exists "$net" 2>/dev/null; then
+            log_info "Creating stub network $net for hoike compose compatibility"
+            sudo podman network create "$net" 2>/dev/null || true
+        fi
+    done
+
+    # Deploy hoike containers for active hierarchies
+    log_info "Starting Hoike containers (profiles:$profiles)..."
+    if is_running_as_root; then
+        podman-compose -f hoike-compose.yml $profiles up --no-start 2>/dev/null || true
+    else
+        sudo podman-compose -f hoike-compose.yml $profiles up --no-start 2>/dev/null || true
+    fi
+
+    # Start containers individually (avoid compose reconciliation issues)
+    local hoike_containers=""
+    if [ "$START_PQ_PKI" = true ]; then
+        hoike_containers="hoike-pq-signer hoike-pq-edge-1 hoike-pq-edge-2 haproxy-pq-ocsp"
+    fi
+    if [ "$START_RSA_PKI" = true ]; then
+        hoike_containers="$hoike_containers hoike-rsa-edge-1 hoike-rsa-edge-2 haproxy-rsa-ocsp"
+    fi
+    if [ "$START_ECC_PKI" = true ]; then
+        hoike_containers="$hoike_containers hoike-ecc-signer hoike-ecc-edge-1 hoike-ecc-edge-2 haproxy-ecc-ocsp"
+    fi
+
+    for ctr in $hoike_containers; do
+        if is_running_as_root; then
+            podman start "$ctr" 2>/dev/null || true
+        else
+            sudo podman start "$ctr" 2>/dev/null || true
+        fi
+    done
+
+    # Wait for hoike containers to start
+    for ctr in $hoike_containers; do
+        local elapsed=0
+        while [ $elapsed -lt 60 ]; do
+            local status=""
+            if is_running_as_root; then
+                status=$(podman inspect --format '{{.State.Status}}' "$ctr" 2>/dev/null || echo "missing")
+            else
+                status=$(sudo podman inspect --format '{{.State.Status}}' "$ctr" 2>/dev/null || echo "missing")
+            fi
+            if [ "$status" = "running" ]; then
+                log_success "$ctr is running"
+                break
+            fi
+            sleep 3
+            ((elapsed += 3)) || true
+        done
+        if [ $elapsed -ge 60 ]; then
+            log_warn "$ctr did not start within 60s"
+        fi
+    done
+
+    # Provision OCSP signing certificates for active hierarchies
+    if [ -f scripts/pki/init-hoike-ocsp.sh ]; then
+        if [ "$START_PQ_PKI" = true ]; then
+            log_info "Provisioning OCSP signing cert for PQ hierarchy..."
+            if is_running_as_root; then
+                bash scripts/pki/init-hoike-ocsp.sh pq || log_warn "PQ OCSP signing cert provisioning incomplete"
+            else
+                sudo bash scripts/pki/init-hoike-ocsp.sh pq || log_warn "PQ OCSP signing cert provisioning incomplete"
+            fi
+        fi
+        if [ "$START_RSA_PKI" = true ]; then
+            log_info "Provisioning OCSP signing cert for RSA hierarchy..."
+            if is_running_as_root; then
+                bash scripts/pki/init-hoike-ocsp.sh rsa || log_warn "RSA OCSP signing cert provisioning incomplete"
+            else
+                sudo bash scripts/pki/init-hoike-ocsp.sh rsa || log_warn "RSA OCSP signing cert provisioning incomplete"
+            fi
+        fi
+        if [ "$START_ECC_PKI" = true ]; then
+            log_info "Provisioning OCSP signing cert for ECC hierarchy..."
+            if is_running_as_root; then
+                bash scripts/pki/init-hoike-ocsp.sh ecc || log_warn "ECC OCSP signing cert provisioning incomplete"
+            else
+                sudo bash scripts/pki/init-hoike-ocsp.sh ecc || log_warn "ECC OCSP signing cert provisioning incomplete"
+            fi
+        fi
+    fi
+
+    log_success "Hoike OCSP fleet deployed"
+}
+
 # Phase 4c: Start and Initialize ECC PKI Hierarchy
 start_ecc_pki_hierarchy() {
     log_phase "Phase 4c: Starting ECC PKI Infrastructure (P-384)"
@@ -1641,6 +1771,14 @@ print_summary() {
     fi
     echo ""
 
+    if [ -f hoike-compose.yml ]; then
+        echo "Hoike OCSP Fleet:"
+        if [ "$START_RSA_PKI" = true ]; then echo "    RSA:  http://localhost:2561 (HAProxy → hoike edges)"; fi
+        if [ "$START_ECC_PKI" = true ]; then echo "    ECC:  http://localhost:2562 (HAProxy → hoike edges)"; fi
+        if [ "$START_PQ_PKI"  = true ]; then echo "    PQ:   http://localhost:2563 (HAProxy → hoike edges)"; fi
+        echo ""
+    fi
+
     echo "Other Services:"
     echo "  FreeIPA:         https://ipa.cert-lab.local:4443/ipa/ui"
     echo "  Ansible Runner:  http://localhost:8084"
@@ -2001,6 +2139,9 @@ main() {
     if [ "$START_RSA_PKI" = true ]; then start_pki_hierarchy; fi
     if [ "$START_ECC_PKI" = true ]; then start_ecc_pki_hierarchy; fi
     if [ "$START_PQ_PKI" = true ]; then start_pq_pki_hierarchy; fi
+
+    # Deploy Hoike OCSP fleet after PKI hierarchies are initialized
+    deploy_hoike
 
     start_freeipa
     if [ "$START_RSA_PKI" = true ]; then setup_kerberos_enrollment rsa; fi

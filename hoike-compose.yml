@@ -1,0 +1,247 @@
+# ── Hoike OCSP Fleet — Redundant Pre-Signed + Traditional OCSP ─────────
+#
+# Deploys hoike edge nodes, HAProxy load balancers, and gossip-connected
+# signers across PKI hierarchies (RSA, ECC, ML-DSA).
+#
+# Usage:
+#   # All hierarchies (requires all PKI networks to exist):
+#   podman-compose -f hoike-compose.yml --profile rsa --profile ecc --profile pq up -d
+#
+#   # PQ only:
+#   COMPOSE_PROFILES=pq podman-compose -f hoike-compose.yml up -d
+#
+# Prerequisites:
+#   - PKI hierarchies running for the selected profile(s)
+#   - hoike container built: podman build -f containers/hoike/Containerfile \
+#       -t localhost/hoike:lab containers/hoike/
+#
+# Architecture per hierarchy:
+#   HAProxy :2560 → edge-1, edge-2 (keyless, pre-signed)
+#                 → signer (combined mode, backup)
+#                 → Dogtag OCSP (nonce-bearing, forwarded)
+#
+# Assisted-by: Claude Code (claude.ai/code)
+
+version: "3.8"
+
+x-hoike-edge: &hoike-edge
+  image: ${HOIKE_IMAGE:-localhost/hoike:lab}
+  environment:
+    RUST_LOG: info
+  healthcheck:
+    test: ["CMD-SHELL", "cat < /dev/tcp/localhost/2560 || exit 1"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+    start_period: 15s
+
+x-hoike-signer: &hoike-signer
+  image: ${HOIKE_IMAGE:-localhost/hoike:lab}
+  environment:
+    HOIKE_ROLE: signer-hsm
+    HOIKE_HSM_PIN: ${HSM_USER_PIN:-1234}
+    SOFTHSM2_CONF: /etc/hoike/softhsm2.conf
+    RUST_LOG: info
+  healthcheck:
+    test: ["CMD-SHELL", "cat < /dev/tcp/localhost/2560 || exit 1"]
+    interval: 15s
+    timeout: 5s
+    retries: 5
+    start_period: 30s
+
+services:
+  # ══════════════════════════════════════════════════════════════════════
+  # RSA-4096 Hierarchy
+  # ══════════════════════════════════════════════════════════════════════
+
+  hoike-rsa-edge-1:
+    <<: *hoike-edge
+    profiles: [rsa]
+    container_name: hoike-rsa-edge-1
+    hostname: hoike-rsa-edge-1.${LAB_DOMAIN:-cert-lab.local}
+    volumes:
+      - ./configs/hoike/edge-rsa.toml:/etc/hoike/hoike.toml:ro
+      - hoike-rsa-edge1-data:/var/lib/hoike
+    extra_hosts:
+      - "ocsp.cert-lab.local:172.26.0.22"
+      - "hoike-rsa.cert-lab.local:172.26.0.25"
+    networks:
+      pki-net:
+        ipv4_address: 172.26.0.31
+
+  hoike-rsa-edge-2:
+    <<: *hoike-edge
+    profiles: [rsa]
+    container_name: hoike-rsa-edge-2
+    hostname: hoike-rsa-edge-2.${LAB_DOMAIN:-cert-lab.local}
+    volumes:
+      - ./configs/hoike/edge-rsa.toml:/etc/hoike/hoike.toml:ro
+      - hoike-rsa-edge2-data:/var/lib/hoike
+    extra_hosts:
+      - "ocsp.cert-lab.local:172.26.0.22"
+      - "hoike-rsa.cert-lab.local:172.26.0.25"
+    networks:
+      pki-net:
+        ipv4_address: 172.26.0.32
+
+  haproxy-rsa:
+    profiles: [rsa]
+    image: docker.io/library/haproxy:2.9-alpine
+    container_name: haproxy-rsa-ocsp
+    hostname: haproxy-rsa.${LAB_DOMAIN:-cert-lab.local}
+    volumes:
+      - ./configs/hoike/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      hoike-rsa-edge-1:
+        condition: service_healthy
+    networks:
+      pki-net:
+        ipv4_address: 172.26.0.33
+    ports:
+      - "2561:2560"
+
+  # ══════════════════════════════════════════════════════════════════════
+  # ECC P-384 Hierarchy
+  # ══════════════════════════════════════════════════════════════════════
+
+  hoike-ecc-signer:
+    <<: *hoike-signer
+    profiles: [ecc]
+    container_name: hoike-ecc-signer
+    hostname: hoike-ecc.${LAB_DOMAIN:-cert-lab.local}
+    volumes:
+      - ./configs/hoike/ecc-config.toml:/etc/hoike/hoike.toml:ro
+      - ./configs/hoike/softhsm2.conf:/etc/hoike/softhsm2.conf:ro
+      - hoike-ecc-data:/var/lib/hoike
+      - ./data/certs/ecc:/certs:ro,z
+    extra_hosts:
+      - "ecc-ocsp.cert-lab.local:172.28.0.22"
+    networks:
+      pki-ecc-net:
+        ipv4_address: 172.28.0.30
+
+  hoike-ecc-edge-1:
+    <<: *hoike-edge
+    profiles: [ecc]
+    container_name: hoike-ecc-edge-1
+    hostname: hoike-ecc-edge-1.${LAB_DOMAIN:-cert-lab.local}
+    volumes:
+      - ./configs/hoike/edge-ecc.toml:/etc/hoike/hoike.toml:ro
+      - hoike-ecc-edge1-data:/var/lib/hoike
+    extra_hosts:
+      - "ecc-ocsp.cert-lab.local:172.28.0.22"
+    networks:
+      pki-ecc-net:
+        ipv4_address: 172.28.0.31
+
+  hoike-ecc-edge-2:
+    <<: *hoike-edge
+    profiles: [ecc]
+    container_name: hoike-ecc-edge-2
+    hostname: hoike-ecc-edge-2.${LAB_DOMAIN:-cert-lab.local}
+    volumes:
+      - ./configs/hoike/edge-ecc.toml:/etc/hoike/hoike.toml:ro
+      - hoike-ecc-edge2-data:/var/lib/hoike
+    extra_hosts:
+      - "ecc-ocsp.cert-lab.local:172.28.0.22"
+    networks:
+      pki-ecc-net:
+        ipv4_address: 172.28.0.32
+
+  haproxy-ecc:
+    profiles: [ecc]
+    image: docker.io/library/haproxy:2.9-alpine
+    container_name: haproxy-ecc-ocsp
+    hostname: haproxy-ecc.${LAB_DOMAIN:-cert-lab.local}
+    volumes:
+      - ./configs/hoike/haproxy-ecc.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      hoike-ecc-edge-1:
+        condition: service_healthy
+    networks:
+      pki-ecc-net:
+        ipv4_address: 172.28.0.33
+    ports:
+      - "2562:2560"
+
+  # ══════════════════════════════════════════════════════════════════════
+  # ML-DSA-87 Post-Quantum Hierarchy
+  # ══════════════════════════════════════════════════════════════════════
+
+  hoike-pq-signer:
+    <<: *hoike-signer
+    profiles: [pq]
+    container_name: hoike-pq-signer
+    hostname: hoike-pq.${LAB_DOMAIN:-cert-lab.local}
+    volumes:
+      - ./configs/hoike/pq-config.toml:/etc/hoike/hoike.toml:ro
+      - ./configs/hoike/softhsm2.conf:/etc/hoike/softhsm2.conf:ro
+      - hoike-pq-data:/var/lib/hoike
+      - ./data/certs/pq:/certs:ro,z
+    extra_hosts:
+      - "pq-ocsp.cert-lab.local:172.27.0.22"
+    networks:
+      pki-pq-net:
+        ipv4_address: 172.27.0.30
+
+  hoike-pq-edge-1:
+    <<: *hoike-edge
+    profiles: [pq]
+    container_name: hoike-pq-edge-1
+    hostname: hoike-pq-edge-1.${LAB_DOMAIN:-cert-lab.local}
+    volumes:
+      - ./configs/hoike/edge-pq.toml:/etc/hoike/hoike.toml:ro
+      - hoike-pq-edge1-data:/var/lib/hoike
+    extra_hosts:
+      - "pq-ocsp.cert-lab.local:172.27.0.22"
+    networks:
+      pki-pq-net:
+        ipv4_address: 172.27.0.31
+
+  hoike-pq-edge-2:
+    <<: *hoike-edge
+    profiles: [pq]
+    container_name: hoike-pq-edge-2
+    hostname: hoike-pq-edge-2.${LAB_DOMAIN:-cert-lab.local}
+    volumes:
+      - ./configs/hoike/edge-pq.toml:/etc/hoike/hoike.toml:ro
+      - hoike-pq-edge2-data:/var/lib/hoike
+    extra_hosts:
+      - "pq-ocsp.cert-lab.local:172.27.0.22"
+    networks:
+      pki-pq-net:
+        ipv4_address: 172.27.0.32
+
+  haproxy-pq:
+    profiles: [pq]
+    image: docker.io/library/haproxy:2.9-alpine
+    container_name: haproxy-pq-ocsp
+    hostname: haproxy-pq.${LAB_DOMAIN:-cert-lab.local}
+    volumes:
+      - ./configs/hoike/haproxy-pq.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      hoike-pq-edge-1:
+        condition: service_healthy
+    networks:
+      pki-pq-net:
+        ipv4_address: 172.27.0.33
+    ports:
+      - "2563:2560"
+
+volumes:
+  hoike-rsa-edge1-data:
+  hoike-rsa-edge2-data:
+  hoike-ecc-data:
+  hoike-ecc-edge1-data:
+  hoike-ecc-edge2-data:
+  hoike-pq-data:
+  hoike-pq-edge1-data:
+  hoike-pq-edge2-data:
+
+networks:
+  pki-net:
+    external: true
+  pki-ecc-net:
+    external: true
+  pki-pq-net:
+    external: true
