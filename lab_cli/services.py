@@ -142,6 +142,55 @@ def check_eda(config: LabConfig) -> ServiceStatus:
     return check_container("eda-server", use_sudo=True)
 
 
+def check_container_any(name: str) -> ServiceStatus:
+    """Check container status, trying rootless first then rootful."""
+    status = check_container(name)
+    if not status.healthy:
+        status = check_container(name, use_sudo=True)
+    return status
+
+
+# Hoike OCSP fleet containers per PKI type
+HOIKE_CONTAINERS = {
+    "rsa": {
+        "hoike_rsa_signer": "hoike-rsa-signer",
+        "hoike_rsa_edge_1": "hoike-rsa-edge-1",
+        "hoike_rsa_edge_2": "hoike-rsa-edge-2",
+        "hoike_rsa_lb": "haproxy-rsa-ocsp",
+    },
+    "ecc": {
+        "hoike_ecc_signer": "hoike-ecc-signer",
+        "hoike_ecc_edge_1": "hoike-ecc-edge-1",
+        "hoike_ecc_edge_2": "hoike-ecc-edge-2",
+        "hoike_ecc_lb": "haproxy-ecc-ocsp",
+    },
+    "pqc": {
+        "hoike_pqc_signer": "hoike-pq-signer",
+        "hoike_pqc_edge_1": "hoike-pq-edge-1",
+        "hoike_pqc_edge_2": "hoike-pq-edge-2",
+        "hoike_pqc_lb": "haproxy-pq-ocsp",
+    },
+}
+
+# Subsystem containers per PKI type
+SUBSYSTEM_CONTAINERS = {
+    "rsa": {
+        "rsa_ocsp": "dogtag-ocsp",
+        "rsa_kra": "dogtag-kra",
+        "rsa_hsm": "kryoptic-hsm",
+    },
+    "ecc": {
+        "ecc_ocsp": "dogtag-ecc-ocsp",
+        "ecc_kra": "dogtag-ecc-kra",
+    },
+    "pqc": {
+        "pqc_ocsp": "dogtag-pq-ocsp",
+        "pqc_kra": "dogtag-pq-kra",
+        "pqc_hsm": "kryoptic-pq-hsm",
+    },
+}
+
+
 def check_all_services(
     config: LabConfig,
     pki_types: Optional[list[str]] = None,
@@ -150,35 +199,32 @@ def check_all_services(
     """
     Check all lab services and return their status.
 
-    Args:
-        config: Lab configuration
-        pki_types: List of PKI types to check. If None, auto-detects deployed PKIs.
-        check_freeipa_flag: Whether to check FreeIPA. If None, auto-detects.
-
-    Returns:
-        Dictionary mapping service names to their status
+    Uses container status checks (podman inspect) for all services
+    to avoid rootful/rootless port visibility issues with HTTP checks.
     """
     results = {}
 
-    http_checks = {
-        "mock_edr": ("mock_edr", config.edr_url),
-        "mock_siem": ("mock_siem", config.siem_url),
-        "mock_ct_log": ("mock_ct_log", config.ct_log_url),
-        "crl_server": ("crl_server", config.crl_cdp_url),
-        "policy_engine": ("policy_engine", config.policy_engine_url),
-        "chain_visualizer": ("chain_visualizer", config.chain_visualizer_url),
-        "pin_validator": ("pin_validator", config.pin_validator_url),
-        "kmip_server": ("kmip_server", config.kmip_server_url),
+    # Core and lab services — use container checks instead of HTTP
+    # to work across rootful/rootless podman boundary
+    container_checks = {
+        "mock_edr": "mock-edr",
+        "mock_siem": "mock-siem",
+        "kafka": "kafka",
+        "eda": "eda-server",
+        "zookeeper": "zookeeper",
+        "mock_ct_log": "mock-ct-log",
+        "crl_server": "crl-server",
+        "policy_engine": "policy-engine",
+        "chain_visualizer": "chain-visualizer",
+        "pin_validator": "pin-validator",
+        "kmip_server": "kmip-server",
     }
 
-    with ThreadPoolExecutor(max_workers=12) as pool:
+    with ThreadPoolExecutor(max_workers=20) as pool:
         futures = {
-            pool.submit(check_http_service, name, url, 3.0): key
-            for key, (name, url) in http_checks.items()
+            pool.submit(check_container_any, ctr): key
+            for key, ctr in container_checks.items()
         }
-        futures[pool.submit(check_kafka, config)] = "kafka"
-        futures[pool.submit(check_container, "eda-server", True)] = "eda"
-        futures[pool.submit(check_container, "zookeeper")] = "zookeeper"
 
         for future in as_completed(futures):
             results[futures[future]] = future.result()
@@ -187,18 +233,26 @@ def check_all_services(
     if pki_types is None:
         pki_types = detect_deployed_pkis()
 
-    # Check PKI containers only for deployed PKI types
+    # Check PKI CA containers
     for pki_type in pki_types:
         if pki_type not in CA_CONFIGS:
             continue
         levels = CA_CONFIGS[pki_type]
         for level, ca_config in levels.items():
             key = f"{pki_type}_{level}_ca"
-            # Try without sudo first, then with sudo
-            status = check_container(ca_config.container)
-            if not status.healthy:
-                status = check_container(ca_config.container, use_sudo=True)
-            results[key] = status
+            results[key] = check_container_any(ca_config.container)
+
+    # Check subsystem containers (OCSP, KRA, HSM)
+    for pki_type in pki_types:
+        if pki_type in SUBSYSTEM_CONTAINERS:
+            for key, ctr in SUBSYSTEM_CONTAINERS[pki_type].items():
+                results[key] = check_container_any(ctr)
+
+    # Check Hoike OCSP fleet
+    for pki_type in pki_types:
+        if pki_type in HOIKE_CONTAINERS:
+            for key, ctr in HOIKE_CONTAINERS[pki_type].items():
+                results[key] = check_container_any(ctr)
 
     # Check FreeIPA if deployed (or explicitly requested)
     if check_freeipa_flag is None:

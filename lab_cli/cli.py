@@ -179,9 +179,27 @@ def status(
         "pqc": ("PQC PKI", ["pqc_root_ca", "pqc_intermediate_ca", "pqc_iot_ca", "pqc_est_ca", "pqc_acme_ca"]),
     }
 
+    subsystem_category_map = {
+        "rsa": ("RSA Subsystems", ["rsa_ocsp", "rsa_kra", "rsa_hsm"]),
+        "ecc": ("ECC Subsystems", ["ecc_ocsp", "ecc_kra"]),
+        "pqc": ("PQC Subsystems", ["pqc_ocsp", "pqc_kra", "pqc_hsm"]),
+    }
+
+    hoike_category_map = {
+        "rsa": ("Hoike OCSP (RSA)", ["hoike_rsa_signer", "hoike_rsa_edge_1", "hoike_rsa_edge_2", "hoike_rsa_lb"]),
+        "ecc": ("Hoike OCSP (ECC)", ["hoike_ecc_signer", "hoike_ecc_edge_1", "hoike_ecc_edge_2", "hoike_ecc_lb"]),
+        "pqc": ("Hoike OCSP (PQC)", ["hoike_pqc_signer", "hoike_pqc_edge_1", "hoike_pqc_edge_2", "hoike_pqc_lb"]),
+    }
+
     for pki_type in (deployed_pkis if not all_pki else ["rsa", "ecc", "pqc"]):
         if pki_type in pki_category_map:
             name, services = pki_category_map[pki_type]
+            categories[name] = services
+        if pki_type in subsystem_category_map:
+            name, services = subsystem_category_map[pki_type]
+            categories[name] = services
+        if pki_type in hoike_category_map:
+            name, services = hoike_category_map[pki_type]
             categories[name] = services
 
     # Add FreeIPA if deployed
