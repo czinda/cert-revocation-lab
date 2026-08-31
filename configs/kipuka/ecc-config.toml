@@ -77,8 +77,8 @@ bearer_token = "cert-lab-kipuka-admin-token"
 #
 # Keytab provisioning:
 #   ipa-getkeytab → data/certs/ecc/kipuka.keytab → mounted at /etc/krb5.keytab
-[admin.gssapi]
-keytab_file = "/etc/krb5.keytab"
+# [admin.gssapi]
+# keytab_file = "/etc/krb5.keytab"
 
 # ── Audit ────────────────────────────────────────────────────────────────
 [audit]

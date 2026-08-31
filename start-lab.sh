@@ -2143,10 +2143,15 @@ main() {
     # Deploy Hoike OCSP fleet after PKI hierarchies are initialized
     deploy_hoike
 
-    start_freeipa
-    if [ "$START_RSA_PKI" = true ]; then setup_kerberos_enrollment rsa; fi
-    if [ "$START_PQ_PKI"  = true ]; then setup_kerberos_enrollment pq;  fi
-    if [ "$START_ECC_PKI" = true ]; then setup_kerberos_enrollment ecc; fi
+    # FreeIPA + Kerberos enrollment is optional — skip with SKIP_FREEIPA=1
+    if [ "${SKIP_FREEIPA:-0}" != "1" ]; then
+        start_freeipa
+        if [ "$START_RSA_PKI" = true ]; then setup_kerberos_enrollment rsa; fi
+        if [ "$START_PQ_PKI"  = true ]; then setup_kerberos_enrollment pq;  fi
+        if [ "$START_ECC_PKI" = true ]; then setup_kerberos_enrollment ecc; fi
+    else
+        log_info "FreeIPA skipped (SKIP_FREEIPA=1)"
+    fi
     start_runner
     start_eda
     start_security_tools

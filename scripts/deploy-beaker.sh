@@ -399,6 +399,7 @@ LAB_DOMAIN=cert-lab.local
 HSM_SO_PIN=12345678
 HSM_USER_PIN=1234
 ENROLLMENT_BACKEND=akamu
+SKIP_FREEIPA=1
 ENVEOF
     log ".env generated with default passwords"
 fi
