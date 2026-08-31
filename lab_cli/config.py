@@ -105,7 +105,7 @@ _ENROLLMENT_CONFIGS: dict[str, dict[str, dict[str, CAConfig]]] = {
             "est": CAConfig(container="kipuka-pq", instance="kipuka",
                             url="https://kipuka-pq.cert-lab.local:9443", nss_db="", host_port=8456),
             "acme": CAConfig(container="akamu-pq", instance="akamu",
-                             url="http://akamu-pq.cert-lab.local:8080", nss_db="", host_port=8459, http_port=8486),
+                             url="http://akamu-pq.cert-lab.local:8080", nss_db="", host_port=8459, http_port=8503),
         },
     },
     "dogtag": {

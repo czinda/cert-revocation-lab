@@ -164,7 +164,8 @@ def _acme_via_akamu_cli(acme_url: str, domain: str, container: str, pki_type: PK
     pki = pki_type.value
     if pki in CA_CONFIGS and "acme" in CA_CONFIGS[pki]:
         ca = CA_CONFIGS[pki]["acme"]
-        cli_acme_url = f"http://{ca.hostname}:{ca.host_port}/acme"
+        http_port = ca.http_port or ca.host_port
+        cli_acme_url = f"http://{ca.hostname}:{http_port}/acme"
         akamu_host = ca.hostname
     else:
         cli_acme_url = acme_url
