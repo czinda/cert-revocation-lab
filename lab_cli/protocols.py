@@ -175,13 +175,14 @@ def _acme_via_akamu_cli(acme_url: str, domain: str, container: str, pki_type: PK
     result = None
     cert_content = ""
     with tempfile.TemporaryDirectory() as tmpdir:
+        os.chmod(tmpdir, 0o777)
         cert_file = Path(tmpdir) / f"{domain}.pem"
 
         cmd = [
             "sudo", "podman", "run", "--rm", "--network", "host",
             "--add-host", f"{akamu_host}:127.0.0.1",
             "--entrypoint", "/app/akamu-cli",
-            "-v", f"{tmpdir}:/certs",
+            "-v", f"{tmpdir}:/certs:z",
             f"quay.io/czinda/akamu:latest",
             "issue",
             "--server", cli_acme_url + "/directory",
