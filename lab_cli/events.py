@@ -124,7 +124,7 @@ def trigger_siem_event(
 
     payload = {
         "device_id": device_id,
-        "alert_type": mapped_type,
+        "scenario": mapped_type,
         "severity": severity,
     }
 
@@ -140,7 +140,7 @@ def trigger_siem_event(
     try:
         response = httpx.post(
             f"{config.siem_url}/trigger",
-            json=payload,
+            params=payload,
             timeout=timeout
         )
 

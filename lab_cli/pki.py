@@ -126,7 +126,7 @@ def check_ca_health(
     # EST and ACME are standalone RAs — check their protocol endpoints instead
     # of the CA status API (they have no local CA subsystem)
     if level_key == "est":
-        ra_url = f"https://{ca_config.hostname}:{ca_config.host_port}/.well-known/est/cacerts"
+        ra_url = f"{ca_config.host_url}/.well-known/est/cacerts"
         cmd = ["curl", "-sk", "--connect-timeout", str(int(timeout)), ra_url]
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
@@ -141,19 +141,19 @@ def check_ca_health(
                               message=f"{pki_key.upper()} EST RA not responding ({ra_url})")
 
     if level_key == "acme":
-        ra_url = f"https://{ca_config.hostname}:{ca_config.host_port}/acme/directory"
+        ra_url = f"{ca_config.host_url}/acme/directory"
         cmd = ["curl", "-sk", "--connect-timeout", str(int(timeout)), ra_url]
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
         except subprocess.TimeoutExpired:
             return CAHealthResult(healthy=False, status="timeout",
-                                 message=f"RSA ACME RA timeout")
+                                 message=f"{pki_key.upper()} ACME RA timeout")
         if result.returncode == 0 and ("newNonce" in result.stdout or "newAccount" in result.stdout):
             return CAHealthResult(healthy=True, status="running",
-                                 message=f"RSA ACME RA is running",
+                                 message=f"{pki_key.upper()} ACME RA is running",
                                  details={"port": ca_config.host_port, "url": ra_url})
         return CAHealthResult(healthy=False, status="unreachable",
-                              message=f"RSA ACME RA not responding ({ra_url})")
+                              message=f"{pki_key.upper()} ACME RA not responding ({ra_url})")
 
     url = f"{ca_config.host_url}/ca/admin/ca/getStatus"
 

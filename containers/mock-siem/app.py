@@ -10,10 +10,10 @@ import uuid
 import random
 import asyncio
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Literal
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
 from pydantic import BaseModel, Field
 from aiokafka import AIOKafkaProducer
 
@@ -37,6 +37,9 @@ class SIEMAlert(BaseModel):
     username: Optional[str] = Field(None, description="Associated username")
     description: Optional[str] = Field(None, description="Alert description")
     pki_type: Optional[str] = Field(None, pattern="^(rsa|ecc|pqc)$", description="PKI type for certificate operations (rsa, ecc, pqc)")
+    certificate_cn: Optional[str] = None
+    certificate_serial: Optional[str] = Field(None, pattern="^(0[xX])?[0-9a-fA-F]+$")
+    ca_level: Optional[Literal["root", "intermediate", "iot"]] = None
 
 
 class CorrelatedEvent(BaseModel):
@@ -55,6 +58,8 @@ class CorrelatedEvent(BaseModel):
     description: str
     rule_name: str
     certificate_cn: Optional[str]
+    certificate_serial: Optional[str] = None
+    ca_level: Optional[str] = None
     pki_type: Optional[str]
     action_required: str
     related_events: List[str]
@@ -346,7 +351,9 @@ async def create_alert(alert: SIEMAlert):
         username=alert.username,
         description=alert.description or rule["description"],
         rule_name=rule["rule_name"],
-        certificate_cn=device_fqdn,
+        certificate_cn=alert.certificate_cn or device_fqdn,
+        certificate_serial=alert.certificate_serial,
+        ca_level=alert.ca_level,
         pki_type=alert.pki_type,
         action_required=rule["action_required"],
         related_events=[str(uuid.uuid4()) for _ in range(random.randint(1, 5))],
@@ -378,7 +385,15 @@ async def create_alert(alert: SIEMAlert):
 
 
 @app.post("/trigger")
-async def trigger_event(device_id: str, scenario: str = "malware_callback", severity: str = "high", pki_type: Optional[str] = None):
+async def trigger_event(
+    device_id: str,
+    scenario: str = "malware_callback",
+    severity: Literal["low", "medium", "high", "critical"] = "high",
+    pki_type: Optional[Literal["rsa", "ecc", "pqc"]] = None,
+    certificate_cn: Optional[str] = None,
+    certificate_serial: Optional[str] = Query(None, pattern="^(0[xX])?[0-9a-fA-F]+$"),
+    ca_level: Optional[Literal["root", "intermediate", "iot"]] = None,
+):
     """
     Simplified trigger endpoint (compatible with test script).
     Creates a SIEM alert for the specified device.
@@ -388,6 +403,9 @@ async def trigger_event(device_id: str, scenario: str = "malware_callback", seve
         scenario: SIEM correlation rule/scenario name
         severity: Alert severity (low, medium, high, critical)
         pki_type: PKI type for certificate operations (rsa, ecc, pqc)
+        certificate_cn: Explicit certificate common name, otherwise the device FQDN
+        certificate_serial: Explicit certificate serial, otherwise resolve by subject
+        ca_level: Issuing CA, otherwise use the rulebook's default
     """
     alert = SIEMAlert(
         source_ip="10.0.0." + str(random.randint(1, 254)),
@@ -396,7 +414,10 @@ async def trigger_event(device_id: str, scenario: str = "malware_callback", seve
         severity=severity,
         device_hostname=device_id,
         description=f"SIEM Alert: {scenario} detected on {device_id}",
-        pki_type=pki_type
+        pki_type=pki_type,
+        certificate_cn=certificate_cn,
+        certificate_serial=certificate_serial,
+        ca_level=ca_level,
     )
 
     result = await create_alert(alert)

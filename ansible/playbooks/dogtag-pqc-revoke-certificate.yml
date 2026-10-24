@@ -20,7 +20,7 @@
 
     # CA selection (root, intermediate, iot)
     # NOTE: EST is a Registration Authority, not a CA. Certificates issued via
-    # EST are managed by the Intermediate CA — use ca_level=intermediate.
+    # EST are managed by the issuing CA (IoT CA for the Akamu/Kipuka backend).
     # Prefer event.ca_level (set by test/caller) so revocation targets the correct CA,
     # fall back to ca_level from rulebook extra_vars, then default to iot
     target_ca: "{{ event.ca_level | default(ca_level | default('iot', true), true) }}"
@@ -53,7 +53,7 @@
 
     # PQC PKI configuration
     # NOTE: EST is a lightweight RA with no CA subsystem or admin P12.
-    # Certs issued via EST are managed by Intermediate CA — use ca_level=intermediate.
+    # Pass the issuing CA, not the enrollment RA, as ca_level.
     ca_configs:
       root:
         name: "PQ Root CA"
@@ -78,6 +78,13 @@
         ca_cert: "{{ certs_dir }}/pq/iot-ca-chain.crt"
 
   tasks:
+    - name: Validate issuing CA
+      ansible.builtin.assert:
+        that:
+          - target_ca in ca_configs
+        fail_msg: "Unknown issuing CA '{{ target_ca }}'; use root, intermediate, or iot"
+      tags: [validation]
+
     - name: Set CA configuration
       ansible.builtin.set_fact:
         ca_config: "{{ ca_configs[target_ca] }}"
@@ -118,32 +125,57 @@
       block:
         - name: Use provided certificate serial
           ansible.builtin.set_fact:
-            cert_serial: "{{ certificate_serial | regex_replace('^0x', '') }}"
+            cert_serial: "{{ certificate_serial | regex_replace('^0[xX]', '') }}"
           when: certificate_serial != ''
           tags: [lookup]
 
         - name: Search for certificate by subject via SSH (if serial not provided)
-          ansible.builtin.shell:
-            cmd: |
-              cd {{ hostvars['lab-host'].lab_root_dir | default('/home/certlab/cert-revocation-lab') }}
-              sudo podman exec {{ ca_config.container }} pki -d /root/.dogtag/nssdb -c '' \
-                ca-cert-find --name "{{ certificate_cn }}" --status VALID 2>/dev/null \
-                | grep "Serial Number:" | head -1 | awk '{print $3}' | sed 's/^0x//'
+          ansible.builtin.command:
+            argv:
+              - sudo
+              - podman
+              - exec
+              - "{{ ca_config.container }}"
+              - pki
+              - -U
+              - http://localhost:8080
+              - ca-cert-find
+              - --name
+              - "{{ certificate_cn }}"
+              - --matchExactly
+              - --status
+              - VALID
           delegate_to: lab-host
           register: cert_search_result
+          changed_when: false
           when: certificate_serial == ''
           tags: [lookup]
 
-        - name: Set certificate serial from search
+        - name: Collect matching certificate serials
           ansible.builtin.set_fact:
-            cert_serial: "{{ cert_search_result.stdout | trim }}"
-          when: certificate_serial == '' and cert_search_result.stdout | default('') | trim != ''
+            cert_serial_candidates: "{{ cert_search_result.stdout | regex_findall('Serial Number: *0x([0-9A-Fa-f]+)') }}"
+          when: certificate_serial == ''
           tags: [lookup]
 
-        - name: Verify certificate serial found
-          ansible.builtin.fail:
-            msg: "No valid certificate found for {{ certificate_cn }}"
-          when: cert_serial is not defined or cert_serial == ''
+        - name: Require an unambiguous certificate lookup
+          ansible.builtin.assert:
+            that:
+              - cert_serial_candidates | length == 1
+            fail_msg: "Expected one valid certificate for {{ certificate_cn }}, found {{ cert_serial_candidates | length }}; supply a serial"
+          when: certificate_serial == ''
+          tags: [validation]
+
+        - name: Set certificate serial from search
+          ansible.builtin.set_fact:
+            cert_serial: "{{ cert_serial_candidates | first }}"
+          when: certificate_serial == ''
+          tags: [lookup]
+
+        - name: Validate certificate serial
+          ansible.builtin.assert:
+            that:
+              - cert_serial is match('^[0-9A-Fa-f]+$')
+            fail_msg: "Invalid certificate serial"
           tags: [validation]
 
         - name: Display certificate to revoke
@@ -152,10 +184,18 @@
           tags: [lookup]
 
         - name: Revoke certificate via SSH to lab host
-          ansible.builtin.shell:
-            cmd: |
-              cd {{ hostvars['lab-host'].lab_root_dir | default('/home/certlab/cert-revocation-lab') }}
-              ./scripts/pki-cli.py revoke 0x{{ cert_serial }} --ca {{ target_ca }} --pki pqc --reason key_compromise
+          ansible.builtin.command:
+            argv:
+              - ./scripts/pki-cli.py
+              - revoke
+              - "0x{{ cert_serial }}"
+              - --ca
+              - "{{ target_ca }}"
+              - --pki
+              - pqc
+              - --reason
+              - key_compromise
+            chdir: "{{ hostvars['lab-host'].lab_root_dir | default('/home/certlab/cert-revocation-lab') }}"
           delegate_to: lab-host
           register: revoke_result
           tags: [revoke]
@@ -171,19 +211,26 @@
           tags: [verify]
 
         - name: Verify revocation status via SSH
-          ansible.builtin.shell:
-            cmd: |
-              cd {{ hostvars['lab-host'].lab_root_dir | default('/home/certlab/cert-revocation-lab') }}
-              sudo podman exec {{ ca_config.container }} pki -d /root/.dogtag/nssdb -c '' \
-                ca-cert-show 0x{{ cert_serial }} 2>/dev/null | grep "Status:" | awk '{print $2}'
+          ansible.builtin.command:
+            argv:
+              - sudo
+              - podman
+              - exec
+              - "{{ ca_config.container }}"
+              - pki
+              - -U
+              - http://localhost:8080
+              - ca-cert-show
+              - "0x{{ cert_serial }}"
           delegate_to: lab-host
           register: verify_status
+          changed_when: false
           tags: [verify]
 
         - name: Confirm revocation
           ansible.builtin.assert:
             that:
-              - verify_status.stdout | trim == 'REVOKED'
+              - "'Status: REVOKED' in verify_status.stdout"
             success_msg: "Certificate 0x{{ cert_serial }} successfully revoked"
             fail_msg: "Certificate revocation verification failed - Status: {{ verify_status.stdout | default('unknown') }}"
           tags: [verify]

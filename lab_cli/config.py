@@ -59,10 +59,10 @@ class CAConfig:
     """Configuration for a Certificate Authority."""
     container: str
     instance: str
-    url: str           # Internal URL (inside container, always port 8443)
+    url: str           # Internal service URL (also determines the transport)
     nss_db: str
     host_port: int     # HTTPS port mapped to host machine
-    http_port: int = 0 # HTTP port mapped to host (PQ only — OpenSSL can't do ML-DSA-87 TLS)
+    http_port: int = 0 # Separate HTTP port mapped to host, when present
 
     @property
     def hostname(self) -> str:
@@ -79,7 +79,8 @@ class CAConfig:
         """
         if self.http_port:
             return f"http://localhost:{self.http_port}"
-        return f"https://localhost:{self.host_port}"
+        scheme = self.url.split(":", 1)[0]
+        return f"{scheme}://localhost:{self.host_port}"
 
 
 # Enrollment backend: "akamu" (Akamu ACME + Kipuka EST) or "dogtag" (Dogtag RAs)
@@ -104,7 +105,7 @@ _ENROLLMENT_CONFIGS: dict[str, dict[str, dict[str, CAConfig]]] = {
             "est": CAConfig(container="kipuka-pq", instance="kipuka",
                             url="https://kipuka-pq.cert-lab.local:9443", nss_db="", host_port=8456),
             "acme": CAConfig(container="akamu-pq", instance="akamu",
-                             url="http://akamu-pq.cert-lab.local:8080", nss_db="", host_port=8459, http_port=8486),
+                             url="http://akamu-pq.cert-lab.local:8080", nss_db="", host_port=8459, http_port=8503),
         },
     },
     "dogtag": {
@@ -120,8 +121,8 @@ _ENROLLMENT_CONFIGS: dict[str, dict[str, dict[str, CAConfig]]] = {
         },
         "pqc": {
             "est": CAConfig(container="dogtag-pq-est-ca", instance="pki-pq-est-ca",
-                            url="https://pq-est-ca.cert-lab.local:8443", nss_db="/var/lib/pki/pki-pq-est-ca/alias",
-                            host_port=8456, http_port=8486),
+                             url="https://pq-est-ca.cert-lab.local:8443", nss_db="/var/lib/pki/pki-pq-est-ca/alias",
+                             host_port=8456, http_port=8503),
         },
     },
 }
@@ -158,13 +159,13 @@ def _build_ca_configs() -> dict[str, dict[str, CAConfig]]:
         "pqc": {
             "root": CAConfig(container="dogtag-pq-root-ca", instance="pki-pq-root-ca",
                              url="http://pq-root-ca.cert-lab.local:8080",
-                             nss_db="/var/lib/pki/pki-pq-root-ca/alias", host_port=8453, http_port=8490),
+                             nss_db="/var/lib/pki/pki-pq-root-ca/alias", host_port=8453, http_port=8500),
             "intermediate": CAConfig(container="dogtag-pq-intermediate-ca", instance="pki-pq-intermediate-ca",
                                      url="http://pq-intermediate-ca.cert-lab.local:8080",
-                                     nss_db="/var/lib/pki/pki-pq-intermediate-ca/alias", host_port=8454, http_port=8484),
+                                     nss_db="/var/lib/pki/pki-pq-intermediate-ca/alias", host_port=8454, http_port=8501),
             "iot": CAConfig(container="dogtag-pq-iot-ca", instance="pki-pq-iot-ca",
                             url="http://pq-iot-ca.cert-lab.local:8080",
-                            nss_db="/var/lib/pki/pki-pq-iot-ca/alias", host_port=8455, http_port=8485),
+                            nss_db="/var/lib/pki/pki-pq-iot-ca/alias", host_port=8455, http_port=8502),
         },
     }
 

@@ -23,6 +23,7 @@ from .config import (
     CALevel,
     ADVANCED_SUITES,
     CA_CONFIGS,
+    ENROLLMENT_BACKEND,
 )
 from .events import trigger_edr_event
 from .pki import (
@@ -296,12 +297,7 @@ def test_est_enroll_revoke(
     wait_time: int,
     console: Console,
 ) -> TestOutcome:
-    """EST enroll, extract serial, trigger EDR event, poll for revocation on Intermediate CA.
-
-    EST is a Registration Authority — it proxies enrollment to the Intermediate CA,
-    so the certificate lives in the Intermediate CA's database. Revocation must
-    target the Intermediate CA, not the EST RA.
-    """
+    """Enroll through EST and revoke at its issuing CA, not the enrollment RA."""
     if _get_est_url(pki_type) is None:
         return False, f"SKIP: EST not available for {pki_type.value} PKI"
 
@@ -309,7 +305,7 @@ def test_est_enroll_revoke(
 
     result = est_enroll_certificate(config, fqdn, pki_type)
     if not result.success:
-        return False, f"SKIP: EST enrollment failed: {result.message}"
+        return False, f"EST enrollment failed: {result.message}"
 
     # Extract serial from the certificate
     serial = result.serial
@@ -318,10 +314,9 @@ def test_est_enroll_revoke(
     if not serial:
         return False, "SKIP: EST returned no certificate or serial could not be extracted"
 
-    # EST proxies to Intermediate CA — cert lives there, revoke there
-    revoke_ca = CALevel.INTERMEDIATE
+    revoke_ca = CALevel.IOT if ENROLLMENT_BACKEND == "akamu" else CALevel.INTERMEDIATE
 
-    # Trigger EDR event targeting the Intermediate CA
+    # Trigger EDR event targeting the issuing CA.
     event_result = trigger_edr_event(
         config=config,
         device_id=fqdn.split(".")[0],
@@ -337,7 +332,7 @@ def test_est_enroll_revoke(
 
     revoked, elapsed = _poll_for_revocation(config, serial, pki_type, revoke_ca, wait_time)
     if revoked:
-        return True, f"EST cert revoked after {elapsed}s (via Intermediate CA)"
+        return True, f"EST cert revoked after {elapsed}s (via {revoke_ca.value} CA)"
     return False, f"EST cert not revoked within {wait_time}s"
 
 
@@ -355,92 +350,46 @@ def test_est_renewal(
 
     _, fqdn = _device_fqdn(config, "estrenew")
 
-    # Do initial enrollment manually so we keep the private key for TLS
-    # client auth during re-enrollment.  est_enroll_certificate() generates
-    # its key in a temp dir that is deleted before it returns.
-    with tempfile.TemporaryDirectory() as tmpdir:
-        enroll_key = Path(tmpdir) / "enroll.key"
-        enroll_csr = Path(tmpdir) / "enroll.csr"
-        enroll_cert = Path(tmpdir) / "enroll.crt"
+    result1 = est_enroll_certificate(config, fqdn, pki_type)
+    if not result1.success:
+        return False, f"EST enrollment failed: {result1.message}"
+    if not result1.certificate or not result1.key_pem or not result1.serial:
+        return False, "EST enrollment did not return a certificate, matching key, and serial"
 
-        # Generate key
-        rc = subprocess.run(
-            ["openssl", "genrsa", "-out", str(enroll_key), "2048"],
-            capture_output=True,
-        )
-        if rc.returncode != 0:
-            return False, f"SKIP: Key generation failed: {rc.stderr}"
-
-        # Generate CSR
-        rc = subprocess.run(
-            ["openssl", "req", "-new",
-             "-key", str(enroll_key),
-             "-out", str(enroll_csr),
-             "-subj", f"/CN={fqdn}/O=Cert-Lab/C=US"],
-            capture_output=True,
-        )
-        if rc.returncode != 0:
-            return False, f"SKIP: CSR generation failed: {rc.stderr}"
-
-        # Convert CSR to DER base64
-        rc = subprocess.run(
-            ["openssl", "req", "-in", str(enroll_csr), "-outform", "DER"],
-            capture_output=True,
-        )
-        if rc.returncode != 0:
-            return False, f"SKIP: CSR DER conversion failed: {rc.stderr}"
-        csr_b64 = base64.b64encode(rc.stdout).decode("ascii")
-
-        # Submit to EST simpleenroll with HTTP Basic auth
-        est_password = config.pki_admin_password
-        rc = subprocess.run(
-            ["curl", "-sk", "-X", "POST",
-             "-u", f"est-client:{est_password}",
-             "-H", "Content-Type: application/pkcs10",
-             "-H", "Content-Transfer-Encoding: base64",
-             "--data", csr_b64,
-             f"{est_url}/simpleenroll"],
-            capture_output=True, text=True, timeout=60,
-        )
-        if rc.returncode != 0:
-            return False, f"SKIP: EST enrollment curl failed: {rc.stderr}"
-
-        cert1_text = rc.stdout.strip()
-        if "BEGIN CERTIFICATE" not in cert1_text and not cert1_text.startswith("MII"):
-            return False, f"SKIP: EST enrollment did not return a certificate: {cert1_text[:200]}"
-
-        # EST returns PKCS#7 (CMS SignedData) — extract the certificate
-        if cert1_text.startswith("MII") and "BEGIN CERTIFICATE" not in cert1_text:
-            p7_path = Path(tmpdir) / "response.p7b"
-            p7_path.write_text(f"-----BEGIN PKCS7-----\n{cert1_text}\n-----END PKCS7-----\n")
-            p7_rc = subprocess.run(
-                ["openssl", "pkcs7", "-in", str(p7_path), "-print_certs"],
-                capture_output=True, text=True, timeout=10,
+    serial1 = result1.serial
+    serials = [serial1]
+    issuer = CALevel.IOT if ENROLLMENT_BACKEND == "akamu" else CALevel.INTERMEDIATE
+    cleanup_failures = []
+    try:
+        with tempfile.TemporaryDirectory(dir="/dev/shm" if Path("/dev/shm").is_dir() else None) as tmpdir:
+            enroll_key = Path(tmpdir) / "enroll.key"
+            enroll_cert = Path(tmpdir) / "enroll.crt"
+            enroll_key.write_text(result1.key_pem)
+            enroll_key.chmod(0o600)
+            enroll_cert.write_text(result1.certificate)
+            result2 = est_reenroll_certificate(
+                config=config,
+                device_fqdn=fqdn,
+                pki_type=pki_type,
+                client_cert=str(enroll_cert),
+                client_key=str(enroll_key),
             )
-            if p7_rc.returncode == 0 and "BEGIN CERTIFICATE" in p7_rc.stdout:
-                cert1_text = p7_rc.stdout.strip()
-            else:
-                return False, "SKIP: Could not extract certificate from PKCS#7 response"
+            if result2.serial and result2.serial != serial1:
+                serials.append(result2.serial)
+    finally:
+        for serial in serials:
+            cleanup = revoke_certificate(config, serial, reason=5, pki_type=pki_type, ca_level=issuer)
+            if not cleanup.success:
+                cleanup_failures.append(serial)
 
-        enroll_cert.write_text(cert1_text)
-        serial1 = _extract_serial_from_pem(enroll_cert.read_text())
-
-        # Re-enroll using the enrolled cert + its matching key for TLS auth
-        result2 = est_reenroll_certificate(
-            config=config,
-            device_fqdn=fqdn,
-            pki_type=pki_type,
-            client_cert=str(enroll_cert),
-            client_key=str(enroll_key),
-        )
+    if cleanup_failures:
+        return False, f"EST test certificate cleanup failed: {', '.join(cleanup_failures)}"
 
     if not result2.success:
-        # Dogtag EST with PKIInMemoryRealm cannot authenticate TLS client
-        # certs for simplereenroll (RFC 7030 §4.2.2).  Known limitation.
-        return False, f"SKIP: EST simplereenroll unsupported with in-memory realm: {result2.message}"
+        return False, f"EST simplereenroll failed: {result2.message}"
 
-    serial2 = None
-    if result2.certificate:
+    serial2 = result2.serial
+    if not serial2 and result2.certificate:
         serial2 = _extract_serial_from_pem(result2.certificate)
 
     if serial1 and serial2 and serial1 == serial2:
@@ -450,7 +399,7 @@ def test_est_renewal(
         return True, f"EST re-enrollment OK: {serial1} -> {serial2}"
 
     # Fall back to raw certificate comparison
-    if cert1_text == (result2.certificate or "").strip():
+    if result1.certificate.strip() == (result2.certificate or "").strip():
         return False, "Re-enrollment returned the same certificate"
 
     return True, "EST re-enrollment returned a new certificate"
@@ -499,7 +448,7 @@ def test_acme_issue_revoke(
     wait_time: int,
     console: Console,
 ) -> TestOutcome:
-    """Issue cert via ACME, trigger EDR event, poll for revocation on ACME CA."""
+    """Issue via ACME, then trigger and observe revocation at the issuing CA."""
     if _get_acme_url(pki_type) is None:
         return False, f"SKIP: ACME not available for {pki_type.value} PKI"
 
@@ -512,15 +461,16 @@ def test_acme_issue_revoke(
 
     result = acme_issue_certificate(config, domain, pki_type)
     if not result.success:
-        return False, f"SKIP: ACME issuance failed: {result.message}"
+        return False, f"ACME issuance failed: {result.message}"
 
     serial = result.serial
     if not serial and result.certificate:
         serial = _extract_serial_from_pem(result.certificate)
     if not serial:
-        return False, "SKIP: ACME returned no certificate or serial could not be extracted"
+        return False, "ACME returned no certificate or serial could not be extracted"
 
-    # Trigger EDR event targeting the ACME CA
+    revoke_ca = CALevel.IOT if ENROLLMENT_BACKEND == "akamu" else CALevel.ACME
+    # Akamu is an RA; its backend CA owns the certificate and revocation.
     event_result = trigger_edr_event(
         config=config,
         device_id=domain.split(".")[0],
@@ -528,13 +478,13 @@ def test_acme_issue_revoke(
         severity="critical",
         certificate_cn=domain,
         certificate_serial=serial,
-        ca_level=CALevel.ACME,
+        ca_level=revoke_ca,
         pki_type=pki_type,
     )
     if not event_result.success:
         return False, f"Failed to trigger event: {event_result.message}"
 
-    revoked, elapsed = _poll_for_revocation(config, serial, pki_type, CALevel.ACME, wait_time)
+    revoked, elapsed = _poll_for_revocation(config, serial, pki_type, revoke_ca, wait_time)
     if revoked:
         return True, f"ACME cert revoked after {elapsed}s"
     return False, f"ACME cert not revoked within {wait_time}s"
@@ -616,6 +566,8 @@ def test_all_ca_levels(
 
     available_levels = []
     for level_str in ["iot", "est", "intermediate"]:
+        if level_str == "est" and ENROLLMENT_BACKEND == "akamu":
+            continue  # Kipuka forwards enrollment; it is not a Dogtag CA.
         if level_str in CA_CONFIGS[pki_key]:
             level = CALevel(level_str)
             health = check_ca_health(pki_type, level)

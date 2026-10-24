@@ -8,6 +8,7 @@ active ENROLLMENT_BACKEND (akamu or dogtag).  No hardcoded hostnames.
 import base64
 import json
 import os
+import re
 import shlex
 import socket
 import subprocess
@@ -21,12 +22,10 @@ from .config import CA_CONFIGS, ENROLLMENT_BACKEND, LabConfig, PKIType, PQ_OID_M
 KIPUKA_ADMIN_TOKEN = os.getenv("KIPUKA_ADMIN_TOKEN", "cert-lab-kipuka-admin-token")
 
 
-def _generate_pqc_key_and_csr(
-    key_path: Path, csr_path: Path, cn: str, san: str
-) -> Optional[str]:
-    """Generate ML-DSA-87 key + CSR, using the Dogtag container's OpenSSL
-    if the host lacks ML-DSA support. Returns error message or None on success."""
-    # Try host OpenSSL first
+def _generate_pqc_key(key_path: Path) -> Optional[str]:
+    """Generate an ML-DSA-87 key, using container OpenSSL if needed."""
+    container = CA_CONFIGS["pqc"]["iot"].container
+    # Try host OpenSSL first.
     probe = subprocess.run(
         ["openssl", "genpkey", "-algorithm", "ML-DSA-87", "-out", str(key_path)],
         capture_output=True, text=True, timeout=10,
@@ -34,36 +33,47 @@ def _generate_pqc_key_and_csr(
     if probe.returncode != 0:
         # Use Dogtag container's OpenSSL 3.5+
         key_gen = subprocess.run(
-            ["sudo", "podman", "exec", "dogtag-pq-ca",
+            ["sudo", "podman", "exec", container,
              "openssl", "genpkey", "-algorithm", "ML-DSA-87"],
             capture_output=True, timeout=15,
         )
         if key_gen.returncode != 0 or b"BEGIN" not in key_gen.stdout:
             return f"ML-DSA key generation failed (host and container): {key_gen.stderr.decode(errors='replace')}"
         key_path.write_bytes(key_gen.stdout)
+    key_path.chmod(0o600)
+    return None
 
-    # Generate CSR — also needs container OpenSSL for ML-DSA keys
+
+def _generate_pqc_key_and_csr(
+    key_path: Path, csr_path: Path, cn: str, san: str
+) -> Optional[str]:
+    """Generate ML-DSA-87 key + CSR, using the Dogtag container's OpenSSL
+    if the host lacks ML-DSA support. Returns error message or None on success."""
+    error = _generate_pqc_key(key_path)
+    if error:
+        return error
+    container = CA_CONFIGS["pqc"]["iot"].container
+
+    # Use the same native path for the CSR; only fall back when needed.
     csr_gen = subprocess.run(
-        ["sudo", "podman", "exec", "-i", "dogtag-pq-ca",
+        ["openssl", "req", "-new", "-key", str(key_path),
+         "-out", str(csr_path),
+         "-subj", f"/CN={cn}",
+         "-addext", f"subjectAltName=DNS:{san}"],
+        capture_output=True, text=True, timeout=15,
+    )
+    if csr_gen.returncode == 0:
+        return None
+    csr_container = subprocess.run(
+        ["sudo", "podman", "exec", "-i", container,
          "openssl", "req", "-new", "-key", "/dev/stdin",
          "-subj", f"/CN={cn}",
          "-addext", f"subjectAltName=DNS:{san}"],
-        input=key_path.read_bytes(),
-        capture_output=True, timeout=15,
+        input=key_path.read_bytes(), capture_output=True, timeout=15,
     )
-    if csr_gen.returncode == 0 and b"BEGIN" in csr_gen.stdout:
-        csr_path.write_bytes(csr_gen.stdout)
-        return None
-    # Fallback: try host openssl (works for RSA/ECC keys)
-    csr_host = subprocess.run(
-        ["openssl", "req", "-new", "-key", str(key_path),
-         "-out", str(csr_path),
-         "-subj", f"/CN={cn}/O=Cert-Lab/C=US",
-         "-addext", f"subjectAltName=DNS:{san}"],
-        capture_output=True, text=True, timeout=10,
-    )
-    if csr_host.returncode != 0:
-        return f"CSR generation failed: {csr_host.stderr}"
+    if csr_container.returncode != 0:
+        return f"CSR generation failed: {csr_container.stderr.decode(errors='replace')}"
+    csr_path.write_bytes(csr_container.stdout)
     return None
 
 
@@ -76,6 +86,40 @@ class ProtocolResult:
     serial: Optional[str] = None
     details: Optional[dict] = None
     key_pem: Optional[str] = None
+
+
+def _decode_est_certificates(response: str) -> Optional[str]:
+    """Decode an EST base64/PEM PKCS#7 or PEM certificate bundle with OpenSSL."""
+    response = response.strip()
+    if not response:
+        return None
+    try:
+        if response.startswith("-----BEGIN CERTIFICATE-----"):
+            converted = subprocess.run(
+                ["openssl", "crl2pkcs7", "-nocrl", "-certfile", "/dev/stdin"],
+                input=response.encode(), capture_output=True, timeout=10,
+            )
+            if converted.returncode:
+                return None
+            encoded, encoding = converted.stdout, "PEM"
+        elif response.startswith("-----BEGIN PKCS7-----"):
+            encoded, encoding = response.encode(), "PEM"
+        else:
+            encoded = base64.b64decode("".join(response.split()), validate=True)
+            encoding = "DER"
+        parsed = subprocess.run(
+            ["openssl", "pkcs7", "-inform", encoding, "-print_certs"],
+            input=encoded, capture_output=True, timeout=10,
+        )
+        if parsed.returncode:
+            return None
+        certificates = re.findall(
+            rb"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----",
+            parsed.stdout, re.DOTALL,
+        )
+        return b"\n".join(certificates).decode("ascii") + "\n" if certificates else None
+    except (ValueError, OSError, subprocess.TimeoutExpired):
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -153,42 +197,47 @@ def _get_container_gateway_ip(container: str) -> Optional[str]:
 
 
 def _acme_via_akamu_cli(acme_url: str, domain: str, container: str, pki_type: PKIType = PKIType.RSA) -> ProtocolResult:
-    """Issue certificate using akamu-cli with host networking.
-
-    akamu-cli runs with ``--network host`` so its HTTP-01 challenge server
-    on port 8880 binds on the host.  akamu (the server) validates the
-    challenge by connecting to ``<domain>:8880`` — this requires the host
-    firewall to allow container→host routing (works on Beaker with
-    Technitium DNS, fails on media with UFW FORWARD=DROP).
-    """
-    pki = pki_type.value
-    if pki in CA_CONFIGS and "acme" in CA_CONFIGS[pki]:
-        ca = CA_CONFIGS[pki]["acme"]
-        cli_acme_url = f"http://{ca.hostname}:{ca.host_port}/acme"
-        akamu_host = ca.hostname
-    else:
-        cli_acme_url = acme_url
-        akamu_host = "akamu-rsa.cert-lab.local"
+    """Use the deployed CLI image and the server's HTTP-01 validation port."""
+    image_result = subprocess.run(
+        ["sudo", "podman", "inspect", "--format", "{{.Image}}", container],
+        capture_output=True, text=True, timeout=10,
+    )
+    if image_result.returncode or not image_result.stdout.strip():
+        return ProtocolResult(False, "Cannot resolve the deployed Akamu image")
+    image = image_result.stdout.strip()
+    server_config = subprocess.run(
+        ["sudo", "podman", "exec", container, "cat", "/app/conf/config.toml"],
+        capture_output=True, text=True, timeout=10,
+    )
+    if server_config.returncode:
+        return ProtocolResult(False, "Cannot read the Akamu HTTP-01 configuration")
+    # This scalar defaults to the standard HTTP-01 port in Akamu. Do not log
+    # the configuration: it can also contain backend credentials.
+    section = re.search(r"(?ms)^\s*\[acme\]\s*\n(.*?)(?=^\s*\[|\Z)", server_config.stdout)
+    port_match = re.search(r"(?m)^\s*http_validation_port\s*=\s*(\d+)\s*(?:#.*)?$", section[1] if section else "")
+    challenge_port = int(port_match[1]) if port_match else 80
+    if not 1 <= challenge_port <= 65535:
+        return ProtocolResult(False, "Invalid Akamu HTTP-01 validation port")
 
     timeout = 120 if pki_type == PKIType.PQC else 60
 
     result = None
     cert_content = ""
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory(dir="/dev/shm" if Path("/dev/shm").is_dir() else None) as tmpdir:
         cert_file = Path(tmpdir) / f"{domain}.pem"
 
         cmd = [
-            "sudo", "podman", "run", "--rm", "--network", "host",
-            "--add-host", f"{akamu_host}:127.0.0.1",
+            "sudo", "podman", "run", "--rm", "--pull=never", "--network", "host",
+            "--user", "0", "--cap-add", "NET_BIND_SERVICE",
             "--entrypoint", "/app/akamu-cli",
-            "-v", f"{tmpdir}:/certs",
-            f"quay.io/czinda/akamu:latest",
+            "-v", f"{tmpdir}:/certs:Z",
+            image,
             "issue",
-            "--server", cli_acme_url + "/directory",
+            "--server", acme_url + "/directory",
             "--domain", domain,
             "--account-key", "/certs/account.pem",
             "--challenge", "http-01",
-            "--http-port", "8880",
+            "--http-port", str(challenge_port),
             "--cert-key-type", "ml-dsa-87" if pki_type == PKIType.PQC else "rsa:2048",
             "--out", f"/certs/{domain}.pem",
         ]
@@ -497,55 +546,23 @@ def est_enroll_certificate(
     if not cacerts_result.success:
         return cacerts_result
 
+    if ENROLLMENT_BACKEND == "akamu" and not (client_cert and client_key) and not otp:
+        otp_result = est_generate_otp(pki_type, device_fqdn)
+        if not otp_result.success or not otp_result.details or not otp_result.details.get("token"):
+            return ProtocolResult(success=False, message=f"EST OTP generation failed: {otp_result.message}")
+        otp = otp_result.details["token"]
+
     # Generate CSR
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory(dir="/dev/shm" if Path("/dev/shm").is_dir() else None) as tmpdir:
         key_path = Path(tmpdir) / "key.pem"
         csr_path = Path(tmpdir) / "request.csr"
 
         # Generate key and CSR based on PKI type.
         csr_already_generated = False
         if pki_type == PKIType.PQC:
-            # ML-DSA-87 keys require OpenSSL 3.5+ (container has it, host likely doesn't).
-            # Generate key+CSR inside the PQ CA container and copy back.
-            pq_container = "dogtag-pq-iot-ca"
-            result = subprocess.run(
-                ["sudo", "podman", "inspect", "--format", "{{.State.Status}}", pq_container],
-                capture_output=True, text=True, timeout=10,
-            )
-            if result.returncode != 0 or "running" not in result.stdout:
-                pq_container = "dogtag-pq-ca"
-
-            safe_fqdn = shlex.quote(device_fqdn)
-            gen_script = (
-                f"openssl genpkey -algorithm ML-DSA-87 -out /tmp/est-mldsa.key 2>&1 && "
-                f"openssl req -new -key /tmp/est-mldsa.key "
-                f"-subj '/CN='{safe_fqdn}'/O=Cert-Lab/C=US' "
-                f"-addext 'subjectAltName=DNS:'{safe_fqdn} "
-                f"-out /tmp/est-mldsa.csr 2>&1 && "
-                f"echo '__KEY_START__' && cat /tmp/est-mldsa.key && "
-                f"echo '__CSR_START__' && cat /tmp/est-mldsa.csr"
-            )
-            result = subprocess.run(
-                ["sudo", "podman", "exec", pq_container, "bash", "-c", gen_script],
-                capture_output=True, text=True, timeout=30,
-            )
-            if result.returncode != 0:
-                return ProtocolResult(
-                    success=False,
-                    message=f"Failed to generate ML-DSA-87 key/CSR in container: {result.stderr or result.stdout}"
-                )
-
-            output = result.stdout
-            if "__KEY_START__" not in output or "__CSR_START__" not in output:
-                return ProtocolResult(
-                    success=False,
-                    message=f"ML-DSA-87 key/CSR generation failed: {output}"
-                )
-
-            key_data = output.split("__KEY_START__")[1].split("__CSR_START__")[0].strip()
-            csr_data = output.split("__CSR_START__")[1].strip()
-            key_path.write_text(key_data + "\n")
-            csr_path.write_text(csr_data + "\n")
+            error = _generate_pqc_key_and_csr(key_path, csr_path, device_fqdn, device_fqdn)
+            if error:
+                return ProtocolResult(success=False, message=error)
             csr_already_generated = True
         elif pki_type == PKIType.ECC:
             key_cmd = [
@@ -600,7 +617,7 @@ def est_enroll_certificate(
         result = subprocess.run(der_cmd, capture_output=True, timeout=30)
         if result.returncode != 0 and pki_type == PKIType.PQC:
             result = subprocess.run(
-                ["sudo", "podman", "exec", "-i", "dogtag-pq-ca",
+                ["sudo", "podman", "exec", "-i", CA_CONFIGS["pqc"]["iot"].container,
                  "openssl", "req", "-inform", "PEM", "-outform", "DER"],
                 input=csr_path.read_bytes(), capture_output=True, timeout=15,
             )
@@ -614,7 +631,7 @@ def est_enroll_certificate(
 
         # Submit to EST simpleenroll endpoint
         enroll_cmd = [
-            "curl", "-sk",
+            "curl", "-fsSk",
             "-X", "POST",
             "-H", "Content-Type: application/pkcs10",
             "-H", "Content-Transfer-Encoding: base64",
@@ -622,31 +639,19 @@ def est_enroll_certificate(
             f"{est_url}/simpleenroll"
         ]
 
-        # Authentication: client cert > OTP (explicit or auto-generated) > password fallback
+        # Kipuka requires an OTP; only the legacy Dogtag backend uses a password.
+        curl_config = ""
         if client_cert and client_key:
             enroll_cmd.extend(["--cert", client_cert, "--key", client_key])
         elif otp:
-            enroll_cmd.extend(["-u", f"{device_fqdn}:{otp}"])
+            curl_config = "user = " + json.dumps(f"{device_fqdn}:{otp}") + "\n"
         else:
-            # Auto-generate OTP for kipuka backend
+            curl_config = "user = " + json.dumps(f"est-client:{config.pki_admin_password}") + "\n"
 
-            if ENROLLMENT_BACKEND == "akamu":
-                otp_result = est_generate_otp(pki_type, device_fqdn)
-                if otp_result.success and otp_result.details:
-                    auto_otp = otp_result.details.get("token", "")
-                    if auto_otp:
-                        enroll_cmd.extend(["-u", f"{device_fqdn}:{auto_otp}"])
-                    else:
-                        est_password = config.pki_admin_password if config else "RedHat123"
-                        enroll_cmd.extend(["-u", f"est-client:{est_password}"])
-                else:
-                    est_password = config.pki_admin_password if config else "RedHat123"
-                    enroll_cmd.extend(["-u", f"est-client:{est_password}"])
-            else:
-                est_password = config.pki_admin_password if config else "RedHat123"
-                enroll_cmd.extend(["-u", f"est-client:{est_password}"])
-
-        result = subprocess.run(enroll_cmd, capture_output=True, text=True, timeout=60)
+        enroll_cmd.extend(["--config", "-"])
+        result = subprocess.run(
+            enroll_cmd, input=curl_config, capture_output=True, text=True, timeout=60
+        )
 
         if result.returncode != 0:
             return ProtocolResult(
@@ -656,47 +661,20 @@ def est_enroll_certificate(
 
         response = result.stdout.strip()
 
-        # Check if response looks like a certificate or PKCS#7 envelope
-        if "BEGIN CERTIFICATE" in response or response.startswith("MII"):
-            # Try to extract serial — EST returns PKCS#7 (CMS SignedData)
-            serial = None
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False) as pf:
-                if response.startswith("MII"):
-                    pf.write(f"-----BEGIN PKCS7-----\n{response}\n-----END PKCS7-----\n")
-                else:
-                    pf.write(response)
-                pf_path = pf.name
-
-            try:
-                # Try PKCS#7 extraction
-                p7 = subprocess.run(
-                    ["openssl", "pkcs7", "-in", pf_path, "-print_certs"],
-                    capture_output=True, text=True, timeout=10,
-                )
-                if p7.returncode == 0 and "BEGIN CERTIFICATE" in p7.stdout:
-                    sr = subprocess.run(
-                        ["openssl", "x509", "-serial", "-noout"],
-                        input=p7.stdout, capture_output=True, text=True, timeout=10,
-                    )
-                    if sr.returncode == 0 and "=" in sr.stdout:
-                        serial = f"0x{sr.stdout.strip().split('=', 1)[1].strip().upper()}"
-                        response = p7.stdout  # use extracted PEM cert
-
-                # Try as plain cert
-                if not serial:
-                    sr = subprocess.run(
-                        ["openssl", "x509", "-in", pf_path, "-serial", "-noout"],
-                        capture_output=True, text=True, timeout=10,
-                    )
-                    if sr.returncode == 0 and "=" in sr.stdout:
-                        serial = f"0x{sr.stdout.strip().split('=', 1)[1].strip().upper()}"
-            finally:
-                Path(pf_path).unlink(missing_ok=True)
+        certificate = _decode_est_certificates(response)
+        if certificate:
+            sr = subprocess.run(
+                ["openssl", "x509", "-serial", "-noout"],
+                input=certificate, capture_output=True, text=True, timeout=10,
+            )
+            if sr.returncode or "=" not in sr.stdout:
+                return ProtocolResult(success=False, message="Cannot read enrolled certificate serial")
+            serial = f"0x{sr.stdout.strip().split('=', 1)[1].strip().upper()}"
 
             return ProtocolResult(
                 success=True,
                 message="Certificate enrolled via EST",
-                certificate=response,
+                certificate=certificate,
                 serial=serial,
                 key_pem=enrolled_key_pem,
                 details={
@@ -1011,7 +989,7 @@ def est_get_cacerts(est_url: str) -> ProtocolResult:
     This is the /cacerts endpoint that returns the CA chain.
     """
     cmd = [
-        "curl", "-sk", "--connect-timeout", "5",
+        "curl", "-fsSk", "--connect-timeout", "5",
         f"{est_url}/cacerts"
     ]
 
@@ -1046,12 +1024,12 @@ def est_get_cacerts(est_url: str) -> ProtocolResult:
             }
         )
 
-    # EST cacerts returns PKCS7 or base64 encoded certs
-    if response.startswith("MII") or "BEGIN" in response:
+    certificate = _decode_est_certificates(response)
+    if certificate:
         return ProtocolResult(
             success=True,
             message="CA certificates retrieved",
-            certificate=response,
+            certificate=certificate,
             details={"est_url": est_url}
         )
 
@@ -1082,7 +1060,9 @@ def est_reenroll_certificate(
     """
     Re-enroll (renew) a certificate using EST protocol.
 
-    Requires existing client certificate for authentication.
+    Uses the existing certificate's complete subject and SANs with a fresh key.
+    ``device_fqdn`` labels the operation; it cannot replace the authenticated
+    identity during renewal.
     """
     est_url = _get_est_url(pki_type)
     if est_url is None:
@@ -1091,19 +1071,16 @@ def est_reenroll_certificate(
             message=f"EST not available for {pki_type.value} PKI (backend={ENROLLMENT_BACKEND})"
         )
 
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory(dir="/dev/shm" if Path("/dev/shm").is_dir() else None) as tmpdir:
         key_path = Path(tmpdir) / "key.pem"
         csr_path = Path(tmpdir) / "request.csr"
 
-        # Generate new key based on PKI type
+        # Generate a fresh key of the requested type; never downgrade PQC to RSA.
         if pki_type == PKIType.PQC:
-            probe = subprocess.run(
-                ["openssl", "genpkey", "-algorithm", "ML-DSA-87", "-out", str(key_path)],
-                capture_output=True, text=True, timeout=10)
-            if probe.returncode != 0:
-                key_cmd = ["openssl", "genrsa", "-out", str(key_path), "2048"]
-            else:
-                key_cmd = None
+            error = _generate_pqc_key(key_path)
+            if error:
+                return ProtocolResult(success=False, message=error)
+            key_cmd = None
         elif pki_type == PKIType.ECC:
             key_cmd = ["openssl", "ecparam", "-genkey", "-name", "secp384r1", "-out", str(key_path)]
         else:
@@ -1113,17 +1090,35 @@ def est_reenroll_certificate(
             if result.returncode != 0:
                 return ProtocolResult(success=False, message=f"Key generation failed: {result.stderr}")
 
-        # Generate CSR with SAN (required by acmeServerCert profile)
+        # Let OpenSSL preserve the encoded subject instead of reconstructing a
+        # DN from the caller's device name. Re-request only identity extensions.
         csr_cmd = [
-            "openssl", "req", "-new",
-            "-key", str(key_path),
-            "-out", str(csr_path),
-            "-subj", f"/CN={device_fqdn}/O=Cert-Lab/C=US",
-            "-addext", f"subjectAltName=DNS:{device_fqdn}",
+            "openssl", "x509", "-x509toreq", "-in", client_cert,
+            "-signkey", str(key_path), "-out", str(csr_path),
+            "-copy_extensions", "copy", "-ext", "subjectAltName",
         ]
-        result = subprocess.run(csr_cmd, capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
-            return ProtocolResult(success=False, message=f"Failed to generate CSR: {result.stderr}")
+        result = subprocess.run(csr_cmd, capture_output=True, timeout=30)
+        if result.returncode and pki_type == PKIType.PQC:
+            # Hosts without ML-DSA support use the existing container-native
+            # path. Transfer credentials on stdin and keep them on tmpfs only.
+            script = '''set -eu
+umask 077
+work=$(mktemp -d /dev/shm/est-renewal.XXXXXX)
+trap 'rm -rf "$work"' EXIT
+cat > "$work/identity.pem"
+openssl x509 -x509toreq -in "$work/identity.pem" -signkey "$work/identity.pem" \
+    -copy_extensions copy -ext subjectAltName -out "$work/request.csr" >/dev/null
+cat "$work/request.csr"
+'''
+            result = subprocess.run(
+                ["sudo", "podman", "exec", "-i", CA_CONFIGS["pqc"]["iot"].container, "sh", "-c", script],
+                input=Path(client_cert).read_bytes() + b"\n" + key_path.read_bytes(),
+                capture_output=True, timeout=30,
+            )
+            if result.returncode == 0:
+                csr_path.write_bytes(result.stdout)
+        if result.returncode:
+            return ProtocolResult(success=False, message=f"Failed to generate renewal CSR: {result.stderr.decode(errors='replace')}")
 
         # Convert to DER base64
         der_cmd = ["openssl", "req", "-in", str(csr_path), "-outform", "DER"]
@@ -1161,35 +1156,21 @@ def est_reenroll_certificate(
         response = lines[0].strip() if len(lines) > 1 else output
         http_code = lines[-1].strip() if len(lines) > 1 else ""
 
-        if "BEGIN CERTIFICATE" in response or response.startswith("MII"):
-            # Extract PEM cert from PKCS#7 if needed
-            cert_pem = response
-            if response.startswith("MII") and "BEGIN CERTIFICATE" not in response:
-                with tempfile.NamedTemporaryFile(mode="w", suffix=".p7b", delete=False) as pf:
-                    pf.write(f"-----BEGIN PKCS7-----\n{response}\n-----END PKCS7-----\n")
-                    pf_path = pf.name
-                try:
-                    p7 = subprocess.run(
-                        ["openssl", "pkcs7", "-in", pf_path, "-print_certs"],
-                        capture_output=True, text=True, timeout=10,
-                    )
-                    if p7.returncode == 0 and "BEGIN CERTIFICATE" in p7.stdout:
-                        cert_pem = p7.stdout
-                finally:
-                    Path(pf_path).unlink(missing_ok=True)
-
-            serial = None
+        cert_pem = _decode_est_certificates(response) if http_code == "200" else None
+        if cert_pem:
             sr = subprocess.run(
                 ["openssl", "x509", "-serial", "-noout"],
                 input=cert_pem, capture_output=True, text=True, timeout=10,
             )
-            if sr.returncode == 0 and "=" in sr.stdout:
-                serial = f"0x{sr.stdout.strip().split('=', 1)[1].strip().upper()}"
+            if sr.returncode or "=" not in sr.stdout:
+                return ProtocolResult(success=False, message="Cannot read renewed certificate serial")
+            serial = f"0x{sr.stdout.strip().split('=', 1)[1].strip().upper()}"
             return ProtocolResult(
                 success=True,
                 message="Certificate re-enrolled via EST",
                 certificate=cert_pem,
                 serial=serial,
+                key_pem=key_path.read_text(),
                 details={"est_url": est_url, "device": device_fqdn}
             )
 
@@ -1546,15 +1527,16 @@ def est_generate_otp(pki_type: PKIType, entity_id: str) -> ProtocolResult:
 
     payload = json.dumps({"entity_id": entity_id})
     cmd = [
-        "curl", "-sk", "--connect-timeout", "5",
+        "curl", "-fsSk", "--connect-timeout", "5",
         "-X", "POST",
         "-H", "Content-Type: application/json",
-        "-H", f"Authorization: Bearer {KIPUKA_ADMIN_TOKEN}",
+        "--config", "-",
         "--data", payload,
         f"{base}/admin/otp/generate",
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        authorization = "header = " + json.dumps(f"Authorization: Bearer {KIPUKA_ADMIN_TOKEN}") + "\n"
+        result = subprocess.run(cmd, input=authorization, capture_output=True, text=True, timeout=15)
     except subprocess.TimeoutExpired:
         return ProtocolResult(success=False, message="Timeout generating OTP")
 
