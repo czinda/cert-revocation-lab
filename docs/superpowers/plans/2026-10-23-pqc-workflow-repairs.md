@@ -79,7 +79,7 @@
 
 ## Task 5: KRA investigation and correction
 
-**Files:** Existing KRA verification script and the responsible client/configuration source only after a reproduction identifies ownership.
+**Files:** `scripts/verify-kra.sh` and `scripts/verify-kra-failure-cleanup.py`, promoted from the verified deployment scripts when the user authorized local commits on 24 October 2026.
 
 **Interfaces:** Native `pki kra-key-retrieve`, isolated NSS database, explicit `TransportCert`, ML-KEM encapsulation, local JSS decryption.
 
