@@ -922,18 +922,76 @@ export_admin_creds() {
 # keyParameters=1024,2048,3072,4096). ECC and PQ CAs need this widened so that
 # certificates can be issued for EC or ML-DSA keys.
 # Usage: configure_server_cert_profile <instance> <pki_type>
+# Map a lab PKI type to its hoike OCSP HAProxy front (the AIA target for
+# every leaf certificate the hierarchy issues).
+# Usage: hoike_aia_url <rsa|ecc|pq>
+hoike_aia_url() {
+    case "${1:?pki type required}" in
+        rsa) echo "http://haproxy-rsa.cert-lab.local:2560" ;;
+        ecc) echo "http://haproxy-ecc.cert-lab.local:2560" ;;
+        pq)  echo "http://haproxy-pq.cert-lab.local:2560" ;;
+        *)   log_warn "Unknown PKI type '$1' for hoike AIA URL"; return 1 ;;
+    esac
+}
+
+# Point a profile's AIA OCSP entry at the hierarchy's hoike HAProxy front.
+# Patches the instance's on-disk profile configs (same mechanism the lab's
+# existing profile patches use). Skips profiles that are not present.
+# Usage: patch_profile_aia <instance> <rsa|ecc|pq> [profile_ids...]
+patch_profile_aia() {
+    local instance="${1:?instance required}"
+    local pki_type="${2:?pki type required}"
+    shift 2
+    local profiles=("$@")
+    if [ ${#profiles[@]} -eq 0 ]; then
+        profiles=(caServerCert caECServerCert caMLDSAServerCert caServerKeygenEST)
+    fi
+
+    local aia_url
+    aia_url=$(hoike_aia_url "$pki_type") || return 0
+
+    local profile_dir="/var/lib/pki/${instance}/conf/ca/profiles/ca"
+    local profile patched=0
+    for profile in "${profiles[@]}"; do
+        local cfg="${profile_dir}/${profile}.cfg"
+        if [ ! -f "$cfg" ]; then
+            continue
+        fi
+        if grep -q '\.default\.params\.authInfoAccessADLocation_0=' "$cfg"; then
+            sed -i \
+                "s|\.default\.params\.authInfoAccessADLocation_0=.*|.default.params.authInfoAccessADLocation_0=${aia_url}|" \
+                "$cfg"
+            sed -i \
+                "s|\.default\.params\.authInfoAccessADMethod_0=.*|.default.params.authInfoAccessADMethod_0=1.3.6.1.5.5.7.48.1|" \
+                "$cfg"
+            sed -i \
+                "s|\.default\.params\.authInfoAccessADEnable_0=.*|.default.params.authInfoAccessADEnable_0=true|" \
+                "$cfg"
+            log_info "Patched AIA in ${profile} → ${aia_url}"
+            patched=$((patched + 1))
+        else
+            log_warn "${profile} has no AIA default to patch — skipping"
+        fi
+    done
+    [ "$patched" -gt 0 ] || log_warn "No profiles patched with AIA on ${instance}"
+    return 0
+}
+
 configure_server_cert_profile() {
     local instance="${1:?Instance required}"
     local pki_type="${2:-rsa}"
 
-    # RSA CAs use the default profile — no changes needed
-    [ "$pki_type" = "rsa" ] && return 0
+    # AIA → hoike applies to every hierarchy, including RSA.
+    patch_profile_aia "$instance" "$pki_type"
 
     local profile="/var/lib/pki/${instance}/conf/ca/profiles/ca/caServerCert.cfg"
     if [ ! -f "$profile" ]; then
         log_warn "caServerCert profile not found at $profile, skipping"
         return 0
     fi
+
+    # RSA CAs use the default profile — no key-type changes needed
+    [ "$pki_type" = "rsa" ] && return 0
 
     # Check if already modified (keyType=- means any type accepted)
     if grep -q 'keyType=-' "$profile" 2>/dev/null; then
@@ -1055,9 +1113,10 @@ create_sskg_profile() {
 
 # Create the caServerKeygenEST profile from INSIDE the CA container.
 # Called by init-iot-ca.sh during CA initialization.
-# Usage: create_sskg_profile_local <instance>
+# Usage: create_sskg_profile_local <instance> [pki_type]
 create_sskg_profile_local() {
     local instance="${1:?instance required}"
+    local pki_type="${2:-rsa}"
     local profile_id="caServerKeygenEST"
     local profile_cfg="/etc/pki-configs/profiles/${profile_id}.cfg"
     local host
@@ -1095,6 +1154,11 @@ create_sskg_profile_local() {
         --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \
         -U "https://${host}:8443" \
         ca-profile-enable "$profile_id" 2>&1 || true
+
+    # The profile's instance copy only exists after ca-profile-add, so the
+    # hierarchy's hoike AIA URL is patched here rather than in
+    # configure_server_cert_profile (which runs before this function).
+    patch_profile_aia "$instance" "$pki_type" "$profile_id"
 
     log_success "SSKG profile $profile_id created and enabled"
 }

@@ -138,7 +138,7 @@ phase2_install_cert() {
     configure_server_cert_profile "$PKI_INSTANCE" "$PKI_TYPE"
 
     # Create SSKG profile for EST server-side key generation (RFC 7030 §4.4)
-    create_sskg_profile_local "$PKI_INSTANCE"
+    create_sskg_profile_local "$PKI_INSTANCE" "$PKI_TYPE"
 
     # Disable CSRF nonce protection for HTTP basic auth enrollment (lab mode).
     # Nonces are tied to the agent's TLS client cert session; over HTTP there's
