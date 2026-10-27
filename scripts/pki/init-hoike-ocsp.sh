@@ -3,11 +3,15 @@
 # init-hoike-ocsp.sh — Provision the delegated OCSP responder certificate for hoike
 #
 # Single provisioning path for every hierarchy (rsa|ecc|pq):
-#   1. SoftHSM2 token + ECDSA P-256 key pair inside the hoike signer container
+#   1. SoftHSM2 token + ECDSA P-256 key pair, bootstrapped in a throwaway
+#      container sharing the signer's data volume (the signer itself cannot
+#      start before its signing material exists — hoike exits when live
+#      material is unavailable — so token operations never require it)
 #   2. CSR signed by that HSM key (openssl PKCS#11 engine)
 #   3. caHoikeOCSPSigning profile ensured on the hierarchy's IoT Sub-CA
 #   4. Cert issued by the IoT Sub-CA (RFC 6960 4.2.2.2 issuer matching),
 #      imported into the token and written to data/certs/<h>/
+#   5. Signer config assembled into /run/cert-revocation-lab/
 #
 # Runs on the lab host, not inside a container.
 #
@@ -22,6 +26,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 PKI_TYPE="${1:-${PKI_TYPE:-rsa}}"
 PROFILE_ID="caHoikeOCSPSigning"
+HOIKE_IMAGE="localhost/hoike:lab"
 
 # ── Colors and logging ───────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -36,19 +41,16 @@ log_error() { echo -e "${RED}[HOIKE-OCSP]${NC} $1"; }
 # ── PKI-type-specific variables ──────────────────────────────────────────
 case "$PKI_TYPE" in
     rsa)
-        HOIKE_CONTAINER="hoike-rsa-signer"
         ISSUING_CA_CONTAINER="dogtag-iot-ca"
         ISSUING_CA_INSTANCE="pki-iot-ca"
         CERT_DIR="${PROJECT_DIR}/data/certs/rsa"
         ;;
     ecc)
-        HOIKE_CONTAINER="hoike-ecc-signer"
         ISSUING_CA_CONTAINER="dogtag-ecc-iot-ca"
         ISSUING_CA_INSTANCE="pki-ecc-iot-ca"
         CERT_DIR="${PROJECT_DIR}/data/certs/ecc"
         ;;
     pq)
-        HOIKE_CONTAINER="hoike-pq-signer"
         ISSUING_CA_CONTAINER="dogtag-pq-iot-ca"
         ISSUING_CA_INSTANCE="pki-pq-iot-ca"
         CERT_DIR="${PROJECT_DIR}/data/certs/pq"
@@ -71,6 +73,22 @@ if [ -z "${PKI_ADMIN_PASSWORD:-}" ]; then
     exit 1
 fi
 
+mkdir -p "$CERT_DIR"
+
+# Run a command inside a throwaway hoike container sharing the signer's
+# data volume (the token store) and the hierarchy's cert directory. This
+# decouples token bootstrap from the signer's lifecycle: the signer joins
+# the fleet only after its token, key, and responder cert all exist.
+hoike_box() {
+    sudo podman run --rm \
+        --entrypoint /bin/bash \
+        -e SOFTHSM2_CONF=/etc/hoike/softhsm2.conf \
+        -v "hoike-${PKI_TYPE}-data:/var/lib/hoike" \
+        -v "${PROJECT_DIR}/configs/hoike/softhsm2.conf:/etc/hoike/softhsm2.conf:ro" \
+        -v "${CERT_DIR}:/certs" \
+        "$HOIKE_IMAGE" -c "$*"
+}
+
 # pki CLI invocations inside the CA container: NSS client-cert auth over HTTP
 # (the pki CLI cannot validate ML-DSA chains over HTTPS client-side).
 export ISSUING_CA_INSTANCE
@@ -91,10 +109,9 @@ echo "  Provisioning OCSP signing key for hoike (${PKI_TYPE^^})"
 echo "========================================================================"
 echo ""
 
-# ── Verify containers are running ────────────────────────────────────────
-if ! sudo podman inspect --format '{{.State.Status}}' "$HOIKE_CONTAINER" 2>/dev/null | grep -q running; then
-    log_error "Container $HOIKE_CONTAINER is not running"
-    log_error "Start it first: COMPOSE_PROFILES=$PKI_TYPE podman-compose -f hoike-compose.yml up -d"
+# ── Verify prerequisites ─────────────────────────────────────────────────
+if ! sudo podman image exists "$HOIKE_IMAGE"; then
+    log_error "hoike image ${HOIKE_IMAGE} not found — build it first"
     exit 1
 fi
 
@@ -106,36 +123,30 @@ fi
 # ── Step 1: Initialize SoftHSM2 token ───────────────────────────────────
 log_info "Step 1: Initializing SoftHSM2 token '${TOKEN_LABEL}'..."
 
-TOKEN_EXISTS=$(sudo podman exec "$HOIKE_CONTAINER" \
-    softhsm2-util --show-slots 2>/dev/null | grep -c "$TOKEN_LABEL" || true)
+TOKEN_EXISTS=$(hoike_box "softhsm2-util --show-slots 2>/dev/null | grep -c '$TOKEN_LABEL' || true")
 
 if [ "$TOKEN_EXISTS" -gt 0 ]; then
     log_info "Token '${TOKEN_LABEL}' already exists — skipping init"
 else
-    sudo podman exec "$HOIKE_CONTAINER" \
-        softhsm2-util --init-token --free \
-        --label "$TOKEN_LABEL" \
-        --so-pin "$SO_PIN" \
-        --pin "$USER_PIN" 2>&1
+    hoike_box "softhsm2-util --init-token --free \
+        --label '$TOKEN_LABEL' --so-pin '$SO_PIN' --pin '$USER_PIN'"
     log_info "Token '${TOKEN_LABEL}' initialized"
 fi
 
 # ── Step 2: Generate ECDSA P-256 key pair in token ──────────────────────
 log_info "Step 2: Generating ECDSA P-256 key pair (label: ${KEY_LABEL})..."
 
-KEY_EXISTS=$(sudo podman exec "$HOIKE_CONTAINER" \
-    pkcs11-tool --module "$PKCS11_MODULE" \
-    --token-label "$TOKEN_LABEL" --pin "$USER_PIN" \
-    --list-objects --type privkey 2>/dev/null | grep -c "$KEY_LABEL" || true)
+KEY_EXISTS=$(hoike_box "pkcs11-tool --module $PKCS11_MODULE \
+    --token-label '$TOKEN_LABEL' --pin '$USER_PIN' \
+    --list-objects --type privkey 2>/dev/null | grep -c '$KEY_LABEL' || true")
 
 if [ "$KEY_EXISTS" -gt 0 ]; then
     log_info "Key '${KEY_LABEL}' already exists — skipping keygen"
 else
-    sudo podman exec "$HOIKE_CONTAINER" \
-        pkcs11-tool --module "$PKCS11_MODULE" \
-        --token-label "$TOKEN_LABEL" --pin "$USER_PIN" \
+    hoike_box "pkcs11-tool --module $PKCS11_MODULE \
+        --token-label '$TOKEN_LABEL' --pin '$USER_PIN' \
         --keypairgen --key-type EC:prime256v1 \
-        --label "$KEY_LABEL" --id 01 2>&1
+        --label '$KEY_LABEL' --id 01"
     log_info "ECDSA P-256 key pair generated"
 fi
 
@@ -146,18 +157,18 @@ log_info "Step 3: Creating CSR for the OCSP responder cert (PKCS#11 engine)..."
 # public key matches the key hoike signs OCSP responses with.
 PKCS11_URI="pkcs11:token=${TOKEN_LABEL};object=${KEY_LABEL};type=private;pin-value=${USER_PIN}"
 
-if ! sudo podman exec "$HOIKE_CONTAINER" openssl req -new \
+if ! hoike_box "openssl req -new \
     -engine pkcs11 -keyform engine \
-    -key "$PKCS11_URI" \
+    -key '$PKCS11_URI' \
     -subj '/CN=hoike-ocsp.cert-lab.local/O=Cert-Lab/C=US' \
-    -out /tmp/ocsp.csr 2>/dev/null; then
-    log_error "Could not create a CSR with the PKCS#11 engine in $HOIKE_CONTAINER"
+    -out /certs/hoike-ocsp.csr 2>/dev/null"; then
+    log_error "Could not create a CSR with the PKCS#11 engine in the bootstrap container"
     log_error "The hoike image must include the openssl PKCS#11 engine (openssl-pkcs11)"
     exit 1
 fi
 
-sudo podman cp "$HOIKE_CONTAINER:/tmp/ocsp.csr" /tmp/hoike-ocsp.csr
-sudo podman cp /tmp/hoike-ocsp.csr "$ISSUING_CA_CONTAINER:/tmp/hoike-ocsp.csr"
+[ -s "${CERT_DIR}/hoike-ocsp.csr" ] || { log_error "CSR was not written"; exit 1; }
+sudo podman cp "${CERT_DIR}/hoike-ocsp.csr" "${ISSUING_CA_CONTAINER}:/tmp/hoike-ocsp.csr"
 
 # ── Step 4: Ensure the responder profile exists on the IoT Sub-CA ───────
 log_info "Step 4: Ensuring profile ${PROFILE_ID} on ${ISSUING_CA_CONTAINER}..."
@@ -207,7 +218,7 @@ fi
 
 log_info "Certificate ID=${CERT_ID}"
 
-sudo podman exec -e PKI_ADMIN_PASSWORD -i "$ISSUING_CA_CONTAINER" bash -s <<REMOTE
+sudo podman exec -e PKI_ADMIN_PASSWORD -e ISSUING_CA_INSTANCE -i "$ISSUING_CA_CONTAINER" bash -s <<REMOTE
     printf '%s' "\$PKI_ADMIN_PASSWORD" > /tmp/hoike-pw.txt
     NICKNAME=\$(certutil -L -d /var/lib/pki/${ISSUING_CA_INSTANCE}/alias 2>/dev/null \
         | grep -i 'PKI Administrator' | sed 's/\s*[a-zA-Z,]*\s*\$//' | head -1)
@@ -216,22 +227,18 @@ sudo podman exec -e PKI_ADMIN_PASSWORD -i "$ISSUING_CA_CONTAINER" bash -s <<REMO
         ca-cert-export ${CERT_ID} --output-file /tmp/hoike-ocsp-signed.crt 2>/dev/null
     rm -f /tmp/hoike-pw.txt
 REMOTE
-sudo podman cp "$ISSUING_CA_CONTAINER:/tmp/hoike-ocsp-signed.crt" /tmp/hoike-ocsp-signed.crt
+sudo podman cp "$ISSUING_CA_CONTAINER:/tmp/hoike-ocsp-signed.crt" "$RESPONDER_CERT"
 
 # ── Step 6: Import the cert into the HSM token and publish the PEM ──────
 log_info "Step 6: Importing OCSP signing cert into HSM token..."
 
-openssl x509 -in /tmp/hoike-ocsp-signed.crt -outform DER -out /tmp/hoike-ocsp-signed.der 2>/dev/null
-sudo podman cp /tmp/hoike-ocsp-signed.der "$HOIKE_CONTAINER:/tmp/hoike-ocsp-signed.der"
+openssl x509 -in "$RESPONDER_CERT" -outform DER -out "${CERT_DIR}/hoike-ocsp-signed.der" 2>/dev/null
 
-sudo podman exec "$HOIKE_CONTAINER" \
-    pkcs11-tool --module "$PKCS11_MODULE" \
-    --token-label "$TOKEN_LABEL" --pin "$USER_PIN" \
-    --write-object /tmp/hoike-ocsp-signed.der \
-    --type cert --label "$KEY_LABEL" --id 01 2>&1
+hoike_box "pkcs11-tool --module $PKCS11_MODULE \
+    --token-label '$TOKEN_LABEL' --pin '$USER_PIN' \
+    --write-object /certs/hoike-ocsp-signed.der \
+    --type cert --label '$KEY_LABEL' --id 01"
 
-mkdir -p "$CERT_DIR"
-cp /tmp/hoike-ocsp-signed.crt "$RESPONDER_CERT"
 log_info "Responder certificate saved to ${RESPONDER_CERT}"
 
 # ── Step 7: Verify issuer, key match, and EKU ───────────────────────────
@@ -258,15 +265,13 @@ log_info "  Issuer matches the IoT Sub-CA"
 
 # The issued cert's public key must be the token's key: compare the
 # certificate SPKI hash against the token's exported public key.
-sudo podman exec "$HOIKE_CONTAINER" \
-    pkcs11-tool --module "$PKCS11_MODULE" \
-    --token-label "$TOKEN_LABEL" --pin "$USER_PIN" \
-    --read-object --type pubkey --label "$KEY_LABEL" \
-    --output-file /tmp/ocsp-pub.der 2>/dev/null
-sudo podman cp "$HOIKE_CONTAINER:/tmp/ocsp-pub.der" /tmp/hoike-ocsp-pub.der
+hoike_box "pkcs11-tool --module $PKCS11_MODULE \
+    --token-label '$TOKEN_LABEL' --pin '$USER_PIN' \
+    --read-object --type pubkey --label '$KEY_LABEL' \
+    --output-file /certs/hoike-ocsp-pub.der 2>/dev/null"
 
 CERT_SPKI=$(openssl x509 -in "$RESPONDER_CERT" -noout -pubkey 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | sha256sum | cut -d' ' -f1)
-TOKEN_SPKI=$(openssl pkey -pubin -inform DER -in /tmp/hoike-ocsp-pub.der -outform DER 2>/dev/null | sha256sum | cut -d' ' -f1)
+TOKEN_SPKI=$(openssl pkey -pubin -inform DER -in "${CERT_DIR}/hoike-ocsp-pub.der" -outform DER 2>/dev/null | sha256sum | cut -d' ' -f1)
 if [ "$CERT_SPKI" != "$TOKEN_SPKI" ]; then
     log_error "Responder cert public key does not match the HSM token key"
     exit 1
@@ -345,3 +350,4 @@ log_info "Hoike OCSP responder provisioning complete (${PKI_TYPE^^})"
 log_info "  Responder cert: ${RESPONDER_CERT}"
 log_info "  HSM token:       ${TOKEN_LABEL} / key ${KEY_LABEL} (ECDSA P-256)"
 log_info "  Signer config:   ${SIGNER_CONFIG}"
+log_info "The hoike fleet can now start: COMPOSE_PROFILES=${PKI_TYPE} podman-compose -f hoike-compose.yml up -d"

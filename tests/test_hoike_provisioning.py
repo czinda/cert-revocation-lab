@@ -74,6 +74,18 @@ def test_init_script_has_no_hardcoded_passwords():
     assert "PKI_ADMIN_PASSWORD" in source, "credentials must come from the environment"
 
 
+def test_init_script_bootstraps_token_without_a_running_signer():
+    source = INIT_SCRIPT.read_text()
+    assert "hoike_box()" in source, "token bootstrap must use the hoike_box helper"
+    assert "podman run --rm" in source, (
+        "token operations run in a throwaway container sharing the signer's "
+        "volume (hoike exits at startup if live signing material is missing, "
+        "so the script must not require the signer to be running)"
+    )
+    assert "image exists" in source, "the script checks for the image, not a live signer"
+    assert "$HOIKE_CONTAINER" not in source, "no dependency on a running signer container"
+
+
 def test_stale_provisioning_script_is_gone():
     assert not STALE_SCRIPT.exists(), (
         "scripts/hoike/provision-ocsp-signing.sh is superseded by "

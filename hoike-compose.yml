@@ -254,15 +254,20 @@ services:
       - "2563:2560"
 
 volumes:
+  # Explicit names so init-hoike-ocsp.sh's bootstrap container can mount the
+  # signer's token store before the signer itself has ever started.
   hoike-rsa-data:
+    name: hoike-rsa-data
   hoike-rsa-transfer:
   hoike-rsa-edge1-data:
   hoike-rsa-edge2-data:
   hoike-ecc-data:
+    name: hoike-ecc-data
   hoike-ecc-transfer:
   hoike-ecc-edge1-data:
   hoike-ecc-edge2-data:
   hoike-pq-data:
+    name: hoike-pq-data
   hoike-pq-transfer:
   hoike-pq-edge1-data:
   hoike-pq-edge2-data:
