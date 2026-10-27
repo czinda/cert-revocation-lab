@@ -26,15 +26,15 @@ from pathlib import Path
 
 # label -> (hierarchy subdir, cert filename candidates)
 LAB_CAS = {
-    "rsa-root":         ("rsa", ["root-ca.pem", "ca.pem", "rsa-root.pem"]),
-    "rsa-intermediate": ("rsa", ["intermediate-ca.pem", "rsa-intermediate.pem"]),
-    "rsa-iot":          ("rsa", ["iot-ca.pem", "rsa-iot.pem"]),
-    "ecc-root":         ("ecc", ["root-ca.pem", "ecc-root.pem"]),
-    "ecc-intermediate": ("ecc", ["intermediate-ca.pem", "ecc-intermediate.pem"]),
-    "ecc-iot":          ("ecc", ["iot-ca.pem", "ecc-iot.pem"]),
-    "pq-root":          ("pq",  ["root-ca.pem", "pq-root.pem"]),
-    "pq-intermediate":  ("pq",  ["intermediate-ca.pem", "pq-intermediate.pem"]),
-    "pq-iot":           ("pq",  ["iot-ca.pem", "pq-iot.pem"]),
+    "rsa-root":         ("rsa", ["root-ca.pem", "ca.pem", "rsa-root.pem", "root-ca.crt"]),
+    "rsa-intermediate": ("rsa", ["intermediate-ca.pem", "rsa-intermediate.pem", "intermediate-ca.crt"]),
+    "rsa-iot":          ("rsa", ["iot-ca.pem", "rsa-iot.pem", "iot-ca.crt"]),
+    "ecc-root":         ("ecc", ["root-ca.pem", "ecc-root.pem", "root-ca.crt"]),
+    "ecc-intermediate": ("ecc", ["intermediate-ca.pem", "ecc-intermediate.pem", "intermediate-ca.crt"]),
+    "ecc-iot":          ("ecc", ["iot-ca.pem", "ecc-iot.pem", "iot-ca.crt"]),
+    "pq-root":          ("pq",  ["root-ca.pem", "pq-root.pem", "root-ca.crt"]),
+    "pq-intermediate":  ("pq",  ["intermediate-ca.pem", "pq-intermediate.pem", "intermediate-ca.crt"]),
+    "pq-iot":           ("pq",  ["iot-ca.pem", "pq-iot.pem", "iot-ca.crt"]),
 }
 
 CRL_BASE = "http://crl.cert-lab.local:8080"

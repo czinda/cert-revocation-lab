@@ -146,6 +146,11 @@ else
     log_info "ECDSA P-256 key pair generated"
 fi
 
+if [ -s "$RESPONDER_CERT" ]; then
+    log_info "Responder certificate already present — skipping issuance"
+    log_info "  (Step 7 below re-verifies it against the issuer, EKU, and token key)"
+else
+
 # ── Step 3: Create CSR signed by the HSM key ────────────────────────────
 log_info "Step 3: Creating CSR for the OCSP responder cert (PKCS#11 engine)..."
 
@@ -230,6 +235,8 @@ hoike_box "pkcs11-tool --module $PKCS11_MODULE \
     --type cert --label '$KEY_LABEL' --id 01"
 
 log_info "Responder certificate saved to ${RESPONDER_CERT}"
+
+fi  # end issuance guard
 
 # ── Step 7: Verify issuer, key match, and EKU ───────────────────────────
 log_info "Step 7: Verifying the responder certificate..."
@@ -321,6 +328,14 @@ log_info "Step 10: Assembling signer config for ${PKI_TYPE}..."
 RUN_DIR="/run/cert-revocation-lab"
 SIGNER_CONFIG="${RUN_DIR}/hoike-${PKI_TYPE}-signer.toml"
 mkdir -p "$RUN_DIR"
+
+# start-lab.sh's deploy_hoike phase creates the signer container before
+# this config exists, and podman materializes missing file-mount sources as
+# directories. Remove that artifact so the real file can be written.
+if [ -d "$SIGNER_CONFIG" ]; then
+    log_warn "Removing podman-created directory at ${SIGNER_CONFIG}"
+    rm -rf "$SIGNER_CONFIG"
+fi
 
 python3 "${PROJECT_DIR}/scripts/hoike/assemble-signer-config.py" \
     --template "${PROJECT_DIR}/configs/hoike/${PKI_TYPE}-config.toml" \
