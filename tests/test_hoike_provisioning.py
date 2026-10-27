@@ -75,7 +75,10 @@ def test_init_script_uses_http_basic_auth_for_ca_api():
         "CA API auth uses HTTP basic auth as caadmin (the lab's proven PQ "
         "pattern — client certs cannot ride plain HTTP)"
     )
-    assert "-p 8080" in source, "HTTP :8080 avoids the ML-DSA HTTPS limitation"
+    assert "-U http://localhost:8080" in source, (
+        "plain-HTTP CA API URL avoids the ML-DSA HTTPS limitation (a bare "
+        "-p 8080 would still default to https)"
+    )
     assert "hoike-pw.txt" not in source, "no pki password-file indirection"
 
 

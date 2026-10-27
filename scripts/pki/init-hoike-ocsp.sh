@@ -89,13 +89,14 @@ hoike_box() {
         "$HOIKE_IMAGE" -c "$*"
 }
 
-# pki CLI invocations inside the CA container over HTTP :8080 with basic
+# pki CLI invocations inside the CA container over plain HTTP with basic
 # auth as caadmin — the lab's proven PQ pattern (init-akamu-kipuka.sh):
 # NSS client certs cannot be presented over plain HTTP, and the pki CLI
-# cannot validate ML-DSA chains over HTTPS client-side.
+# cannot validate ML-DSA chains over HTTPS client-side. The full -U URL is
+# required; -p alone leaves the protocol at https.
 ca_pki() {
     sudo podman exec "$ISSUING_CA_CONTAINER" \
-        pki -u caadmin -w "$PKI_ADMIN_PASSWORD" -p 8080 "$@"
+        pki -U http://localhost:8080 -u caadmin -w "$PKI_ADMIN_PASSWORD" "$@"
 }
 
 echo ""
