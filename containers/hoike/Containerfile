@@ -23,7 +23,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-RUN git clone --depth 1 --branch "${HOIKE_REF}" "${HOIKE_REPO}" .
+# HOIKE_REF may be a branch, tag, or commit SHA; --branch only accepts
+# refs, so fetch the ref explicitly and detach onto it.
+RUN git init . && \
+    git remote add origin "${HOIKE_REPO}" && \
+    git fetch --depth 1 origin "${HOIKE_REF}" && \
+    git checkout --detach FETCH_HEAD
 
 # --locked so the lab builds exactly what the repo pins.
 # --features pkcs11 enables PKCS#11 HSM signing via cryptoki;
