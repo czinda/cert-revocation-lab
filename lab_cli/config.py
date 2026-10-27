@@ -34,15 +34,14 @@ class EventSource(str, Enum):
 LAB_DOMAIN = os.getenv("LAB_DOMAIN", "cert-lab.local")
 
 
-def _service_url(hostname: str, port: str | int = 8000, scheme: str = "http") -> str:
-    """Build a service URL using the container's DNS hostname.
+def _service_url(hostname: str, port: str | int, scheme: str = "http") -> str:
+    """Build a service URL for host-side access via port mapping.
 
-    All lab service containers listen on port 8000 internally.
-    The hostname.cert-lab.local DNS resolves to the container's
-    bridge IP via podman's dnsname plugin, so the host can reach
-    each container directly without port mapping.
+    Uses localhost because host port mappings bind to 0.0.0.0:{port}
+    which is only reachable via localhost, not via the container's
+    bridge IP (where only the internal port is listening).
     """
-    return f"{scheme}://{hostname}.{LAB_DOMAIN}:{port}"
+    return f"{scheme}://localhost:{port}"
 
 
 PQ_OID_MAP = {
@@ -60,10 +59,10 @@ class CAConfig:
     """Configuration for a Certificate Authority."""
     container: str
     instance: str
-    url: str           # Internal URL (inside container, always port 8443)
+    url: str           # Internal service URL (also determines the transport)
     nss_db: str
     host_port: int     # HTTPS port mapped to host machine
-    http_port: int = 0 # HTTP port mapped to host (PQ only — OpenSSL can't do ML-DSA-87 TLS)
+    http_port: int = 0 # Separate HTTP port mapped to host, when present
 
     @property
     def hostname(self) -> str:
@@ -72,15 +71,16 @@ class CAConfig:
 
     @property
     def host_url(self) -> str:
-        """URL for accessing this CA using its DNS hostname.
+        """URL for accessing this CA from the host via port mapping.
 
-        Container hostnames (*.cert-lab.local) resolve to bridge IPs
-        via podman's dnsname plugin. The host can route to these IPs
-        directly, so we use the container's internal port (from self.url).
+        Always uses localhost + host_port because DNS hostnames may resolve
+        to the host IP where port collisions between CAs make the internal
+        port unreliable (e.g. est-ca:8443 hits root-ca:8443 on the host).
         """
         if self.http_port:
-            return f"http://{self.hostname}:{self.http_port}"
-        return self.url
+            return f"http://localhost:{self.http_port}"
+        scheme = self.url.split(":", 1)[0]
+        return f"{scheme}://localhost:{self.host_port}"
 
 
 # Enrollment backend: "akamu" (Akamu ACME + Kipuka EST) or "dogtag" (Dogtag RAs)
@@ -121,8 +121,8 @@ _ENROLLMENT_CONFIGS: dict[str, dict[str, dict[str, CAConfig]]] = {
         },
         "pqc": {
             "est": CAConfig(container="dogtag-pq-est-ca", instance="pki-pq-est-ca",
-                            url="https://pq-est-ca.cert-lab.local:8443", nss_db="/var/lib/pki/pki-pq-est-ca/alias",
-                            host_port=8456, http_port=8486),
+                             url="https://pq-est-ca.cert-lab.local:8443", nss_db="/var/lib/pki/pki-pq-est-ca/alias",
+                             host_port=8456, http_port=8503),
         },
     },
 }
@@ -159,13 +159,13 @@ def _build_ca_configs() -> dict[str, dict[str, CAConfig]]:
         "pqc": {
             "root": CAConfig(container="dogtag-pq-root-ca", instance="pki-pq-root-ca",
                              url="http://pq-root-ca.cert-lab.local:8080",
-                             nss_db="/var/lib/pki/pki-pq-root-ca/alias", host_port=8453, http_port=8490),
+                             nss_db="/var/lib/pki/pki-pq-root-ca/alias", host_port=8453, http_port=8500),
             "intermediate": CAConfig(container="dogtag-pq-intermediate-ca", instance="pki-pq-intermediate-ca",
                                      url="http://pq-intermediate-ca.cert-lab.local:8080",
-                                     nss_db="/var/lib/pki/pki-pq-intermediate-ca/alias", host_port=8454, http_port=8484),
+                                     nss_db="/var/lib/pki/pki-pq-intermediate-ca/alias", host_port=8454, http_port=8501),
             "iot": CAConfig(container="dogtag-pq-iot-ca", instance="pki-pq-iot-ca",
                             url="http://pq-iot-ca.cert-lab.local:8080",
-                            nss_db="/var/lib/pki/pki-pq-iot-ca/alias", host_port=8455, http_port=8485),
+                            nss_db="/var/lib/pki/pki-pq-iot-ca/alias", host_port=8455, http_port=8502),
         },
     }
 
@@ -248,16 +248,15 @@ SIEM_ALERT_TYPES: dict[str, str] = {
 class LabConfig:
     """Main configuration for the lab CLI."""
 
-    # Service URLs — DNS hostnames resolve to container bridge IPs via dnsname plugin
-    # All lab services listen on port 8000 internally
-    edr_url: str = field(default_factory=lambda: _service_url("edr"))
-    siem_url: str = field(default_factory=lambda: _service_url("siem"))
-    ct_log_url: str = field(default_factory=lambda: _service_url("ct-log"))
-    crl_cdp_url: str = field(default_factory=lambda: _service_url("crl", 8080))
-    policy_engine_url: str = field(default_factory=lambda: _service_url("policy"))
-    chain_visualizer_url: str = field(default_factory=lambda: _service_url("chain-viz"))
-    pin_validator_url: str = field(default_factory=lambda: _service_url("pin-validator"))
-    kmip_server_url: str = field(default_factory=lambda: _service_url("kmip"))
+    # Service URLs — use DNS hostnames (*.cert-lab.local resolves to 127.0.0.1 via dnsmasq)
+    edr_url: str = field(default_factory=lambda: _service_url("edr", os.getenv("PORT_EDR", "8082")))
+    siem_url: str = field(default_factory=lambda: _service_url("siem", os.getenv("PORT_SIEM", "8083")))
+    ct_log_url: str = field(default_factory=lambda: _service_url("ct-log", os.getenv("PORT_CT_LOG", "8086")))
+    crl_cdp_url: str = field(default_factory=lambda: _service_url("crl", os.getenv("PORT_CRL", "8088")))
+    policy_engine_url: str = field(default_factory=lambda: _service_url("policy", os.getenv("PORT_POLICY", "8089")))
+    chain_visualizer_url: str = field(default_factory=lambda: _service_url("chain-viz", os.getenv("PORT_CHAIN_VIZ", "8090")))
+    pin_validator_url: str = field(default_factory=lambda: _service_url("pin-validator", os.getenv("PORT_PIN_VALIDATOR", "8091")))
+    kmip_server_url: str = field(default_factory=lambda: _service_url("kmip", os.getenv("PORT_KMIP_API", "8092")))
 
     # Domain
     lab_domain: str = "cert-lab.local"
@@ -298,9 +297,19 @@ class LabConfig:
                     value = value.strip().strip('"').strip("'")
                     os.environ.setdefault(key, value)
 
-        # Refresh credentials after .env load
+        # Refresh all fields that depend on environment variables.
+        # The dataclass default_factory lambdas ran before .env was loaded,
+        # so the PORT_* values were not yet available.
         self.admin_password = os.getenv("ADMIN_PASSWORD", "RedHat123")
         self.pki_admin_password = os.getenv("PKI_ADMIN_PASSWORD", self.admin_password)
+        self.edr_url = _service_url("edr", os.getenv("PORT_EDR", "8082"))
+        self.siem_url = _service_url("siem", os.getenv("PORT_SIEM", "8083"))
+        self.ct_log_url = _service_url("ct-log", os.getenv("PORT_CT_LOG", "8086"))
+        self.crl_cdp_url = _service_url("crl", os.getenv("PORT_CRL", "8088"))
+        self.policy_engine_url = _service_url("policy", os.getenv("PORT_POLICY", "8089"))
+        self.chain_visualizer_url = _service_url("chain-viz", os.getenv("PORT_CHAIN_VIZ", "8090"))
+        self.pin_validator_url = _service_url("pin-validator", os.getenv("PORT_PIN_VALIDATOR", "8091"))
+        self.kmip_server_url = _service_url("kmip", os.getenv("PORT_KMIP_API", "8092"))
 
     def get_ca_config(self, pki_type: Optional[PKIType] = None, ca_level: Optional[CALevel] = None) -> CAConfig:
         """Get CA configuration for the specified PKI type and level."""

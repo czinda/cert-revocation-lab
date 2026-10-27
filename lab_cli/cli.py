@@ -1275,7 +1275,7 @@ def est_cacerts(
 def est_reenroll(
     device: str = typer.Option(
         None, "--device", "-d",
-        help="Device ID (auto-generated if not specified)"
+        help="Device ID for initial enrollment when --cert/--key are omitted"
     ),
     pki_type: PKIType = typer.Option(
         PKIType.RSA,
@@ -1310,6 +1310,7 @@ def est_reenroll(
         lab est-reenroll --cert device.pem --key device.key --pki-type ecc
     """
     import tempfile
+    import os
 
     config = LabConfig.load()
 
@@ -1318,128 +1319,70 @@ def est_reenroll(
         console.print(f"[red]EST not available for {pki_type.value} PKI (server={ENROLLMENT_BACKEND})[/red]")
         raise typer.Exit(1)
 
-    if not device:
+    if not device and not cert:
         device = f"iot-device-{random.randint(1000000000, 9999999999)}"
 
-    device_fqdn = f"{device}.{config.lab_domain}"
+    device_fqdn = f"{device}.{config.lab_domain}" if device else ""
 
     console.print(f"\n[bold cyan]EST Certificate Renewal (simplereenroll)[/bold cyan]\n")
-    console.print(f"  Device:   {device_fqdn}")
+    console.print(f"  Device:   {'from supplied certificate' if cert else device_fqdn}")
     console.print(f"  PKI:      {pki_type.value.upper()}")
     console.print(f"  Server:   {'kipuka (EST RA)' if ENROLLMENT_BACKEND == 'akamu' else 'dogtag (EST RA)'}")
     console.print(f"  CA:       Dogtag IoT Sub-CA")
     console.print(f"  Endpoint: {est_url}")
     console.print()
 
-    # Determine cert/key paths
-    cert_path = cert
-    key_path = key
-    tmpdir = None
+    if bool(cert) != bool(key):
+        console.print("[red]Provide both --cert and --key for re-enrollment[/red]")
+        raise typer.Exit(1)
 
-    if not cert_path or not key_path:
-        # Step 1: Initial enrollment to get a certificate
-        console.print("[bold]Step 1:[/bold] Initial enrollment via EST simpleenroll...")
-
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            task = progress.add_task("Enrolling...", total=None)
+    # Keep the credentials only through the renewal request, including failures.
+    with tempfile.TemporaryDirectory(
+        prefix="est-reenroll-", dir="/dev/shm" if Path("/dev/shm").is_dir() else None
+    ) as tmpdir:
+        cert_path, key_path = cert, key
+        old_serial = "unknown"
+        if not cert_path:
+            console.print("[bold]Step 1:[/bold] Initial enrollment via EST simpleenroll...")
             enroll_result = est_enroll_certificate(
-                config=config,
-                device_fqdn=device_fqdn,
-                pki_type=pki_type,
+                config=config, device_fqdn=device_fqdn, pki_type=pki_type,
+            )
+            if not enroll_result.success:
+                console.print(f"  [red]Initial enrollment failed: {enroll_result.message}[/red]")
+                raise typer.Exit(1)
+            if not enroll_result.certificate or not enroll_result.key_pem:
+                console.print("  [red]Enrollment did not return a certificate and key[/red]")
+                raise typer.Exit(1)
+            old_serial = enroll_result.serial or "unknown"
+            console.print(f"  [green]Enrolled[/green] — serial: {old_serial}")
+            # The protocol client already returns validated PEM.
+            cert_path = str(Path(tmpdir) / "cert.pem")
+            key_path = str(Path(tmpdir) / "key.pem")
+            Path(cert_path).write_text(enroll_result.certificate)
+            with open(key_path, "w", opener=lambda p, flags: os.open(p, flags, 0o600)) as stream:
+                stream.write(enroll_result.key_pem)
+        else:
+            console.print("[dim]Using provided cert/key for re-enrollment[/dim]")
+            serial_result = subprocess.run(
+                ["openssl", "x509", "-in", cert_path, "-noout", "-serial"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if serial_result.returncode == 0 and "=" in serial_result.stdout:
+                old_serial = "0x" + serial_result.stdout.strip().split("=", 1)[1]
+
+        step = "Step 2" if not cert else "Step 1"
+        console.print(f"\n[bold]{step}:[/bold] Re-enrollment via EST simplereenroll...")
+        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+            task = progress.add_task("Re-enrolling...", total=None)
+            reenroll_result = est_reenroll_certificate(
+                config=config, device_fqdn=device_fqdn, pki_type=pki_type,
+                client_cert=cert_path, client_key=key_path,
             )
             progress.update(task, completed=1)
 
-        if not enroll_result.success:
-            console.print(f"  [red]Initial enrollment failed: {enroll_result.message}[/red]")
-            raise typer.Exit(1)
-
-        console.print(f"  [green]Enrolled[/green] — serial: {enroll_result.serial or 'unknown'}")
-
-        # Show original cert validity for comparison
-        if enroll_result.certificate:
-            import subprocess as _sp0
-            ov = _sp0.run(
-                ["openssl", "x509", "-noout", "-startdate", "-enddate"],
-                input=enroll_result.certificate, capture_output=True, text=True, timeout=5,
-            )
-            if ov.returncode == 0:
-                for line in ov.stdout.strip().splitlines():
-                    k, _, v = line.partition("=")
-                    label = "Valid from" if "Before" in k else "Valid to"
-                    console.print(f"  {label}:  {v}")
-
-        # Save cert+key to temp files for re-enrollment
-        tmpdir = tempfile.mkdtemp(prefix="est-reenroll-")
-        cert_path = f"{tmpdir}/cert.pem"
-        key_path = f"{tmpdir}/key.pem"
-
-        # Extract a clean leaf certificate for curl --cert
-        import subprocess as _sp
-        raw = enroll_result.certificate or ""
-        raw_path = f"{tmpdir}/raw.pem"
-        with open(raw_path, "w") as f:
-            if raw.startswith("-----BEGIN"):
-                f.write(raw)
-            else:
-                f.write(f"-----BEGIN PKCS7-----\n{raw}\n-----END PKCS7-----\n")
-
-        # Try PKCS#7 extraction first, fall back to plain cert
-        p7 = _sp.run(
-            ["openssl", "pkcs7", "-in", raw_path, "-print_certs"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if p7.returncode == 0 and "BEGIN CERTIFICATE" in p7.stdout:
-            pem_text = p7.stdout
-        else:
-            pem_text = raw
-
-        # Extract just the first (leaf) certificate as clean PEM
-        x509 = _sp.run(
-            ["openssl", "x509", "-outform", "PEM"],
-            input=pem_text, capture_output=True, text=True, timeout=10,
-        )
-        if x509.returncode == 0 and "BEGIN CERTIFICATE" in x509.stdout:
-            with open(cert_path, "w") as f:
-                f.write(x509.stdout)
-        else:
-            console.print(f"  [red]Could not extract PEM certificate from enrollment response[/red]")
-            raise typer.Exit(1)
-
-        # Use the key from the initial enrollment (returned by est_enroll_certificate)
-        if not enroll_result.key_pem:
-            console.print("  [red]Enrollment did not return the private key — cannot re-enroll[/red]")
-            raise typer.Exit(1)
-        with open(key_path, "w") as f:
-            f.write(enroll_result.key_pem)
-    else:
-        console.print("[dim]Using provided cert/key for re-enrollment[/dim]")
-
-    # Step 2: Re-enrollment
-    step = "Step 2" if not cert and not key else "Step 1"
-    console.print(f"\n[bold]{step}:[/bold] Re-enrollment via EST simplereenroll...")
-
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Re-enrolling...", total=None)
-        reenroll_result = est_reenroll_certificate(
-            config=config,
-            device_fqdn=device_fqdn,
-            pki_type=pki_type,
-            client_cert=cert_path,
-            client_key=key_path,
-        )
-        progress.update(task, completed=1)
-
     if reenroll_result.success:
         console.print(f"\n[green]Certificate renewed via EST simplereenroll[/green]")
-        console.print(f"  Old serial: {enroll_result.serial or 'unknown'}")
+        console.print(f"  Old serial: {old_serial}")
         if reenroll_result.serial:
             console.print(f"  New serial: {reenroll_result.serial}")
 
@@ -1474,22 +1417,24 @@ def est_reenroll(
 
         # Save output if requested
         if output_dir:
-            from pathlib import Path
             out = Path(output_dir)
             out.mkdir(parents=True, exist_ok=True)
             if reenroll_result.certificate:
                 (out / "renewed-cert.pem").write_text(reenroll_result.certificate)
                 console.print(f"  Saved: {out / 'renewed-cert.pem'}")
+            if reenroll_result.key_pem:
+                with tempfile.NamedTemporaryFile(mode="w", dir=out, delete=False) as stream:
+                    temporary_key = Path(stream.name)
+                    stream.write(reenroll_result.key_pem)
+                try:
+                    os.replace(temporary_key, out / "renewed-key.pem")
+                finally:
+                    temporary_key.unlink(missing_ok=True)
+                console.print(f"  Saved: {out / 'renewed-key.pem'}")
     else:
         console.print(f"\n[red]EST re-enrollment failed[/red]")
         console.print(f"  Error: {reenroll_result.message}")
         raise typer.Exit(1)
-
-    # Cleanup temp dir
-    if tmpdir:
-        import shutil
-        shutil.rmtree(tmpdir, ignore_errors=True)
-
 
 def _run_single_test(
     config: LabConfig,

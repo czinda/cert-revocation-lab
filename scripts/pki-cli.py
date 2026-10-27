@@ -157,14 +157,11 @@ class PKIClient:
         return True
 
     def _get_pki_password(self) -> str:
-        """Get PKI NSS database password from .env file."""
-        # Check environment first
-        for var in ["DS_PASSWORD", "PKI_ADMIN_PASSWORD", "ADMIN_PASSWORD"]:
-            password = os.environ.get(var)
-            if password:
-                return password
+        """Resolve the administrator PKCS#12 password, not the DS credential."""
+        if password := os.environ.get("PKI_ADMIN_PASSWORD"):
+            return password
 
-        # Read from .env file
+        file_values = {}
         env_file = PROJECT_DIR / ".env"
         if env_file.exists():
             with open(env_file) as f:
@@ -175,8 +172,12 @@ class PKIClient:
                     key, _, value = line.partition("=")
                     key = key.strip()
                     value = value.strip().strip('"').strip("'")
-                    if key == "DS_PASSWORD":
-                        return value
+                    file_values[key] = value
+
+        for key in ("PKI_ADMIN_PASSWORD", "ADMIN_PASSWORD"):
+            password = os.environ.get(key) or file_values.get(key)
+            if password:
+                return password
 
         return "RedHat123"
 
@@ -368,25 +369,20 @@ class PKIClient:
         pki_password = self._get_pki_password()
         ca_hostname = self.hostname
         revoke_cmd = f"""
-set -e
-CLIENT_DB=/tmp/pki-revoke-nssdb
+set -euo pipefail
+umask 077
+CLIENT_DB=$(mktemp -d /dev/shm/pki-revoke-nssdb.XXXXXX)
+trap 'rm -rf "$CLIENT_DB"' EXIT
 ADMIN_P12=/root/.dogtag/{instance}/ca_admin_cert.p12
 CA_URL=https://{ca_hostname}:8443
 
-# Set up temp NSS database with admin cert
-rm -rf $CLIENT_DB
-mkdir -p $CLIENT_DB
-certutil -N -d $CLIENT_DB --empty-password
+# Read the credential from stdin so it is not embedded in the shell command.
+IFS= read -r P12_PASSWORD
+printf '%s' "$P12_PASSWORD" > "$CLIENT_DB/p12-password"
+unset P12_PASSWORD
+certutil -N -d "$CLIENT_DB" --empty-password
 
-# Try importing admin P12 with known passwords
-IMPORTED=false
-for PWD in '{pki_password}' 'RedHat123' ''; do
-    if pk12util -i $ADMIN_P12 -d $CLIENT_DB -W "$PWD" -K '' 2>/dev/null; then
-        IMPORTED=true
-        break
-    fi
-done
-if [ "$IMPORTED" != "true" ]; then
+if ! pk12util -i "$ADMIN_P12" -d "$CLIENT_DB" -w "$CLIENT_DB/p12-password" -K ''; then
     echo "ERROR: Could not import admin P12"
     exit 1
 fi
@@ -410,8 +406,6 @@ pki -d $CLIENT_DB -c '' -n "$ADMIN_NICK" -U "$CA_URL" \\
     --ignore-cert-status UNTRUSTED_ISSUER --ignore-cert-status UNKNOWN_ISSUER \\
     ca-cert-revoke 0x{serial_clean} --reason {reason_name} --force
 
-# Cleanup
-rm -rf $CLIENT_DB
 """
 
         if debug:
@@ -419,8 +413,8 @@ rm -rf $CLIENT_DB
             print(f"  DEBUG: Serial: 0x{serial_clean}, Reason: {reason_name}")
 
         result = subprocess.run(
-            ["sudo", "podman", "exec", self.container, "bash", "-c", revoke_cmd],
-            capture_output=True, text=True
+            ["sudo", "podman", "exec", "-i", self.container, "bash", "-c", revoke_cmd],
+            input=pki_password + "\n", capture_output=True, text=True
         )
 
         if debug:
