@@ -18,6 +18,7 @@ seeds     = ["172.27.0.30:7946", "172.27.0.32:7946"]
 node_name = "hoike-pq-edge-1"
 
 [[ca]]
-label        = "pq-iot"
-nonce_policy = "forward"
-forward_to   = "http://pq-ocsp.cert-lab.local:8080/ocsp"
+label           = "pq-iot"
+nonce_policy    = "forward"
+forward_to      = "http://hoike-pq.cert-lab.local:2560"
+forward_insecure = true

@@ -21,6 +21,7 @@ seeds     = ["172.26.0.25:7946", "172.26.0.32:7946"]
 node_name = "hoike-rsa-edge-1"
 
 [[ca]]
-label        = "rsa-iot"
-nonce_policy = "forward"
-forward_to   = "http://ocsp.cert-lab.local:8080/ocsp"
+label           = "rsa-iot"
+nonce_policy    = "forward"
+forward_to      = "http://hoike-rsa.cert-lab.local:2560"
+forward_insecure = true

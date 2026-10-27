@@ -18,6 +18,7 @@ seeds     = ["172.28.0.30:7946", "172.28.0.32:7946"]
 node_name = "hoike-ecc-edge-1"
 
 [[ca]]
-label        = "ecc-iot"
-nonce_policy = "forward"
-forward_to   = "http://ecc-ocsp.cert-lab.local:8080/ocsp"
+label           = "ecc-iot"
+nonce_policy    = "forward"
+forward_to      = "http://hoike-ecc.cert-lab.local:2560"
+forward_insecure = true

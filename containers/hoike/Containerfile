@@ -26,8 +26,9 @@ WORKDIR /build
 RUN git clone --depth 1 --branch "${HOIKE_REF}" "${HOIKE_REPO}" .
 
 # --locked so the lab builds exactly what the repo pins.
-# --features pkcs11 enables PKCS#11 HSM signing via cryptoki.
-RUN cargo build --release --locked --features pkcs11 \
+# --features pkcs11 enables PKCS#11 HSM signing via cryptoki;
+# dogtag-sync enables the RFC 4533 389 DS syncrepl source.
+RUN cargo build --release --locked --features pkcs11,dogtag-sync \
     && strip target/release/hoike target/release/ahu
 
 # ── Stage 2: runtime ────────────────────────────────────────────

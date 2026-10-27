@@ -1,26 +1,27 @@
 # ── Hoike OCSP Fleet — Redundant Pre-Signed + Traditional OCSP ─────────
-#
-# Deploys hoike edge nodes, HAProxy load balancers, and gossip-connected
-# signers across PKI hierarchies (RSA, ECC, ML-DSA).
-#
-# Usage:
-#   # All hierarchies (requires all PKI networks to exist):
-#   podman-compose -f hoike-compose.yml --profile rsa --profile ecc --profile pq up -d
-#
-#   # PQ only:
-#   COMPOSE_PROFILES=pq podman-compose -f hoike-compose.yml up -d
-#
-# Prerequisites:
-#   - PKI hierarchies running for the selected profile(s)
-#   - hoike container built: podman build -f containers/hoike/Containerfile \
-#       -t localhost/hoike:lab containers/hoike/
-#
-# Architecture per hierarchy:
-#   HAProxy :2560 → edge-1, edge-2 (keyless, pre-signed)
-#                 → signer (combined mode, backup)
-#                 → Dogtag OCSP (nonce-bearing, forwarded)
-#
-# Assisted-by: Claude Code (claude.ai/code)
+ #
+ # Deploys hoike edge nodes, HAProxy load balancers, and gossip-connected
+ # signers across PKI hierarchies (RSA, ECC, ML-DSA).
+ #
+ # Usage:
+ #   # All hierarchies (requires all PKI networks to exist):
+ #   podman-compose -f hoike-compose.yml --profile rsa --profile ecc --profile pq up -d
+ #
+ #   # PQ only:
+ #   COMPOSE_PROFILES=pq podman-compose -f hoike-compose.yml up -d
+ #
+ # Prerequisites:
+ #   - PKI hierarchies running for the selected profile(s)
+ #   - hoike container built: podman build -f containers/hoike/Containerfile \
+ #       -t localhost/hoike:lab containers/hoike/
+ #   - Responder certs provisioned (scripts/pki/init-hoike-ocsp.sh), which
+ #     also assembles the signer configs it mounts from /run/cert-revocation-lab/
+ #
+ # Architecture per hierarchy:
+ #   HAProxy :2560 → edge-1, edge-2 (keyless, pre-signed from the shared
+ #                 transfer volume) → signer (live nonce signing)
+ #
+ # Assisted-by: Codex (Codex.ai/code)
 
 version: "3.8"
 
@@ -40,6 +41,7 @@ x-hoike-signer: &hoike-signer
   environment:
     HOIKE_ROLE: signer-hsm
     HOIKE_HSM_PIN: ${HSM_USER_PIN:-1234}
+    HOIKE_LDAP_BIND_PASSWORD: ${DS_PASSWORD}
     SOFTHSM2_CONF: /etc/hoike/softhsm2.conf
     RUST_LOG: info
   healthcheck:
@@ -54,6 +56,21 @@ services:
   # RSA-4096 Hierarchy
   # ══════════════════════════════════════════════════════════════════════
 
+  hoike-rsa-signer:
+    <<: *hoike-signer
+    profiles: [rsa]
+    container_name: hoike-rsa-signer
+    hostname: hoike-rsa.${LAB_DOMAIN:-cert-lab.local}
+    volumes:
+      - /run/cert-revocation-lab/hoike-rsa-signer.toml:/etc/hoike/hoike.toml:ro
+      - ./configs/hoike/softhsm2.conf:/etc/hoike/softhsm2.conf:ro
+      - hoike-rsa-data:/var/lib/hoike
+      - hoike-rsa-transfer:/var/lib/hoike/transfer
+      - ./data/certs/rsa:/certs:ro,z
+    networks:
+      pki-net:
+        ipv4_address: 172.26.0.30
+
   hoike-rsa-edge-1:
     <<: *hoike-edge
     profiles: [rsa]
@@ -62,6 +79,7 @@ services:
     volumes:
       - ./configs/hoike/edge-rsa.toml:/etc/hoike/hoike.toml:ro
       - hoike-rsa-edge1-data:/var/lib/hoike
+      - hoike-rsa-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
       - "ocsp.cert-lab.local:172.26.0.22"
       - "hoike-rsa.cert-lab.local:172.26.0.25"
@@ -77,6 +95,7 @@ services:
     volumes:
       - ./configs/hoike/edge-rsa.toml:/etc/hoike/hoike.toml:ro
       - hoike-rsa-edge2-data:/var/lib/hoike
+      - hoike-rsa-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
       - "ocsp.cert-lab.local:172.26.0.22"
       - "hoike-rsa.cert-lab.local:172.26.0.25"
@@ -110,9 +129,10 @@ services:
     container_name: hoike-ecc-signer
     hostname: hoike-ecc.${LAB_DOMAIN:-cert-lab.local}
     volumes:
-      - ./configs/hoike/ecc-config.toml:/etc/hoike/hoike.toml:ro
+      - /run/cert-revocation-lab/hoike-ecc-signer.toml:/etc/hoike/hoike.toml:ro
       - ./configs/hoike/softhsm2.conf:/etc/hoike/softhsm2.conf:ro
       - hoike-ecc-data:/var/lib/hoike
+      - hoike-ecc-transfer:/var/lib/hoike/transfer
       - ./data/certs/ecc:/certs:ro,z
     extra_hosts:
       - "ecc-ocsp.cert-lab.local:172.28.0.22"
@@ -128,6 +148,7 @@ services:
     volumes:
       - ./configs/hoike/edge-ecc.toml:/etc/hoike/hoike.toml:ro
       - hoike-ecc-edge1-data:/var/lib/hoike
+      - hoike-ecc-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
       - "ecc-ocsp.cert-lab.local:172.28.0.22"
     networks:
@@ -142,6 +163,7 @@ services:
     volumes:
       - ./configs/hoike/edge-ecc.toml:/etc/hoike/hoike.toml:ro
       - hoike-ecc-edge2-data:/var/lib/hoike
+      - hoike-ecc-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
       - "ecc-ocsp.cert-lab.local:172.28.0.22"
     networks:
@@ -174,9 +196,10 @@ services:
     container_name: hoike-pq-signer
     hostname: hoike-pq.${LAB_DOMAIN:-cert-lab.local}
     volumes:
-      - ./configs/hoike/pq-config.toml:/etc/hoike/hoike.toml:ro
+      - /run/cert-revocation-lab/hoike-pq-signer.toml:/etc/hoike/hoike.toml:ro
       - ./configs/hoike/softhsm2.conf:/etc/hoike/softhsm2.conf:ro
       - hoike-pq-data:/var/lib/hoike
+      - hoike-pq-transfer:/var/lib/hoike/transfer
       - ./data/certs/pq:/certs:ro,z
     extra_hosts:
       - "pq-ocsp.cert-lab.local:172.27.0.22"
@@ -192,6 +215,7 @@ services:
     volumes:
       - ./configs/hoike/edge-pq.toml:/etc/hoike/hoike.toml:ro
       - hoike-pq-edge1-data:/var/lib/hoike
+      - hoike-pq-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
       - "pq-ocsp.cert-lab.local:172.27.0.22"
     networks:
@@ -206,6 +230,7 @@ services:
     volumes:
       - ./configs/hoike/edge-pq.toml:/etc/hoike/hoike.toml:ro
       - hoike-pq-edge2-data:/var/lib/hoike
+      - hoike-pq-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
       - "pq-ocsp.cert-lab.local:172.27.0.22"
     networks:
@@ -229,12 +254,16 @@ services:
       - "2563:2560"
 
 volumes:
+  hoike-rsa-data:
+  hoike-rsa-transfer:
   hoike-rsa-edge1-data:
   hoike-rsa-edge2-data:
   hoike-ecc-data:
+  hoike-ecc-transfer:
   hoike-ecc-edge1-data:
   hoike-ecc-edge2-data:
   hoike-pq-data:
+  hoike-pq-transfer:
   hoike-pq-edge1-data:
   hoike-pq-edge2-data:
 

@@ -320,7 +320,28 @@ else
     log_warn "gen-ca-identity.py produced no output"
 fi
 
+# ── Step 10: Assemble the signer deployment config ─────────────────────
+log_info "Step 10: Assembling signer config for ${PKI_TYPE}..."
+
+RUN_DIR="/run/cert-revocation-lab"
+SIGNER_CONFIG="${RUN_DIR}/hoike-${PKI_TYPE}-signer.toml"
+mkdir -p "$RUN_DIR"
+
+python3 "${PROJECT_DIR}/scripts/hoike/assemble-signer-config.py" \
+    --template "${PROJECT_DIR}/configs/hoike/${PKI_TYPE}-config.toml" \
+    --identity "$CA_IDENTITY" \
+    --label "${PKI_TYPE}-iot" \
+    > "$SIGNER_CONFIG"
+
+if [ -s "$SIGNER_CONFIG" ]; then
+    log_info "Signer config assembled: ${SIGNER_CONFIG}"
+else
+    log_error "Signer config assembly failed"
+    exit 1
+fi
+
 echo ""
 log_info "Hoike OCSP responder provisioning complete (${PKI_TYPE^^})"
 log_info "  Responder cert: ${RESPONDER_CERT}"
 log_info "  HSM token:       ${TOKEN_LABEL} / key ${KEY_LABEL} (ECDSA P-256)"
+log_info "  Signer config:   ${SIGNER_CONFIG}"

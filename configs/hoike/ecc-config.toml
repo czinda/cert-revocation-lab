@@ -1,13 +1,16 @@
-# ── Hoike OCSP Responder — ECC P-384 PKI Hierarchy ─────────────────────
+# ── Hoike OCSP Signer — ECC P-384 PKI Hierarchy ─────────────────────────
 #
-# Combined mode: signer + edge in one process.
-# Signing key in Kryoptic — shared token volume from PKI hierarchy.
+# Template for the assembled deployment config. scripts/hoike/
+# assemble-signer-config.py merges this with the generated issuer identity
+# (configs/hoike/ca-identity.toml) into
+# /run/cert-revocation-lab/hoike-ecc-signer.toml, which is what the compose
+# file mounts.
 #
-# Network: 172.28.0.0/24 (CERT-LAB pki-ecc-net)
+# Network: 172.28.0.0/24 (CERT-LAB-ECC pki-ecc-net)
 # ───────────────────────────────────────────────────────────────────────
 
 [server]
-mode    = "combined"
+mode    = "signer"
 listen  = "0.0.0.0:2560"
 
 [storage]
@@ -22,18 +25,23 @@ node_name = "hoike-ecc-signer"
 
 [[ca]]
 label          = "ecc-iot"
-batch_interval = 300
+batch_interval = 30
 validity_secs  = 86400
-nonce_policy   = "forward"
-forward_to     = "http://ecc-ocsp.cert-lab.local:8080/ocsp"
+sig_alg        = "ecdsa-p256"
+nonce_policy   = "live"
+responder_cert = "/certs/hoike-ocsp-signing.pem"
 
 [ca.source]
-type = "crl"
-path = "/var/lib/hoike/crl/ecc-iot.crl"
+type              = "dogtag-sync"
+ldap_url          = "ldap://ds-ecc-iot.cert-lab.local:3389"
+base_dn           = "ou=certificateRepository,ou=ca,o=pki-ecc-iot-ca-CA"
+bind_dn           = "cn=Directory Manager"
+bind_password_env = "HOIKE_LDAP_BIND_PASSWORD"
+cookie_path       = "/var/lib/hoike/state/sync-cookie.dat"
 
 [ca.signing_key]
 type        = "pkcs11"
-module      = "/var/lib/kryoptic/libkryoptic_pkcs11.so"
-token_label = "ECC OCSP Responder"
+module      = "/usr/lib64/pkcs11/libsofthsm2.so"
+token_label = "hoike-ocsp"
 key_label   = "ocsp-signing"
 pin_env     = "HOIKE_HSM_PIN"
