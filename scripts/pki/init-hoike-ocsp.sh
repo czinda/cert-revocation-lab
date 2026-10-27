@@ -94,7 +94,9 @@ hoike_box() {
 export ISSUING_CA_INSTANCE
 ca_pki() {
     sudo podman exec -e PKI_ADMIN_PASSWORD -e ISSUING_CA_INSTANCE -i "$ISSUING_CA_CONTAINER" bash -s <<'REMOTE'
-        printf '%s' "$PKI_ADMIN_PASSWORD" > /tmp/hoike-pw.txt
+        # Trailing newline required: the pki client's password-file parser
+        # rejects a file without one ("Missing delimiter").
+        printf '%s\n' "$PKI_ADMIN_PASSWORD" > /tmp/hoike-pw.txt
         trap 'rm -f /tmp/hoike-pw.txt' EXIT
         NICKNAME=$(certutil -L -d /var/lib/pki/${ISSUING_CA_INSTANCE}/alias 2>/dev/null \
             | grep -i 'PKI Administrator' | sed 's/\s*[a-zA-Z,]*\s*$//' | head -1)
@@ -190,8 +192,10 @@ fi
 # ── Step 5: Submit CSR to the IoT Sub-CA and approve ────────────────────
 log_info "Step 5: Submitting CSR to the IoT Sub-CA (profile: ${PROFILE_ID})..."
 
+# Capture with || true so a failed call is logged by the empty-output
+# checks below instead of aborting the script under set -e.
 SUBMIT_OUTPUT=$(ca_pki ca-cert-request-submit \
-    --profile "$PROFILE_ID" --csr-file /tmp/hoike-ocsp.csr 2>&1)
+    --profile "$PROFILE_ID" --csr-file /tmp/hoike-ocsp.csr 2>&1 || true)
 
 REQUEST_ID=$(echo "$SUBMIT_OUTPUT" | grep -oP 'Request ID:\s*\K\S+' | head -1)
 REQUEST_STATUS=$(echo "$SUBMIT_OUTPUT" | grep -oP 'Request Status:\s*\K\S+' | head -1)
@@ -209,7 +213,7 @@ if [ "$REQUEST_STATUS" = "pending" ]; then
 fi
 
 CERT_ID=$(ca_pki ca-cert-request-show "$REQUEST_ID" 2>&1 \
-    | grep -oP 'Certificate ID:\s*\K\S+' | head -1)
+    | grep -oP 'Certificate ID:\s*\K\S+' | head -1 || true)
 
 if [ -z "$CERT_ID" ]; then
     log_error "Could not extract certificate ID from request ${REQUEST_ID}"
@@ -219,7 +223,7 @@ fi
 log_info "Certificate ID=${CERT_ID}"
 
 sudo podman exec -e PKI_ADMIN_PASSWORD -e ISSUING_CA_INSTANCE -i "$ISSUING_CA_CONTAINER" bash -s <<REMOTE
-    printf '%s' "\$PKI_ADMIN_PASSWORD" > /tmp/hoike-pw.txt
+    printf '%s\n' "\$PKI_ADMIN_PASSWORD" > /tmp/hoike-pw.txt
     NICKNAME=\$(certutil -L -d /var/lib/pki/${ISSUING_CA_INSTANCE}/alias 2>/dev/null \
         | grep -i 'PKI Administrator' | sed 's/\s*[a-zA-Z,]*\s*\$//' | head -1)
     echo y | pki -d /var/lib/pki/${ISSUING_CA_INSTANCE}/alias -f /tmp/hoike-pw.txt \
