@@ -35,7 +35,7 @@ RUN cargo build --release --locked --features pkcs11 \
 FROM registry.fedoraproject.org/fedora:latest
 
 RUN dnf install -y --setopt=install_weak_deps=False \
-        curl openssl shadow-utils softhsm opensc \
+        curl openssl openssl-pkcs11 shadow-utils softhsm opensc \
     && dnf clean all \
     && useradd -r -u 1001 -g 0 -d /var/lib/hoike -s /sbin/nologin hoike \
     && mkdir -p /var/lib/hoike/bundles /var/lib/hoike/state \
