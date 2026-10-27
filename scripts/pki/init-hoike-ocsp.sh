@@ -69,7 +69,8 @@ PKCS11_MODULE="/usr/lib64/pkcs11/libsofthsm2.so"
 RESPONDER_CERT="${CERT_DIR}/hoike-ocsp-signing.pem"
 
 if [ -z "${PKI_ADMIN_PASSWORD:-}" ]; then
-    log_warn "PKI_ADMIN_PASSWORD not set (not required: CA API auth uses the admin client cert)"
+    log_error "PKI_ADMIN_PASSWORD must be set in the environment"
+    exit 1
 fi
 
 mkdir -p "$CERT_DIR"
@@ -88,21 +89,13 @@ hoike_box() {
         "$HOIKE_IMAGE" -c "$*"
 }
 
-# pki CLI invocations inside the CA container, using the admin client cert
-# from the passwordless /root/.dogtag/nssdb (the same auth path the lab's
-# verified SSKG profile creation uses). HTTP because the pki CLI cannot
-# validate ML-DSA chains over HTTPS client-side. Args are passed as real
-# argv through podman exec — a heredoc would swallow them.
+# pki CLI invocations inside the CA container over HTTP :8080 with basic
+# auth as caadmin — the lab's proven PQ pattern (init-akamu-kipuka.sh):
+# NSS client certs cannot be presented over plain HTTP, and the pki CLI
+# cannot validate ML-DSA chains over HTTPS client-side.
 ca_pki() {
-    NICKNAME=$(sudo podman exec "$ISSUING_CA_CONTAINER" bash -c \
-        "certutil -L -d /root/.dogtag/nssdb 2>/dev/null \
-        | grep -i 'PKI Administrator' | sed 's/\s*[a-zA-Z,]*\s*\$//' | head -1")
-    if [ -z "$NICKNAME" ]; then
-        echo "ca_pki: no admin cert found in /root/.dogtag/nssdb" >&2
-        return 1
-    fi
     sudo podman exec "$ISSUING_CA_CONTAINER" \
-        pki -d /root/.dogtag/nssdb -n "$NICKNAME" -p 8080 "$@"
+        pki -u caadmin -w "$PKI_ADMIN_PASSWORD" -p 8080 "$@"
 }
 
 echo ""
@@ -222,12 +215,7 @@ fi
 
 log_info "Certificate ID=${CERT_ID}"
 
-EXPORT_NICK=$(sudo podman exec "$ISSUING_CA_CONTAINER" bash -c \
-    "certutil -L -d /root/.dogtag/nssdb 2>/dev/null \
-    | grep -i 'PKI Administrator' | sed 's/\s*[a-zA-Z,]*\s*\$//' | head -1")
-echo y | sudo podman exec -i "$ISSUING_CA_CONTAINER" \
-    pki -d /root/.dogtag/nssdb -n "$EXPORT_NICK" -p 8080 \
-    ca-cert-export "$CERT_ID" --output-file /tmp/hoike-ocsp-signed.crt 2>/dev/null
+ca_pki ca-cert-export "$CERT_ID" --output-file /tmp/hoike-ocsp-signed.crt 2>/dev/null
 sudo podman cp "$ISSUING_CA_CONTAINER:/tmp/hoike-ocsp-signed.crt" "$RESPONDER_CERT"
 
 # ── Step 6: Import the cert into the HSM token and publish the PEM ──────

@@ -68,13 +68,14 @@ def test_init_script_uses_new_profile_and_iot_sub_ca():
         assert container in source, f"missing IoT Sub-CA container {container}"
 
 
-def test_init_script_uses_passwordless_admin_client_auth():
+def test_init_script_uses_http_basic_auth_for_ca_api():
     source = INIT_SCRIPT.read_text()
     assert "RedHat123" not in source, "no hardcoded lab password"
-    assert "/root/.dogtag/nssdb" in source, (
-        "CA API auth uses the admin client cert from the passwordless "
-        "/root/.dogtag/nssdb (the lab's verified SSKG pattern)"
+    assert "-u caadmin" in source, (
+        "CA API auth uses HTTP basic auth as caadmin (the lab's proven PQ "
+        "pattern — client certs cannot ride plain HTTP)"
     )
+    assert "-p 8080" in source, "HTTP :8080 avoids the ML-DSA HTTPS limitation"
     assert "hoike-pw.txt" not in source, "no pki password-file indirection"
 
 
