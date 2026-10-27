@@ -68,10 +68,14 @@ def test_init_script_uses_new_profile_and_iot_sub_ca():
         assert container in source, f"missing IoT Sub-CA container {container}"
 
 
-def test_init_script_has_no_hardcoded_passwords():
+def test_init_script_uses_passwordless_admin_client_auth():
     source = INIT_SCRIPT.read_text()
     assert "RedHat123" not in source, "no hardcoded lab password"
-    assert "PKI_ADMIN_PASSWORD" in source, "credentials must come from the environment"
+    assert "/root/.dogtag/nssdb" in source, (
+        "CA API auth uses the admin client cert from the passwordless "
+        "/root/.dogtag/nssdb (the lab's verified SSKG pattern)"
+    )
+    assert "hoike-pw.txt" not in source, "no pki password-file indirection"
 
 
 def test_init_script_bootstraps_token_without_a_running_signer():

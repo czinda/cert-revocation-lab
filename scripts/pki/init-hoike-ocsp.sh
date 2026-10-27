@@ -69,8 +69,7 @@ PKCS11_MODULE="/usr/lib64/pkcs11/libsofthsm2.so"
 RESPONDER_CERT="${CERT_DIR}/hoike-ocsp-signing.pem"
 
 if [ -z "${PKI_ADMIN_PASSWORD:-}" ]; then
-    log_error "PKI_ADMIN_PASSWORD must be set in the environment"
-    exit 1
+    log_warn "PKI_ADMIN_PASSWORD not set (not required: CA API auth uses the admin client cert)"
 fi
 
 mkdir -p "$CERT_DIR"
@@ -89,19 +88,16 @@ hoike_box() {
         "$HOIKE_IMAGE" -c "$*"
 }
 
-# pki CLI invocations inside the CA container: NSS client-cert auth over HTTP
-# (the pki CLI cannot validate ML-DSA chains over HTTPS client-side).
+# pki CLI invocations inside the CA container, using the admin client cert
+# from the passwordless /root/.dogtag/nssdb (the same auth path the lab's
+# verified SSKG profile creation uses). HTTP because the pki CLI cannot
+# validate ML-DSA chains over HTTPS client-side.
 export ISSUING_CA_INSTANCE
 ca_pki() {
-    sudo podman exec -e PKI_ADMIN_PASSWORD -e ISSUING_CA_INSTANCE -i "$ISSUING_CA_CONTAINER" bash -s <<'REMOTE'
-        # Trailing newline required: the pki client's password-file parser
-        # rejects a file without one ("Missing delimiter").
-        printf '%s\n' "$PKI_ADMIN_PASSWORD" > /tmp/hoike-pw.txt
-        trap 'rm -f /tmp/hoike-pw.txt' EXIT
-        NICKNAME=$(certutil -L -d /var/lib/pki/${ISSUING_CA_INSTANCE}/alias 2>/dev/null \
+    sudo podman exec -e ISSUING_CA_INSTANCE -i "$ISSUING_CA_CONTAINER" bash -s <<'REMOTE'
+        NICKNAME=$(certutil -L -d /root/.dogtag/nssdb 2>/dev/null \
             | grep -i 'PKI Administrator' | sed 's/\s*[a-zA-Z,]*\s*$//' | head -1)
-        exec pki -d /var/lib/pki/${ISSUING_CA_INSTANCE}/alias -f /tmp/hoike-pw.txt \
-            -n "$NICKNAME" -p 8080 "$@"
+        exec pki -d /root/.dogtag/nssdb -n "$NICKNAME" -p 8080 "$@"
 REMOTE
 }
 
@@ -222,14 +218,12 @@ fi
 
 log_info "Certificate ID=${CERT_ID}"
 
-sudo podman exec -e PKI_ADMIN_PASSWORD -e ISSUING_CA_INSTANCE -i "$ISSUING_CA_CONTAINER" bash -s <<REMOTE
-    printf '%s\n' "\$PKI_ADMIN_PASSWORD" > /tmp/hoike-pw.txt
-    NICKNAME=\$(certutil -L -d /var/lib/pki/${ISSUING_CA_INSTANCE}/alias 2>/dev/null \
+sudo podman exec -e ISSUING_CA_INSTANCE -i "$ISSUING_CA_CONTAINER" bash -s <<REMOTE
+    NICKNAME=\$(certutil -L -d /root/.dogtag/nssdb 2>/dev/null \
         | grep -i 'PKI Administrator' | sed 's/\s*[a-zA-Z,]*\s*\$//' | head -1)
-    echo y | pki -d /var/lib/pki/${ISSUING_CA_INSTANCE}/alias -f /tmp/hoike-pw.txt \
+    echo y | pki -d /root/.dogtag/nssdb \
         -n "\$NICKNAME" -p 8080 \
         ca-cert-export ${CERT_ID} --output-file /tmp/hoike-ocsp-signed.crt 2>/dev/null
-    rm -f /tmp/hoike-pw.txt
 REMOTE
 sudo podman cp "$ISSUING_CA_CONTAINER:/tmp/hoike-ocsp-signed.crt" "$RESPONDER_CERT"
 
