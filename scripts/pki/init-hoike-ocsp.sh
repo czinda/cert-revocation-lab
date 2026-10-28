@@ -350,6 +350,15 @@ else
     exit 1
 fi
 
+# start-lab's deploy_hoike phase created the signer container while the
+# config path was still a podman-materialized directory, and the bind mount
+# recorded it as such — the container must be recreated now that the real
+# file exists (podman-compose up recreates it).
+if sudo podman container exists "hoike-${PKI_TYPE}-signer"; then
+    log_info "Removing stale signer container (created before the config existed)"
+    sudo podman rm -f "hoike-${PKI_TYPE}-signer"
+fi
+
 echo ""
 log_info "Hoike OCSP responder provisioning complete (${PKI_TYPE^^})"
 log_info "  Responder cert: ${RESPONDER_CERT}"
