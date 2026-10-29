@@ -61,6 +61,14 @@ case "$ROLE" in
         # Config-driven signing via PKCS#11 (signing_key in config).
         # `hoike serve` in signer mode runs the batch loop internally,
         # reading the signing key from [ca.signing_key] in the config.
+        # The anti-rollback state store is never created implicitly.
+        if [ ! -f /var/lib/hoike/state/state.json ]; then
+            log "initializing hoike state directory"
+            hoike init-state --config "$CONFIG" || {
+                log "FATAL: hoike init-state failed"
+                exit 1
+            }
+        fi
         log "starting signer with PKCS#11 HSM (config-driven)"
         exec hoike serve --config "$CONFIG"
         ;;
