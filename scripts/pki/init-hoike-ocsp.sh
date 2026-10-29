@@ -238,6 +238,25 @@ log_info "Responder certificate saved to ${RESPONDER_CERT}"
 
 fi  # end issuance guard
 
+# ── Step 6b: Bundle seal pair (ahu CMS seal; distinct from the OCSP key) ─
+# hoike requires a persistent seal pair when OCSP responses are signed with
+# a production key. The seal is hoike-internal bundle integrity — a
+# self-signed pair is sufficient; clients verify OCSP responses against the
+# delegated responder cert, not the seal.
+SEAL_KEY="${CERT_DIR}/hoike-seal-key.pem"
+SEAL_CERT="${CERT_DIR}/hoike-seal-cert.pem"
+if [ -s "$SEAL_KEY" ] && [ -s "$SEAL_CERT" ]; then
+    log_info "Bundle seal pair already present"
+else
+    log_info "Generating bundle seal key pair (self-signed EC P-256)..."
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+        -keyout "$SEAL_KEY" -out "$SEAL_CERT" -nodes \
+        -subj "/CN=hoike-seal.${PKI_TYPE}.cert-lab.local/O=Cert-Lab/C=US" \
+        -days 3650 2>/dev/null
+    chmod 644 "$SEAL_KEY" "$SEAL_CERT"
+    log_info "Seal pair written: ${SEAL_KEY}, ${SEAL_CERT}"
+fi
+
 # ── Step 7: Verify issuer, key match, and EKU ───────────────────────────
 log_info "Step 7: Verifying the responder certificate..."
 

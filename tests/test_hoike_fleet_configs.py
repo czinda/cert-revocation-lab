@@ -38,6 +38,10 @@ def test_signer_configs_use_syncrepl_live_nonce_and_p256():
         assert ca["nonce_policy"] == "live", f"{name}: signer must sign nonces live"
         assert ca["batch_interval"] == 30, f"{name}: batch interval must be 30s"
         assert ca["responder_cert"] == "/certs/hoike-ocsp-signing.pem"
+        assert ca["seal_key"] == "/certs/hoike-seal-key.pem", (
+            f"{name}: production OCSP keys require a bundle seal pair"
+        )
+        assert ca["seal_cert"] == "/certs/hoike-seal-cert.pem"
         source = ca["source"]
         assert source["type"] == "dogtag-sync", f"{name}: source must be dogtag-sync"
         expected_ds = {

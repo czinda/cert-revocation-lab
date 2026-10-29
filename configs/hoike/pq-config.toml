@@ -31,6 +31,8 @@ validity_secs  = 86400
 sig_alg        = "ecdsa-p256"
 nonce_policy   = "live"
 responder_cert = "/certs/hoike-ocsp-signing.pem"
+seal_key    = "/certs/hoike-seal-key.pem"
+seal_cert   = "/certs/hoike-seal-cert.pem"
 
 [ca.source]
 type              = "dogtag-sync"
