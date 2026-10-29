@@ -62,8 +62,8 @@ services:
     container_name: hoike-rsa-signer
     hostname: hoike-rsa.${LAB_DOMAIN:-cert-lab.local}
     volumes:
-      - /run/cert-revocation-lab/hoike-rsa-signer.toml:/etc/hoike/hoike.toml:ro
-      - ./configs/hoike/softhsm2.conf:/etc/hoike/softhsm2.conf:ro
+      - /run/cert-revocation-lab/hoike-rsa-signer.toml:/etc/hoike/hoike.toml:ro,z
+      - ./configs/hoike/softhsm2.conf:/etc/hoike/softhsm2.conf:ro,z
       - hoike-rsa-data:/var/lib/hoike
       - hoike-rsa-transfer:/var/lib/hoike/transfer
       - ./data/certs/rsa:/certs:ro,z
@@ -77,7 +77,7 @@ services:
     container_name: hoike-rsa-edge-1
     hostname: hoike-rsa-edge-1.${LAB_DOMAIN:-cert-lab.local}
     volumes:
-      - ./configs/hoike/edge-rsa.toml:/etc/hoike/hoike.toml:ro
+      - ./configs/hoike/edge-rsa.toml:/etc/hoike/hoike.toml:ro,z
       - hoike-rsa-edge1-data:/var/lib/hoike
       - hoike-rsa-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
@@ -93,7 +93,7 @@ services:
     container_name: hoike-rsa-edge-2
     hostname: hoike-rsa-edge-2.${LAB_DOMAIN:-cert-lab.local}
     volumes:
-      - ./configs/hoike/edge-rsa.toml:/etc/hoike/hoike.toml:ro
+      - ./configs/hoike/edge-rsa.toml:/etc/hoike/hoike.toml:ro,z
       - hoike-rsa-edge2-data:/var/lib/hoike
       - hoike-rsa-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
@@ -109,7 +109,7 @@ services:
     container_name: haproxy-rsa-ocsp
     hostname: haproxy-rsa.${LAB_DOMAIN:-cert-lab.local}
     volumes:
-      - ./configs/hoike/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./configs/hoike/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro,z
     depends_on:
       hoike-rsa-edge-1:
         condition: service_healthy
@@ -129,8 +129,8 @@ services:
     container_name: hoike-ecc-signer
     hostname: hoike-ecc.${LAB_DOMAIN:-cert-lab.local}
     volumes:
-      - /run/cert-revocation-lab/hoike-ecc-signer.toml:/etc/hoike/hoike.toml:ro
-      - ./configs/hoike/softhsm2.conf:/etc/hoike/softhsm2.conf:ro
+      - /run/cert-revocation-lab/hoike-ecc-signer.toml:/etc/hoike/hoike.toml:ro,z
+      - ./configs/hoike/softhsm2.conf:/etc/hoike/softhsm2.conf:ro,z
       - hoike-ecc-data:/var/lib/hoike
       - hoike-ecc-transfer:/var/lib/hoike/transfer
       - ./data/certs/ecc:/certs:ro,z
@@ -146,7 +146,7 @@ services:
     container_name: hoike-ecc-edge-1
     hostname: hoike-ecc-edge-1.${LAB_DOMAIN:-cert-lab.local}
     volumes:
-      - ./configs/hoike/edge-ecc.toml:/etc/hoike/hoike.toml:ro
+      - ./configs/hoike/edge-ecc.toml:/etc/hoike/hoike.toml:ro,z
       - hoike-ecc-edge1-data:/var/lib/hoike
       - hoike-ecc-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
@@ -161,7 +161,7 @@ services:
     container_name: hoike-ecc-edge-2
     hostname: hoike-ecc-edge-2.${LAB_DOMAIN:-cert-lab.local}
     volumes:
-      - ./configs/hoike/edge-ecc.toml:/etc/hoike/hoike.toml:ro
+      - ./configs/hoike/edge-ecc.toml:/etc/hoike/hoike.toml:ro,z
       - hoike-ecc-edge2-data:/var/lib/hoike
       - hoike-ecc-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
@@ -176,7 +176,7 @@ services:
     container_name: haproxy-ecc-ocsp
     hostname: haproxy-ecc.${LAB_DOMAIN:-cert-lab.local}
     volumes:
-      - ./configs/hoike/haproxy-ecc.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./configs/hoike/haproxy-ecc.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro,z
     depends_on:
       hoike-ecc-edge-1:
         condition: service_healthy
@@ -196,8 +196,8 @@ services:
     container_name: hoike-pq-signer
     hostname: hoike-pq.${LAB_DOMAIN:-cert-lab.local}
     volumes:
-      - /run/cert-revocation-lab/hoike-pq-signer.toml:/etc/hoike/hoike.toml:ro
-      - ./configs/hoike/softhsm2.conf:/etc/hoike/softhsm2.conf:ro
+      - /run/cert-revocation-lab/hoike-pq-signer.toml:/etc/hoike/hoike.toml:ro,z
+      - ./configs/hoike/softhsm2.conf:/etc/hoike/softhsm2.conf:ro,z
       - hoike-pq-data:/var/lib/hoike
       - hoike-pq-transfer:/var/lib/hoike/transfer
       - ./data/certs/pq:/certs:ro,z
@@ -213,7 +213,7 @@ services:
     container_name: hoike-pq-edge-1
     hostname: hoike-pq-edge-1.${LAB_DOMAIN:-cert-lab.local}
     volumes:
-      - ./configs/hoike/edge-pq.toml:/etc/hoike/hoike.toml:ro
+      - ./configs/hoike/edge-pq.toml:/etc/hoike/hoike.toml:ro,z
       - hoike-pq-edge1-data:/var/lib/hoike
       - hoike-pq-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
@@ -228,7 +228,7 @@ services:
     container_name: hoike-pq-edge-2
     hostname: hoike-pq-edge-2.${LAB_DOMAIN:-cert-lab.local}
     volumes:
-      - ./configs/hoike/edge-pq.toml:/etc/hoike/hoike.toml:ro
+      - ./configs/hoike/edge-pq.toml:/etc/hoike/hoike.toml:ro,z
       - hoike-pq-edge2-data:/var/lib/hoike
       - hoike-pq-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
@@ -243,7 +243,7 @@ services:
     container_name: haproxy-pq-ocsp
     hostname: haproxy-pq.${LAB_DOMAIN:-cert-lab.local}
     volumes:
-      - ./configs/hoike/haproxy-pq.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./configs/hoike/haproxy-pq.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro,z
     depends_on:
       hoike-pq-edge-1:
         condition: service_healthy
