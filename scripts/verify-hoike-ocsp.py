@@ -209,10 +209,12 @@ def main() -> int:
             issuer_result = _run(
                 ["openssl", "x509", "-in", str(issuer_cert), "-noout", "-subject"]
             )
-            ca_subject = _normalize_dn(
-                issuer_result.stdout.replace("subject=", "issuer:", 1)
-            )
-            issuer_ok = _normalize_dn(issuer_line.strip()) == ca_subject
+            # Compare the DNs, not the differently-shaped prefixes: the
+            # responder parse yields "Issuer: <dn>" (openssl -text) while the
+            # CA lookup yields "subject=<dn>".
+            responder_dn = issuer_line.split(":", 1)[1].strip()
+            ca_dn = issuer_result.stdout.split("=", 1)[1].strip()
+            issuer_ok = _normalize_dn(responder_dn) == _normalize_dn(ca_dn)
             ku_block = re.search(
                 r"X509v3 Key Usage:.*?\n\s+(.*)", responder_text
             )
@@ -232,7 +234,18 @@ def main() -> int:
             record("responder_cert_profile", False, f"{type(exc).__name__}: {exc}")
 
         # 3. Live (nonce-bearing) good answer through the AIA URL.
-        live = ocsp_query(aia_url, issuer_cert, cert=cert_file, nonce=True, cafile=ca_chain)
+        # A freshly enrolled certificate reaches hoike after source
+        # propagation plus one batch interval plus an edge reload — poll for
+        # the first good answer within that window instead of failing on the
+        # immediate query.
+        live = None
+        for _ in range(18):  # 90s: one batch cycle + reload, with margin
+            live = ocsp_query(
+                aia_url, issuer_cert, cert=cert_file, nonce=True, cafile=ca_chain
+            )
+            if live["status"] == "good":
+                break
+            time.sleep(5)
         record(
             "ocsp_good_live",
             live["status"] == "good" and live["verified"],

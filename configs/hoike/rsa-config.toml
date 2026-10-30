@@ -30,6 +30,7 @@ label          = "rsa-iot"
 batch_interval = 30
 validity_secs  = 86400
 sig_alg        = "ecdsa-p256"
+completeness   = "authoritative-complete"
 nonce_policy   = "live"
 responder_cert = "/certs/hoike-ocsp-signing.pem"
 seal_key    = "/certs/hoike-seal-key.pem"
