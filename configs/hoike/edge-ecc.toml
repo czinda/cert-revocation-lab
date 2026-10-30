@@ -22,5 +22,6 @@ node_name = "hoike-ecc-edge-1"
 [[ca]]
 label           = "ecc-iot"
 nonce_policy    = "forward"
+completeness   = "authoritative-complete"  # matches the signer-produced bundle
 forward_to      = "http://hoike-ecc.cert-lab.local:2560"
 forward_insecure = true

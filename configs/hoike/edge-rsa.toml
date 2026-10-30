@@ -25,5 +25,6 @@ node_name = "hoike-rsa-edge-1"
 [[ca]]
 label           = "rsa-iot"
 nonce_policy    = "forward"
+completeness   = "authoritative-complete"  # matches the signer-produced bundle
 forward_to      = "http://hoike-rsa.cert-lab.local:2560"
 forward_insecure = true
