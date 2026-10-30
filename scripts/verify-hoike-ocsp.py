@@ -114,8 +114,11 @@ def ocsp_query(
     cert: Path | None = None,
     serial: str | None = None,
     nonce: bool = False,
+    cafile: Path | None = None,
 ) -> dict:
     cmd = ["openssl", "ocsp", "-issuer", str(issuer), "-url", url]
+    if cafile is not None:
+        cmd += ["-CAfile", str(cafile)]
     if cert is not None:
         cmd += ["-cert", str(cert)]
     if serial is not None:
@@ -149,6 +152,7 @@ def main() -> int:
     aia_url = HAPROXY_OCSP_URL[hierarchy]
     certs_dir = REPO / "data" / "certs" / hierarchy
     issuer_cert = certs_dir / "iot-ca.crt"
+    ca_chain = certs_dir / "ca-chain.crt"
     responder_cert = certs_dir / "hoike-ocsp-signing.pem"
     config = LabConfig.load()
     checks: dict[str, tuple[bool, str]] = {}
@@ -228,7 +232,7 @@ def main() -> int:
             record("responder_cert_profile", False, f"{type(exc).__name__}: {exc}")
 
         # 3. Live (nonce-bearing) good answer through the AIA URL.
-        live = ocsp_query(aia_url, issuer_cert, cert=cert_file, nonce=True)
+        live = ocsp_query(aia_url, issuer_cert, cert=cert_file, nonce=True, cafile=ca_chain)
         record(
             "ocsp_good_live",
             live["status"] == "good" and live["verified"],
@@ -236,7 +240,7 @@ def main() -> int:
         )
 
         # 4. Pre-signed (edge) good answer, no nonce.
-        presigned = ocsp_query(aia_url, issuer_cert, cert=cert_file)
+        presigned = ocsp_query(aia_url, issuer_cert, cert=cert_file, cafile=ca_chain)
         record(
             "ocsp_good_presigned",
             presigned["status"] == "good" and presigned["verified"],
@@ -245,7 +249,7 @@ def main() -> int:
 
         # 5. Never-issued serial answers unknown on the live path.
         unknown = ocsp_query(
-            aia_url, issuer_cert, serial=random_unknown_serial(), nonce=True
+            aia_url, issuer_cert, serial=random_unknown_serial(), nonce=True, cafile=ca_chain
         )
         record(
             "ocsp_unknown_live",
@@ -268,7 +272,7 @@ def main() -> int:
         if event.success:
             deadline = time.monotonic() + args.wait_revocation
             while time.monotonic() < deadline:
-                poll = ocsp_query(aia_url, issuer_cert, cert=cert_file)
+                poll = ocsp_query(aia_url, issuer_cert, cert=cert_file, cafile=ca_chain)
                 if poll["status"] == "revoked":
                     reflected = True
                     detail = f"reflected as revoked via {aia_url}"
