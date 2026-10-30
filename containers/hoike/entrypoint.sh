@@ -84,6 +84,15 @@ case "$ROLE" in
         ;;
     edge|enclave)
         wait_for_bundle
+        # Edges run `hoike serve` too (image CMD) — the anti-rollback state
+        # store is never created implicitly, so initialize once per volume.
+        if [ ! -f /var/lib/hoike/state/state.json ]; then
+            log "initializing hoike state directory"
+            hoike init-state --config "$CONFIG" || {
+                log "FATAL: hoike init-state failed"
+                exit 1
+            }
+        fi
         exec hoike "$@"
         ;;
     *)
