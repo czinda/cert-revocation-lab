@@ -13,6 +13,7 @@ state_db   = "/var/lib/hoike/state"
 seal_signer_pins = ["/certs/hoike-seal-cert.pem"]
 
 [gossip]
+auth_mode = "permissive"  # lab fleet: no per-node gossip identity keys; bundles stay CMS-seal authenticated
 enabled   = true
 bind      = "0.0.0.0:7946"
 seeds     = ["172.28.0.30:7946", "172.28.0.32:7946"]
