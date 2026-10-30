@@ -200,7 +200,7 @@ def main() -> int:
             responder_text = _openssl_text(responder_cert)
             issuer_line = next(
                 line for line in responder_text.splitlines()
-                if line.strip().startswith("issuer:")
+                if line.strip().lower().startswith("issuer:")
             )
             issuer_result = _run(
                 ["openssl", "x509", "-in", str(issuer_cert), "-noout", "-subject"]

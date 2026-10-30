@@ -70,6 +70,16 @@ case "$ROLE" in
             }
         fi
         log "starting signer with PKCS#11 HSM (config-driven)"
+        # `hoike serve` writes bundles to bundle_dir (the signer's private
+        # volume); the edges read the shared transfer volume. serve mode has
+        # no transfer concept, so publish atomically from a sidecar loop —
+        # the .part + mv keeps edges from ever loading a partial bundle.
+        (
+            while true; do
+                publish_to_transfer || log "WARN: transfer publish failed; retrying"
+                sleep "${HOIKE_PUBLISH_INTERVAL:-10}"
+            done
+        ) &
         exec hoike serve --config "$CONFIG"
         ;;
     edge|enclave)
