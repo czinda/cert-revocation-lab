@@ -83,7 +83,7 @@ services:
       - hoike-rsa-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
       - "ocsp.cert-lab.local:172.26.0.22"
-      - "hoike-rsa.cert-lab.local:172.26.0.25"
+      - "hoike-rsa.cert-lab.local:172.26.0.30"
     networks:
       pki-net:
         ipv4_address: 172.26.0.31
@@ -100,7 +100,7 @@ services:
       - hoike-rsa-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
       - "ocsp.cert-lab.local:172.26.0.22"
-      - "hoike-rsa.cert-lab.local:172.26.0.25"
+      - "hoike-rsa.cert-lab.local:172.26.0.30"
     networks:
       pki-net:
         ipv4_address: 172.26.0.32
@@ -138,6 +138,7 @@ services:
       - ./data/certs/ecc:/certs:ro,z
     extra_hosts:
       - "ecc-ocsp.cert-lab.local:172.28.0.22"
+      - "hoike-ecc.cert-lab.local:172.28.0.30"
     networks:
       pki-ecc-net:
         ipv4_address: 172.28.0.30
@@ -154,6 +155,7 @@ services:
       - hoike-ecc-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
       - "ecc-ocsp.cert-lab.local:172.28.0.22"
+      - "hoike-ecc.cert-lab.local:172.28.0.30"
     networks:
       pki-ecc-net:
         ipv4_address: 172.28.0.31
@@ -170,6 +172,7 @@ services:
       - hoike-ecc-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
       - "ecc-ocsp.cert-lab.local:172.28.0.22"
+      - "hoike-ecc.cert-lab.local:172.28.0.30"
     networks:
       pki-ecc-net:
         ipv4_address: 172.28.0.32
@@ -207,6 +210,7 @@ services:
       - ./data/certs/pq:/certs:ro,z
     extra_hosts:
       - "pq-ocsp.cert-lab.local:172.27.0.22"
+      - "hoike-pq.cert-lab.local:172.27.0.30"
     networks:
       pki-pq-net:
         ipv4_address: 172.27.0.30
@@ -223,6 +227,7 @@ services:
       - hoike-pq-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
       - "pq-ocsp.cert-lab.local:172.27.0.22"
+      - "hoike-pq.cert-lab.local:172.27.0.30"
     networks:
       pki-pq-net:
         ipv4_address: 172.27.0.31
@@ -239,6 +244,7 @@ services:
       - hoike-pq-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
       - "pq-ocsp.cert-lab.local:172.27.0.22"
+      - "hoike-pq.cert-lab.local:172.27.0.30"
     networks:
       pki-pq-net:
         ipv4_address: 172.27.0.32
