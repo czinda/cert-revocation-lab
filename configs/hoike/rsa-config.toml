@@ -16,6 +16,7 @@ listen  = "0.0.0.0:2560"
 [storage]
 bundle_dir = "/var/lib/hoike/bundles"
 state_db   = "/var/lib/hoike/state"
+seal_signer_pins = ["/certs/hoike-seal-cert.pem"]
 
 [gossip]
 enabled   = true

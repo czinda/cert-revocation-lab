@@ -78,6 +78,7 @@ services:
     hostname: hoike-rsa-edge-1.${LAB_DOMAIN:-cert-lab.local}
     volumes:
       - ./configs/hoike/edge-rsa.toml:/etc/hoike/hoike.toml:ro,z
+      - ./data/certs/rsa:/certs:ro,z
       - hoike-rsa-edge1-data:/var/lib/hoike
       - hoike-rsa-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
@@ -94,6 +95,7 @@ services:
     hostname: hoike-rsa-edge-2.${LAB_DOMAIN:-cert-lab.local}
     volumes:
       - ./configs/hoike/edge-rsa.toml:/etc/hoike/hoike.toml:ro,z
+      - ./data/certs/rsa:/certs:ro,z
       - hoike-rsa-edge2-data:/var/lib/hoike
       - hoike-rsa-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
@@ -147,6 +149,7 @@ services:
     hostname: hoike-ecc-edge-1.${LAB_DOMAIN:-cert-lab.local}
     volumes:
       - ./configs/hoike/edge-ecc.toml:/etc/hoike/hoike.toml:ro,z
+      - ./data/certs/ecc:/certs:ro,z
       - hoike-ecc-edge1-data:/var/lib/hoike
       - hoike-ecc-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
@@ -162,6 +165,7 @@ services:
     hostname: hoike-ecc-edge-2.${LAB_DOMAIN:-cert-lab.local}
     volumes:
       - ./configs/hoike/edge-ecc.toml:/etc/hoike/hoike.toml:ro,z
+      - ./data/certs/ecc:/certs:ro,z
       - hoike-ecc-edge2-data:/var/lib/hoike
       - hoike-ecc-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
@@ -214,6 +218,7 @@ services:
     hostname: hoike-pq-edge-1.${LAB_DOMAIN:-cert-lab.local}
     volumes:
       - ./configs/hoike/edge-pq.toml:/etc/hoike/hoike.toml:ro,z
+      - ./data/certs/pq:/certs:ro,z
       - hoike-pq-edge1-data:/var/lib/hoike
       - hoike-pq-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
@@ -229,6 +234,7 @@ services:
     hostname: hoike-pq-edge-2.${LAB_DOMAIN:-cert-lab.local}
     volumes:
       - ./configs/hoike/edge-pq.toml:/etc/hoike/hoike.toml:ro,z
+      - ./data/certs/pq:/certs:ro,z
       - hoike-pq-edge2-data:/var/lib/hoike
       - hoike-pq-transfer:/var/lib/hoike/bundles:ro
     extra_hosts:
