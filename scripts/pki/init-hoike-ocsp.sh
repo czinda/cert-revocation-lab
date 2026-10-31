@@ -99,6 +99,29 @@ ca_pki() {
         pki -U http://localhost:8080 -u caadmin -w "$PKI_ADMIN_PASSWORD" "$@"
 }
 
+# The CA's Tomcat redirects HTTP→HTTPS (CONFIDENTIAL transport guarantee in
+# web.xml), which breaks ca_pki's plain-HTTP basic auth: the pki CLI follows
+# the redirect, cannot validate the CA's TLS cert non-interactively, and dies
+# with an SSL alert. The PQ init path patches this; non-PQ hierarchies need
+# the same lab-mode patch before we talk to them over HTTP. Idempotent.
+ensure_ca_http() {
+    if sudo podman exec "$ISSUING_CA_CONTAINER" grep -q "CONFIDENTIAL" \
+        /usr/share/pki/ca/webapps/ca/WEB-INF/web.xml 2>/dev/null; then
+        log_info "Patching CA web.xml (CONFIDENTIAL→NONE) for HTTP basic auth..."
+        sudo podman exec "$ISSUING_CA_CONTAINER" sed -i \
+            's|<transport-guarantee>CONFIDENTIAL</transport-guarantee>|<transport-guarantee>NONE</transport-guarantee>|g' \
+            /usr/share/pki/ca/webapps/ca/WEB-INF/web.xml
+        sudo podman restart "$ISSUING_CA_CONTAINER" >/dev/null
+        local waited=0
+        until ca_pki ca-cert-find --maxResults 1 >/dev/null 2>&1; do
+            [ "$waited" -ge 300 ] && { log_error "CA did not come back after web.xml patch"; exit 1; }
+            sleep 5
+            waited=$((waited + 5))
+        done
+        log_info "CA accepting HTTP after web.xml patch"
+    fi
+}
+
 echo ""
 echo "========================================================================"
 echo "  Provisioning OCSP signing key for hoike (${PKI_TYPE^^})"
@@ -115,6 +138,8 @@ if ! sudo podman inspect --format '{{.State.Status}}' "$ISSUING_CA_CONTAINER" 2>
     log_error "Container $ISSUING_CA_CONTAINER is not running"
     exit 1
 fi
+
+ensure_ca_http
 
 # ── Step 1: Initialize SoftHSM2 token ───────────────────────────────────
 log_info "Step 1: Initializing SoftHSM2 token '${TOKEN_LABEL}'..."
