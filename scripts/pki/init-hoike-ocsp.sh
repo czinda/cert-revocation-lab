@@ -113,7 +113,7 @@ ensure_ca_http() {
             /usr/share/pki/ca/webapps/ca/WEB-INF/web.xml
         sudo podman restart "$ISSUING_CA_CONTAINER" >/dev/null
         local waited=0
-        until ca_pki ca-cert-find --maxResults 1 >/dev/null 2>&1; do
+        until ca_pki ca-user-show caadmin >/dev/null 2>&1; do
             [ "$waited" -ge 300 ] && { log_error "CA did not come back after web.xml patch"; exit 1; }
             sleep 5
             waited=$((waited + 5))
