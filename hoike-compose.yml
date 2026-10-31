@@ -108,7 +108,8 @@ services:
   haproxy-rsa:
     profiles: [rsa]
     image: docker.io/library/haproxy:2.9-alpine
-    container_name: haproxy-rsa-ocsp    hostname: haproxy-rsa.${LAB_DOMAIN:-cert-lab.local}
+    container_name: haproxy-rsa-ocsp
+    hostname: haproxy-rsa.${LAB_DOMAIN:-cert-lab.local}
     volumes:
       - ./configs/hoike/haproxy-rsa.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro,z
     depends_on:
